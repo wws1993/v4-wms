@@ -463,20 +463,25 @@ function saveBatchTransfer() {
 }
 
 /* ===== 原料投料出库 · 列表筛选 ===== */
+function cargoTypeTagHtml(type) {
+  const cls = type === '达标矿' ? 'tag-green' : 'tag-orange';
+  return `<span class="tag ${cls}">${type}</span>`;
+}
+
 const FEED_MATERIAL_LIST = [
-  { id: 'feed-1', customs: 'BG20260728041', material: '原料物料-A', country: '秘鲁', stack: '1#A1', available: 2549.12, feedDry: 80, checked: true },
-  { id: 'feed-2', customs: 'BG20260801022', material: '原料物料-B', country: '智利', stack: '1#A2', available: 1582.71, feedDry: 70, checked: true },
-  { id: 'feed-3', customs: 'BG20260715033', material: '原料物料-A', country: '秘鲁', stack: '2#A1', available: 899.17, feedDry: 50, checked: true },
-  { id: 'feed-4', customs: 'BG20260612018', material: '原料物料-B', country: '智利', stack: '2#A2', available: 620.5, feedDry: '', checked: false },
-  { id: 'feed-5', customs: 'BG20260508007', material: '原料物料-C', country: '澳大利亚', stack: '1#B1', available: 430.0, feedDry: '', checked: false },
+  { id: 'feed-1', customs: 'BG20260728041', cargoType: '达标矿', country: '秘鲁', stack: '1#A1', available: 2549.12, feedDry: 80, checked: true },
+  { id: 'feed-2', customs: 'BG20260801022', cargoType: '报备矿', country: '智利', stack: '1#A2', available: 1582.71, feedDry: 70, checked: true },
+  { id: 'feed-3', customs: 'BG20260715033', cargoType: '达标矿', country: '秘鲁', stack: '2#A1', available: 899.17, feedDry: 50, checked: true },
+  { id: 'feed-4', customs: 'BG20260612018', cargoType: '报备矿', country: '智利', stack: '2#A2', available: 620.5, feedDry: '', checked: false },
+  { id: 'feed-5', customs: 'BG20260508007', cargoType: '报备矿', country: '澳大利亚', stack: '1#B1', available: 430.0, feedDry: '', checked: false },
 ];
 
 function initFeedMaterialFilters() {
   const matSel = document.getElementById('feedFilterMaterial');
   const countrySel = document.getElementById('feedFilterCountry');
   if (matSel) {
-    const materials = [...new Set(FEED_MATERIAL_LIST.map((r) => r.material))];
-    matSel.innerHTML = '<option value="">全部物料</option>' + materials.map((m) => `<option value="${m}">${m}</option>`).join('');
+    const types = [...new Set(FEED_MATERIAL_LIST.map((r) => r.cargoType))];
+    matSel.innerHTML = '<option value="">全部货物类型</option>' + types.map((m) => `<option value="${m}">${m}</option>`).join('');
   }
   if (countrySel) {
     const countries = [...new Set(FEED_MATERIAL_LIST.map((r) => r.country))];
@@ -488,10 +493,10 @@ function renderFeedMaterialRows(rows = FEED_MATERIAL_LIST) {
   const tbody = document.getElementById('feedMaterialBody');
   if (!tbody) return;
   tbody.innerHTML = rows.map((r) => `
-    <tr class="feed-material-row" data-id="${r.id}" data-customs="${r.customs}" data-material="${r.material}" data-country="${r.country}" data-stack="${r.stack}">
+    <tr class="feed-material-row" data-id="${r.id}" data-customs="${r.customs}" data-cargo-type="${r.cargoType}" data-country="${r.country}" data-stack="${r.stack}">
       <td><input type="checkbox" class="feed-material-check" ${r.checked ? 'checked' : ''} onchange="updateFeedSelectedCount()" /></td>
       <td>${r.customs}</td>
-      <td>${r.material}</td>
+      <td>${cargoTypeTagHtml(r.cargoType)}</td>
       <td>${r.country}</td>
       <td><strong>${r.stack}</strong></td>
       <td>${r.available.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -514,7 +519,7 @@ function filterFeedMaterialRows() {
   const stack = document.getElementById('feedFilterStack')?.value?.trim().toLowerCase() || '';
   const filtered = FEED_MATERIAL_LIST.filter((r) => {
     if (customs && !r.customs.toLowerCase().includes(customs)) return false;
-    if (material && r.material !== material) return false;
+    if (material && r.cargoType !== material) return false;
     if (country && r.country !== country) return false;
     if (stack && !r.stack.toLowerCase().includes(stack)) return false;
     return true;
@@ -597,13 +602,195 @@ const OCR_SAMPLES = {
     hz: 'HZCK2026080301',
     consignee: '华东冶炼股份公司',
     weight: '100',
+    amount: '218000',
+    currency: 'USD',
     batch: 'FL-20260803 成品物料-A',
     material: '成品物料-A',
     preview: '出库报关单 BGCK2026080301.pdf',
   },
 };
 
-const ocrState = { target: null, docType: null, lastData: null };
+const ocrState = { target: null, docType: null, lastData: null, recognized: null };
+
+const OCR_FIELD_LABELS = {
+  ship: '船名',
+  bl: '提单号',
+  customs: '报关单号',
+  hz: '核注清单号',
+  amount: '报关单金额',
+  currency: '币种',
+  consignee: '流向企业',
+  weight: '出库重量',
+  wet: '湿重',
+  dry: '干重',
+  moisture: '水分',
+  docNo: '单据编号',
+  material: '物料',
+};
+
+function currencyMark(code) {
+  return code === 'USD' ? '$' : '¥';
+}
+
+function formatOcrAmount(amount, currency) {
+  if (amount == null || amount === '') return '—';
+  const n = Number(amount);
+  const num = Number.isFinite(n) ? n.toLocaleString('en-US') : String(amount);
+  return `${currencyMark(currency)} ${num}`;
+}
+
+function rememberOcrRecognized(target, data) {
+  ocrState.recognized = { target, data: JSON.parse(JSON.stringify(data || {})) };
+}
+
+function diffOcrFields(before, after) {
+  if (!before || !after) return [];
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const skip = new Set(['preview', 'batch', 'elements']);
+  const changes = [];
+  keys.forEach((key) => {
+    if (skip.has(key)) return;
+    const a = String(before[key] ?? '').trim();
+    const b = String(after[key] ?? '').trim();
+    if (a !== b) {
+      const label = OCR_FIELD_LABELS[key] || key;
+      const show = (val, k) => (k === 'amount' ? formatOcrAmount(val, after.currency || before.currency) : (k === 'currency' ? (val === 'USD' ? '美元' : val === 'CNY' ? '人民币' : val) : val));
+      changes.push({
+        field: label,
+        before: show(a, key) || '—',
+        after: show(b, key) || '—',
+      });
+    }
+  });
+  const elA = before.elements || {};
+  const elB = after.elements || {};
+  new Set([...Object.keys(elA), ...Object.keys(elB)]).forEach((code) => {
+    const a = String(elA[code] ?? '').trim();
+    const b = String(elB[code] ?? '').trim();
+    if (a !== b) changes.push({ field: `品质 ${code}`, before: a || '—', after: b || '—' });
+  });
+  return changes;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function formatAuditNow() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const sec = pad(d.getSeconds());
+  return {
+    date: '2026-08-03',
+    clock,
+    full: `2026-08-03 ${clock}:${sec}`,
+  };
+}
+
+function appendOcrCorrectionAudit({ module, bizNo, customsNo, prodBatch, changes, hint }) {
+  if (!changes?.length) return;
+  const body = document.getElementById('auditTableBody');
+  if (!body) return;
+  const t = formatAuditNow();
+  const summary = changes.map((c) => `${c.field}：${c.before} → ${c.after}`).join('；');
+  const beforeText = changes.map((c) => `${c.field}：${c.before}`).join('\n');
+  const afterText = changes.map((c) => `${c.field}：${c.after}`).join('\n');
+  const tr = document.createElement('tr');
+  tr.dataset.module = module;
+  tr.dataset.customs = '0';
+  tr.dataset.time = t.date;
+  tr.dataset.customsNo = customsNo || '';
+  tr.dataset.prodBatch = prodBatch || '';
+  tr.dataset.auditOperator = 'admin / 业务账号';
+  tr.dataset.auditTime = `${t.full} / 本地`;
+  tr.dataset.auditModule = `${module} / ${bizNo || '—'}`;
+  tr.dataset.auditResult = '成功；OCR 字段人工修正';
+  tr.dataset.auditBefore = beforeText;
+  tr.dataset.auditAfter = afterText;
+  tr.innerHTML = `<td>${escapeHtml(t.date)} ${escapeHtml(t.clock)}</td><td>admin</td><td>${escapeHtml(module)}</td><td>OCR字段修正</td><td>${escapeHtml(bizNo || '—')}</td><td>${escapeHtml(summary)}</td><td>${escapeHtml(hint || 'OCR 识别字段人工修正')}</td><td class="ops"><button class="btn-text" onclick="openAuditDetail(this)">详情</button></td>`;
+  body.prepend(tr);
+  applyAuditFilter();
+}
+
+function openAuditDetail(btn) {
+  const row = btn?.closest?.('tr');
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
+  set('auditDetailOperator', row?.dataset.auditOperator || '关务张 / 海关专用账号');
+  set('auditDetailTime', row?.dataset.auditTime || '2026-08-03 09:15:03 / 10.20.8.16');
+  set('auditDetailModule', row?.dataset.auditModule || '关务保税 / DZ-20260803-001');
+  set('auditDetailResult', row?.dataset.auditResult || '成功；差异项 2');
+  set('auditDetailBefore', row?.dataset.auditBefore || '对账状态：未执行；差异重量：—');
+  set('auditDetailAfter', row?.dataset.auditAfter || '对账状态：待复核；差异重量：-2.5 吨');
+  openModal('modalAuditDetail');
+}
+
+function collectOutboundOcrFields() {
+  const consignee = document.getElementById('obConsignee');
+  return {
+    customs: document.getElementById('obCustoms')?.value?.trim() || '',
+    hz: document.getElementById('obHz')?.value?.trim() || '',
+    consignee: consignee?.selectedOptions?.[0]?.text?.trim() || consignee?.value || '',
+    weight: document.getElementById('obWeight')?.value?.trim() || '',
+    amount: document.getElementById('obAmount')?.value?.trim() || '',
+    currency: document.getElementById('obCurrency')?.value || 'CNY',
+  };
+}
+
+function collectInboundOcrFields() {
+  return {
+    ship: document.getElementById('ibShip')?.value?.trim() || '',
+    bl: document.getElementById('ibBl')?.value?.trim() || '',
+    customs: document.getElementById('ibCustoms')?.value?.trim() || '',
+    hz: document.getElementById('ibHz')?.value?.trim() || '',
+    amount: document.getElementById('ibAmount')?.value?.trim() || '',
+    currency: document.getElementById('ibCurrency')?.value || 'CNY',
+  };
+}
+
+function collectReceiveOcrFields() {
+  return {
+    wet: document.getElementById('rcWet')?.value?.trim() || '',
+    dry: document.getElementById('rcDry')?.value?.trim() || '',
+    moisture: document.getElementById('rcMoisture')?.value?.trim() || '',
+    docNo: document.getElementById('rcQualityNo')?.value?.trim() || '',
+    elements: getQualityValuesFromContainer('rcQualityFields') || {},
+  };
+}
+
+function collectOcrModalFields(target) {
+  if (target === 'inbound') {
+    return {
+      ship: document.getElementById('ocrShip')?.value,
+      bl: document.getElementById('ocrBl')?.value,
+      customs: document.getElementById('ocrCustoms')?.value,
+      hz: document.getElementById('ocrHz')?.value,
+      amount: document.getElementById('ocrAmount')?.value,
+      currency: document.getElementById('ocrCurrency')?.value,
+    };
+  }
+  if (target === 'outbound') {
+    return {
+      customs: document.getElementById('ocrCustoms')?.value,
+      hz: document.getElementById('ocrHz')?.value,
+      consignee: document.getElementById('ocrConsignee')?.value,
+      weight: document.getElementById('ocrDry')?.value,
+      amount: document.getElementById('ocrAmount')?.value,
+      currency: document.getElementById('ocrCurrency')?.value,
+    };
+  }
+  return {
+    wet: document.getElementById('ocrWet')?.value,
+    dry: document.getElementById('ocrDry')?.value,
+    moisture: document.getElementById('ocrMoisture')?.value,
+    docNo: document.getElementById('ocrDocNo')?.value,
+    material: document.getElementById('ocrMaterial')?.value,
+    elements: getOcrQualityValues(),
+  };
+}
 
 function setOcrStatus(id, text, state) {
   const el = document.getElementById(id);
@@ -643,6 +830,7 @@ function applyInboundOcr(data) {
   selectOptionByText('ibMaterial', data.material);
   syncInboundFiling();
   setOcrStatus('ibOcrStatus', `已识别：${data.preview || '提单/报关单'} → 字段已回填`, 'is-ok');
+  rememberOcrRecognized('inbound', collectInboundOcrFields());
 }
 
 function applyReceiveWeightOcr(data) {
@@ -650,6 +838,7 @@ function applyReceiveWeightOcr(data) {
   setInputValue('rcDry', data.dry);
   setInputValue('rcMoisture', data.moisture);
   setOcrStatus('rcWeightOcrStatus', `重量单已识别：湿重 ${data.wet}t / 干重 ${data.dry}t`, 'is-ok');
+  rememberOcrRecognized('receive', collectReceiveOcrFields());
 }
 
 function applyReceiveQualityOcr(data) {
@@ -658,15 +847,20 @@ function applyReceiveQualityOcr(data) {
   setInputValue('rcMoisture', data.moisture);
   setInputValue('rcQualityNo', data.docNo);
   setOcrStatus('rcQualityOcrStatus', buildQualityOcrStatus(data), 'is-ok');
+  rememberOcrRecognized('receive', collectReceiveOcrFields());
 }
 
 function applyOutboundOcr(data) {
   setInputValue('obCustoms', data.customs);
   setInputValue('obHz', data.hz);
   setInputValue('obWeight', data.weight);
+  setInputValue('obAmount', data.amount);
+  const currencySel = document.getElementById('obCurrency');
+  if (currencySel && data.currency) currencySel.value = data.currency;
   selectOptionByText('obConsignee', data.consignee);
   selectOptionByText('obBatch', data.batch);
-  setOcrStatus('obOcrStatus', `已识别：${data.preview || '出库报关单'} → 字段已回填`, 'is-ok');
+  setOcrStatus('obOcrStatus', `已识别：${data.preview || '出库报关单'} → 字段已回填（可手工修正）`, 'is-ok');
+  rememberOcrRecognized('outbound', collectOutboundOcrFields());
 }
 
 function runOutboundOcr(fileName) {
@@ -711,7 +905,12 @@ function openOutboundModal() {
     const opt = Array.from(sel.options).find((o) => o.text.includes('南国铜业'));
     if (opt) sel.value = opt.value;
   }
-  setOcrStatus('obOcrStatus', '上传出库报关单影像，自动识别并回填报关单号、核注清单号、流向企业与重量');
+  setOcrStatus('obOcrStatus', '上传出库报关单影像，自动识别并回填报关单号、核注清单号、流向企业、重量与报关单金额');
+  const currencySel = document.getElementById('obCurrency');
+  if (currencySel) currencySel.value = 'USD';
+  setInputValue('obAmount', '');
+  const remark = document.getElementById('obRemark');
+  if (remark) remark.value = '';
 }
 
 function formatOutboundShortTime(d = new Date()) {
@@ -743,7 +942,7 @@ function approveOutbound(btn) {
   const row = getOutboundRow(btn);
   if (!row || row.dataset.status !== 'pending') return;
   row.dataset.status = 'approved';
-  const tagCell = row.cells[7];
+  const tagCell = row.querySelector('.outbound-status');
   if (tagCell) tagCell.innerHTML = '<span class="tag tag-orange">已审核</span>';
   renderOutboundOps(row);
   toast(`出库单 ${row.dataset.outboundId} 审核通过`, 'ok');
@@ -761,7 +960,7 @@ function completeOutbound(btn) {
   const timesCell = row.querySelector('.outbound-times');
   if (timesCell) timesCell.textContent = `${outAt} / ${finishAt}`;
   row.dataset.status = 'completed';
-  const tagCell = row.cells[7];
+  const tagCell = row.querySelector('.outbound-status');
   if (tagCell) tagCell.innerHTML = '<span class="tag tag-green">已出库</span>';
   renderOutboundOps(row);
   toast(`出库单 ${row.dataset.outboundId} 已完成 · 完成时间 ${finishAt}`, 'ok');
@@ -772,6 +971,7 @@ function saveOutbound() {
   const hz = document.getElementById('obHz')?.value?.trim();
   const weight = document.getElementById('obWeight')?.value?.trim();
   const consignee = document.getElementById('obConsignee')?.value?.trim();
+  const remark = document.getElementById('obRemark')?.value?.trim() || '';
   if (!customs || !hz) {
     toast('请先上传并 OCR 识别出库报关单，回填报关单号与核注清单号', 'warn');
     return;
@@ -780,8 +980,22 @@ function saveOutbound() {
     toast('请填写出库重量与流向企业（可通过 OCR 回填）', 'warn');
     return;
   }
+  const current = collectOutboundOcrFields();
+  const baseline = ocrState.recognized?.target === 'outbound' ? ocrState.recognized.data : null;
+  const changes = diffOcrFields(baseline || current, current);
+  if (baseline && changes.length) {
+    appendOcrCorrectionAudit({
+      module: '出库',
+      bizNo: 'CK-新建',
+      customsNo: current.customs,
+      prodBatch: document.getElementById('obBatch')?.value || '',
+      changes,
+      hint: `出库报关单 OCR 人工修正${remark ? ' · 备注 ' + remark : ''}`,
+    });
+    rememberOcrRecognized('outbound', current);
+  }
   closeModal('modalOutbound');
-  toast('出库单已提交审核（原型演示）', 'ok');
+  toast(remark ? '出库单已提交审核（含备注）' : '出库单已提交审核（原型演示）', 'ok');
 }
 
 function runInboundOcr(docType) {
@@ -830,6 +1044,8 @@ function configureOcrModalFields(target) {
     ocrCustoms: target === 'inbound' || target === 'outbound',
     ocrHz: target === 'inbound' || target === 'outbound',
     ocrConsignee: target === 'outbound',
+    ocrAmount: target === 'inbound' || target === 'outbound',
+    ocrCurrency: target === 'inbound' || target === 'outbound',
   };
   Object.entries(fields).forEach(([id, show]) => {
     const group = document.getElementById(id)?.closest('.form-group');
@@ -846,6 +1062,9 @@ function fillOcrModalFromData(target, data) {
     setInputValue('ocrBl', data.bl);
     setInputValue('ocrCustoms', data.customs);
     setInputValue('ocrHz', data.hz);
+    setInputValue('ocrAmount', data.amount);
+    const ibCur = document.getElementById('ocrCurrency');
+    if (ibCur) ibCur.value = data.currency || 'CNY';
     document.getElementById('ocrPreviewName').textContent = data.preview || '单据预览';
     document.getElementById('ocrPreviewHint').textContent = '提单 / 报关单影像（示意）';
   } else if (target === 'outbound') {
@@ -853,6 +1072,9 @@ function fillOcrModalFromData(target, data) {
     setInputValue('ocrHz', data.hz);
     setInputValue('ocrConsignee', data.consignee);
     setInputValue('ocrDry', data.weight);
+    setInputValue('ocrAmount', data.amount);
+    const obCur = document.getElementById('ocrCurrency');
+    if (obCur) obCur.value = data.currency || 'USD';
     document.getElementById('ocrPreviewName').textContent = data.preview || '出库报关单预览';
     document.getElementById('ocrPreviewHint').textContent = '出库报关单影像（示意）';
   } else if (target === 'receive-weight') {
@@ -912,42 +1134,59 @@ function openOcrModal(target) {
 
 function applyOcrModal() {
   const target = ocrState.target || 'receive';
+  const edited = collectOcrModalFields(target);
+  const baseline = ocrState.lastData || ocrState.recognized?.data;
+  const changes = diffOcrFields(baseline, { ...baseline, ...edited });
   if (target === 'inbound') {
     applyInboundOcr({
-      ship: document.getElementById('ocrShip')?.value,
-      bl: document.getElementById('ocrBl')?.value,
-      customs: document.getElementById('ocrCustoms')?.value,
-      hz: document.getElementById('ocrHz')?.value,
+      ship: edited.ship,
+      bl: edited.bl,
+      customs: edited.customs,
+      hz: edited.hz,
       arrival: document.getElementById('ibArrival')?.value || OCR_SAMPLES.inbound_bl.arrival,
-      amount: OCR_SAMPLES.inbound_bl.amount,
-      currency: OCR_SAMPLES.inbound_bl.currency,
+      amount: edited.amount,
+      currency: edited.currency,
       material: OCR_SAMPLES.inbound_bl.material,
       preview: document.getElementById('ocrPreviewName')?.textContent,
     });
   } else if (target === 'outbound') {
     applyOutboundOcr({
-      customs: document.getElementById('ocrCustoms')?.value,
-      hz: document.getElementById('ocrHz')?.value,
-      consignee: document.getElementById('ocrConsignee')?.value,
-      weight: document.getElementById('ocrDry')?.value,
+      customs: edited.customs,
+      hz: edited.hz,
+      consignee: edited.consignee,
+      weight: edited.weight,
+      amount: edited.amount,
+      currency: edited.currency,
       batch: OCR_SAMPLES.outbound_customs.batch,
       preview: document.getElementById('ocrPreviewName')?.textContent,
     });
   } else {
     applyReceiveWeightOcr({
-      wet: document.getElementById('ocrWet')?.value,
-      dry: document.getElementById('ocrDry')?.value,
-      moisture: document.getElementById('ocrMoisture')?.value,
+      wet: edited.wet,
+      dry: edited.dry,
+      moisture: edited.moisture,
     });
     applyReceiveQualityOcr({
-      docNo: document.getElementById('ocrDocNo')?.value,
-      elements: getOcrQualityValues(),
-      moisture: document.getElementById('ocrMoisture')?.value,
-      material: document.getElementById('ocrMaterial')?.value,
+      docNo: edited.docNo,
+      elements: edited.elements,
+      moisture: edited.moisture,
+      material: edited.material,
     });
   }
+  if (changes.length) {
+    const module = target === 'outbound' ? '出库' : target === 'inbound' ? '入库' : '入库';
+    appendOcrCorrectionAudit({
+      module,
+      bizNo: target === 'outbound' ? '出库报关单' : target === 'inbound' ? '入库预约' : '收货登记',
+      customsNo: edited.customs || '',
+      prodBatch: target === 'outbound' ? (document.getElementById('obBatch')?.value || '') : '',
+      changes,
+      hint: 'OCR 识别详情人工修正后回填',
+    });
+  }
+  ocrState.lastData = { ...(baseline || {}), ...edited };
   closeModal('modalOcr');
-  toast('OCR 字段已回填并归档', 'ok');
+  toast(changes.length ? 'OCR 字段已修正、回填并留痕' : 'OCR 字段已回填并归档', 'ok');
 }
 
 function saveInbound() {
@@ -956,6 +1195,20 @@ function saveInbound() {
   if (!ship || !bl) {
     toast('请填写船名与提单号，或使用 OCR 识别回填', 'warn');
     return;
+  }
+  const current = collectInboundOcrFields();
+  const baseline = ocrState.recognized?.target === 'inbound' ? ocrState.recognized.data : null;
+  const changes = baseline ? diffOcrFields(baseline, current) : [];
+  if (changes.length) {
+    appendOcrCorrectionAudit({
+      module: '入库',
+      bizNo: 'RK-预约',
+      customsNo: current.customs,
+      prodBatch: '',
+      changes,
+      hint: '入库提单/报关单 OCR 人工修正',
+    });
+    rememberOcrRecognized('inbound', current);
   }
   closeModal('modalInbound');
   toast('入库预约已提交（原型演示）', 'ok');
@@ -1919,6 +2172,81 @@ function auditRowMatchesField(row, token, datasetKey) {
   return row.textContent.toLowerCase().includes(key);
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function invHourKey(dateStr, hour) {
+  if (!dateStr) return '';
+  return `${dateStr}T${pad2(hour)}`;
+}
+
+function invMonthRangeKeys(now = new Date()) {
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  const ym = `${y}-${pad2(m + 1)}`;
+  return { from: `${ym}-01T00`, to: `${ym}-${pad2(last)}T23` };
+}
+
+function fillInvHourSelects() {
+  const pairs = [
+    ['invTimeFromHour', '8'],
+    ['invTimeToHour', '16'],
+  ];
+  pairs.forEach(([id, def]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!el.options.length) {
+      for (let h = 0; h < 24; h++) {
+        const o = document.createElement('option');
+        o.value = String(h);
+        o.textContent = `${h}时`;
+        el.appendChild(o);
+      }
+      el.value = def;
+    }
+  });
+}
+
+function onInvTimeModeChange() {
+  const mode = document.getElementById('invTimeMode')?.value || 'month';
+  const custom = document.getElementById('invTimeCustom');
+  if (custom) custom.hidden = mode !== 'custom';
+}
+
+function applyInventoryFilter() {
+  const mode = document.getElementById('invTimeMode')?.value || 'month';
+  let from = '';
+  let to = '';
+  if (mode === 'month') {
+    ({ from, to } = invMonthRangeKeys());
+  } else {
+    const fromDate = document.getElementById('invTimeFromDate')?.value || '';
+    const toDate = document.getElementById('invTimeToDate')?.value || '';
+    const fromHour = document.getElementById('invTimeFromHour')?.value ?? '0';
+    const toHour = document.getElementById('invTimeToHour')?.value ?? '23';
+    if (!fromDate || !toDate) {
+      toast('请选择起止日期', 'warn');
+      return;
+    }
+    from = invHourKey(fromDate, fromHour);
+    to = invHourKey(toDate, toHour);
+    if (from > to) {
+      toast('开始时间不能晚于结束时间', 'warn');
+      return;
+    }
+  }
+  let visible = 0;
+  document.querySelectorAll('#invTableBody tr').forEach((row) => {
+    const at = row.dataset.inAt || '';
+    const show = (!from || at >= from) && (!to || at <= to);
+    row.style.display = show ? '' : 'none';
+    if (show) visible += 1;
+  });
+  toast(visible ? `已查询，共 ${visible} 条` : '该时间范围内暂无库存', visible ? 'ok' : 'warn');
+}
+
 function applyAuditFilter() {
   const module = document.getElementById('auditModuleFilter')?.value || '';
   const operator = (document.getElementById('auditOperator')?.value || '').trim();
@@ -2440,6 +2768,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!sessionStorage.getItem('wms_wh')) sessionStorage.setItem('wms_wh', defaultWarehouseFilter());
   toggleFilingFields();
   populateInboundMaterials();
+  fillInvHourSelects();
+  onInvTimeModeChange();
   applyAuditFilter();
 });
 
@@ -2746,18 +3076,18 @@ function renderStackIsoSvg(level) {
 }
 
 const FLOW_LOGS = [
-  { time: '14:32', type: '入仓', cls: 'in', text: 'RK-20260803-001 · 物料 800 湿吨 · 1仓' },
-  { time: '14:18', type: '出仓', cls: 'out', text: 'CK-20260803-012 · 成品 180 干吨 · 华东冶炼' },
-  { time: '13:55', type: '生产', cls: 'prod', text: 'FL-20260803 · 3 票报关单投料 200 干吨' },
-  { time: '13:40', type: '称重', cls: 'weigh', text: 'RK-20260801-015 · 湿 800 / 干 720' },
-  { time: '13:22', type: '上架', cls: 'put', text: '4#A1 · 生产批次 FL-20260803 上架，片区标识：待检区域' },
-  { time: '12:58', type: '完工', cls: 'done', text: 'WG-20260803-01 · 成品 180 干吨入库' },
-  { time: '12:35', type: '入仓', cls: 'in', text: 'RK-20260803-002 · 物料 620 湿吨 · 2仓' },
-  { time: '11:48', type: '出仓', cls: 'out', text: 'CK-20260803-008 · 成品 95 干吨 · 华南冶炼' },
-  { time: '11:20', type: '生产', cls: 'prod', text: 'TL-20260803-003 · 投料物料 150 干吨' },
-  { time: '10:45', type: '称重', cls: 'weigh', text: 'RK-20260802-028 · 湿 540 / 干 486' },
-  { time: '10:12', type: '入仓', cls: 'in', text: 'RK-20260802-028 · 物料 540 湿吨 · 1仓' },
-  { time: '09:30', type: '出仓', cls: 'out', text: 'CK-20260803-005 · 成品 120 干吨 · 丰联铜业' },
+  { date: '2026-08-03', time: '14:32', type: '入仓', cls: 'in', text: 'RK-20260803-001 · 物料 800 湿吨 · 1仓' },
+  { date: '2026-08-03', time: '14:18', type: '出仓', cls: 'out', text: 'CK-20260803-012 · 成品 180 干吨 · 华东冶炼' },
+  { date: '2026-08-03', time: '13:55', type: '生产', cls: 'prod', text: 'FL-20260803 · 3 票报关单投料 200 干吨' },
+  { date: '2026-08-01', time: '13:40', type: '称重', cls: 'weigh', text: 'RK-20260801-015 · 湿 800 / 干 720' },
+  { date: '2026-08-03', time: '13:22', type: '上架', cls: 'put', text: '4#A1 · 生产批次 FL-20260803 上架，片区标识：待检区域' },
+  { date: '2026-08-03', time: '12:58', type: '完工', cls: 'done', text: 'WG-20260803-01 · 成品 180 干吨入库' },
+  { date: '2026-08-03', time: '12:35', type: '入仓', cls: 'in', text: 'RK-20260803-002 · 物料 620 湿吨 · 2仓' },
+  { date: '2026-08-03', time: '11:48', type: '出仓', cls: 'out', text: 'CK-20260803-008 · 成品 95 干吨 · 华南冶炼' },
+  { date: '2026-08-03', time: '11:20', type: '生产', cls: 'prod', text: 'TL-20260803-003 · 投料物料 150 干吨' },
+  { date: '2026-08-02', time: '10:45', type: '称重', cls: 'weigh', text: 'RK-20260802-028 · 湿 540 / 干 486' },
+  { date: '2026-08-02', time: '10:12', type: '入仓', cls: 'in', text: 'RK-20260802-028 · 物料 540 湿吨 · 1仓' },
+  { date: '2026-08-03', time: '09:30', type: '出仓', cls: 'out', text: 'CK-20260803-005 · 成品 120 干吨 · 丰联铜业' },
 ];
 
 const PROD_DATA = {
@@ -4252,10 +4582,11 @@ function renderYard() {
 }
 
 function flowLogItemHtml(s) {
-  const [hh, mm] = s.time.split(':');
+  const hh = (s.time || '').split(':')[0];
+  const date = s.date || '2026-08-03';
   return `
     <li class="flow-log-item">
-      <time>${hh}时${mm}分</time>
+      <time>${date} ${hh}时</time>
       <em class="flow-log-type ${s.cls}">${s.type}</em>
       <span class="flow-log-text">${s.text}</span>
     </li>

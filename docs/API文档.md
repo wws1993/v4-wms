@@ -22,21 +22,21 @@
 
 ## 驾驶舱
 
-- `GET /api/dashboard/cockpit` — 可视化驾驶舱汇总（KPI、仓库堆位占用、近 7 日入出库、作业流水、账实一致率、预警列表）
+- `GET /api/dashboard/cockpit` — 可视化驾驶舱汇总（KPI、仓库堆位占用、近 7 日入出库湿吨、作业流水时间到小时、账实一致率、预警列表）
 
 ## 业务单据
 
 - `GET/POST /api/inbound` — 入库
 - `GET/POST /api/transfers` — 移库
 - `POST /api/transfers/batch` — 批量/整票/拆票移库，统一校验库容并生成库存流水
-- `GET/POST /api/inventory` — 库存查询
+- `GET/POST /api/inventory` — 库存查询（时间维度 `timeMode=month|range`，`range` 时 `from`/`to` 精确到小时）
 - `GET /api/inventory/batches/{batchNo}` — 本票详情（报关单、重量证书、品质证书及品质参数；`batchNo` 为报关单号或生产批次号）
 - `GET /api/inventory/batches/{batchNo}/ledger` — 干湿重及业务流水穿透；`batchNo` 为**报关单号**或**生产批次号**（query `type=customs|production`）
 - `GET /api/inventory/alerts` — 库容、库龄、账册到期与账实差异预警
 - `GET/POST /api/stocktakes` — 盘点
-- `GET/POST /api/production` — 生产流转；投料按**生产批次号**挂接 **1:N 报关单号**，完工入库库存批次取该生产批次号
+- `GET/POST /api/production` — 生产流转；投料按**生产批次号**挂接 **1:N 报关单号**，矿物按**达标矿/报备矿**展示；完工入库库存批次取该生产批次号
 - `GET /api/production/{prodBatchNo}` — 生产批次详情及关联报关单号谱系
-- `GET/POST /api/outbound` — 出库；创建时可提交出库报关单 OCR 识别结果并回填报关单号、核注清单号
+- `GET/POST /api/outbound` — 出库；创建时可提交出库报关单 OCR（报关单号、核注清单号、流向企业、重量、报关单金额）及备注；OCR 字段人工修正写入审计日志
 
 ## 关务 / OCR / 审计
 
