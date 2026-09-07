@@ -1,0 +1,42 @@
+XFTP 覆盖部署（不会冲掉线上批注 / 平面图）
+
+数据已改到 api 外面：服务器 ~/wms/data/
+  annotations.json
+  floor-plans.json
+
+请勿把本地的 api/data、api/node_modules 传到线上。
+
+────────────────────────────────
+每次更新原型，只覆盖这两处：
+
+1) 本地 wms/dist/  →  服务器 ~/wms/dist/
+   （整目录覆盖即可）
+
+2) 本地 wms/api/ 里的代码文件 → 服务器 ~/wms/api/
+   只传这些（可多选后覆盖）：
+     server.py
+     server.js
+     start.sh
+     wms-anno-api.service
+     package.json
+     Dockerfile
+   不要传：
+     data/
+     node_modules/
+
+3) 若改过反代：本地 wms/nginx.conf → 服务器 ~/wms/nginx.conf
+   然后：cd ~/wms && docker compose restart web
+
+也可先运行 pack-xftp.ps1，把生成的 wms/xftp-upload/ 里的 dist、api、nginx.conf 覆盖到服务器对应位置。
+
+────────────────────────────────
+第一次用新目录（或刚覆盖完 api）在服务器执行：
+
+  mkdir -p ~/wms/data
+  cp ~/wms/api/wms-anno-api.service /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl restart wms-anno-api
+  # 静态页：覆盖 dist 后一般不用重启；若用了 docker：
+  cd ~/wms && docker compose restart web
+
+启动时若 ~/wms/data 还是空的，会把旧的 ~/wms/api/data 里「有内容」的 json 拷过去一次。空的本地 json 不会覆盖已有线上数据。

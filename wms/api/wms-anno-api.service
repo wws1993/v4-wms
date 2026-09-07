@@ -1,0 +1,15 @@
+[Unit]
+Description=WMS prototype annotations API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/wms/api
+Environment=PORT=3000
+Environment=WMS_DATA_DIR=/root/wms/data
+ExecStart=/usr/bin/python3 /root/wms/api/server.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
