@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WMS系统</title>
-  <link rel="stylesheet" href="styles.css?v=fp65" />
+  <link rel="stylesheet" href="styles.css?v=fp80" />
 </head>
 <body>
   <!-- 登录 -->
@@ -15,14 +15,13 @@
         <h1>WMS系统</h1>
         <p>广西丰联铜业有限公司 · 保税仓储</p>
       </div>
-      <div class="login-hint">演示账号：仓管员 / 关务员（海关专用）/ 生产员 / 管理员，密码任意；登录后鼠标移入顶栏角色标签可切换</div>
+      <div class="login-hint">演示账号：admin / wh01 / customs01，密码任意；也可在系统设置 · 账号管理注册新账号。登录后鼠标移入顶栏角色标签可切换</div>
       <div class="form-group">
         <label>账号类型</label>
         <select id="loginRole" class="select">
           <option value="warehouse">仓管员</option>
-          <option value="customs">海关专用账号（关务员）</option>
+          <option value="customs">关务员</option>
           <option value="admin" selected>系统管理员</option>
-          <option value="production">生产员</option>
         </select>
       </div>
       <div class="form-group">
@@ -85,7 +84,7 @@
               </div>
               <div class="ck-status">
                 <span class="ck-chip"><i class="ck-dot live"></i>系统在线</span>
-                <span class="ck-chip"><i class="ck-dot ok"></i>账册 T3700XXXX001</span>
+                <span class="ck-chip"><i class="ck-dot ok"></i>账册 T3700XXXX002</span>
                 <span class="ck-chip warn"><i class="ck-dot warn"></i>预警 3</span>
                 <div class="ck-clock">
                   <span id="ckDate">2026-08-14</span>
@@ -148,14 +147,39 @@
             <div class="ck-panel ck-yard">
               <div class="ck-hd">
                 <h3>仓库堆位示意图</h3>
-                <div class="ck-legend">
-                  <span><i class="lg lg-low"></i>空闲 &lt;40%</span>
-                  <span><i class="lg lg-mid"></i>正常</span>
-                  <span><i class="lg lg-high"></i>紧张 ≥70%</span>
-                  <span><i class="lg lg-crit"></i>超阈 ≥85%</span>
+                <div class="ck-legend ck-yard-legend">
+                  <span><i class="lg lg-idle"></i>空闲</span>
+                  <span><i class="lg lg-rsv"></i>入库预约</span>
+                  <span><i class="lg lg-ng-ok"></i><i class="lg lg-ng-filed"></i>南国铜业 达标/报备</span>
+                  <span><i class="lg lg-wm-ok"></i><i class="lg lg-wm-filed"></i>五矿有色 达标/报备</span>
+                  <span><i class="lg lg-jc-ok"></i><i class="lg lg-jc-filed"></i>广西金川 达标/报备</span>
+                  <span><i class="lg lg-mixfg"></i>混成品</span>
                 </div>
               </div>
-              <div class="wh-grid" id="yardMap"></div>
+              <div class="yard-plan-wrap is-loading" id="yardMap">
+                <div class="yard-plan-loading" role="status" aria-live="polite" aria-label="平面图加载中">
+                  <div class="yard-plan-loading-vignette"></div>
+                  <div class="yard-plan-loading-grid"></div>
+                  <div class="yard-plan-loading-scan"></div>
+                  <div class="yard-plan-loading-frame">
+                    <span class="yl-c yl-tl"></span>
+                    <span class="yl-c yl-tr"></span>
+                    <span class="yl-c yl-bl"></span>
+                    <span class="yl-c yl-br"></span>
+                    <div class="yard-plan-loading-radar" aria-hidden="true">
+                      <div class="yard-plan-loading-ring"></div>
+                      <div class="yard-plan-loading-sweep"></div>
+                      <div class="yard-plan-loading-core"></div>
+                    </div>
+                    <div class="yard-plan-loading-copy">
+                      <span class="yard-plan-loading-kicker">SYS // YARD-MAP</span>
+                      <strong>平面图同步中</strong>
+                      <div class="yard-plan-loading-ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                      <em>读取已保存园区布局</em>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="ck-side">
@@ -179,8 +203,7 @@
               <canvas id="chartTrend"></canvas>
             </div>
             <div class="ck-panel ck-donut">
-              <div class="ck-hd"><h3>仓库库容构成</h3></div>
-              <canvas id="chartCap"></canvas>
+              <div class="ck-hd"><h3>仓库使用分布</h3></div>
               <div class="cap-list" id="capList"></div>
             </div>
             <div class="ck-panel ck-alert">
@@ -252,6 +275,7 @@
                       <button type="button" class="arch-tag" onclick="go('stocktake')">盘点差异</button>
                       <button type="button" class="arch-tag" onclick="go('alert')">库容预警</button>
                       <button type="button" class="arch-tag" onclick="go('alert')">库龄预警</button>
+                      <button type="button" class="arch-tag" onclick="go('alert')">码头仓库预警</button>
                     </div>
                   </div>
                   <div class="arch-mod">
@@ -280,7 +304,7 @@
                       <button type="button" class="arch-tag" onclick="go('customs')">账实对账</button>
                       <button type="button" class="arch-tag" onclick="go('customs')">差异穿透</button>
                       <button type="button" class="arch-tag" onclick="go('customs')">报表导出</button>
-                      <button type="button" class="arch-tag" onclick="go('customs')">海关账号</button>
+                      <button type="button" class="arch-tag" onclick="go('settings')">账号管理</button>
                       <button type="button" class="arch-tag" onclick="go('integration')">核销预留</button>
                     </div>
                   </div>
@@ -399,26 +423,26 @@
 
         <!-- 仓库管理 -->
         <section class="page" data-page="warehouses">
-          <div class="anno"><strong>基础数据</strong>仓库仅按<strong>编号</strong>标识（1、2、4、5、6 仓），不设名称；每仓维护总库容与下属堆位数量。</div>
-          <div class="anno"><strong>编码规则</strong><strong>1#</strong> 表示 1 号仓，<strong>1#A1</strong> 表示 1 号仓 A1 堆位。</div>
+          <div class="anno"><strong>基础数据</strong>编号仓为 <strong>1、2、4、5、6 仓</strong>；另有<strong>码头仓库</strong>（编号「码头」）。每仓维护总库容、<strong>面积</strong>（仅展示、可编辑）与下属堆位。码头仓库货品超过系统参数天数（默认 7 天）触发预警。</div>
+          <div class="anno"><strong>编码规则</strong><strong>1#</strong> 表示 1 号仓，<strong>1#A1</strong> 表示 1 号仓 A1 堆位；码头仓库堆位如 <strong>码头#A1</strong>。</div>
           <div class="toolbar">
-            <button class="btn btn-primary" onclick="openModal('modalWarehouse')">新建仓库</button>
+            <button class="btn btn-primary" onclick="openWarehouseModal()">新建仓库</button>
             <button class="btn btn-default">导出</button>
           </div>
           <div class="panel"><div class="panel-hd"><h3>仓库一览</h3></div><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>仓库编号</th><th>仓库</th><th>库容(吨)</th><th>堆位数</th><th>已用/占用率</th><th>状态</th><th>操作</th></tr></thead>
+              <thead><tr><th>仓库编号</th><th>仓库</th><th>库容(吨)</th><th>面积(㎡)</th><th>堆位数</th><th>已用/占用率</th><th>状态</th><th>操作</th></tr></thead>
               <tbody id="warehouseTableBody"></tbody>
             </table>
-            <div class="pagination"><span>共 5 个仓库（1、2、4、5、6 仓）</span></div>
+            <div class="pagination"><span id="warehouseCount">共 6 个仓库</span></div>
           </div></div>
         </section>
 
         <!-- 堆位管理 -->
         <section class="page" data-page="stacks">
-          <div class="anno"><strong>基础数据</strong>每仓拆分为若干<strong>堆位</strong>；在库身份为<strong>报关单号</strong>（原料）或<strong>生产批次</strong>（成品），二选一；<strong>片区标识</strong>随查验状态自动变更，操作留痕见<strong>操作日志</strong>。</div>
-          <div class="anno"><strong>示例</strong>生产批次 <strong>FL-20260803</strong> 上架至 <strong>4#A1</strong>，查验完成前片区标识为<strong>待检区域</strong>；查验放行后变为<strong>混成品区域</strong>。</div>
-          <div class="anno" id="locationFilterHint">本页仅支持<strong>单仓库</strong>展示，默认第一个仓库。可在此维护该仓<strong>平面图</strong>（堆位按库容比例绘制，门与功能区可拖拽缩放），保存后驾驶舱点击仓库模型展示。</div>
+          <div class="anno"><strong>基础数据</strong>每仓拆分为若干<strong>堆位</strong>；维护编码、片区标识与库容。网格行列取自<strong>平面图设置</strong>。<strong>片区标识</strong>变更留痕见<strong>操作日志</strong>。</div>
+          <div class="anno"><strong>示例</strong>堆位 <strong>4#A1</strong> 查验完成前片区标识为<strong>待检区域</strong>；查验放行后变为<strong>混成品区域</strong>。</div>
+          <div class="anno" id="locationFilterHint">本页仅支持<strong>单仓库</strong>展示，默认第一个仓库。堆位网格取自<strong>系统设置 · 平面图设置</strong>中该堆位所占行列。</div>
           <div class="panel">
             <div class="panel-bd">
               <div class="filter-bar">
@@ -433,16 +457,14 @@
               </div>
             </div>
           </div>
-          <div class="anno"><strong>编码规则</strong>堆位编码由<strong>仓库编号 + 堆位名称</strong>自动拼接（如 1 号仓 + A1 → <strong>1#A1</strong>），不可手动编辑。</div>
+          <div class="anno"><strong>编码规则</strong>堆位编码由<strong>仓库编号 + 堆位名称</strong>自动拼接（如 1 号仓 + A1 → <strong>1#A1</strong>，码头仓库 + A1 → <strong>码头#A1</strong>），不可手动编辑。</div>
           <div class="toolbar">
             <button class="btn btn-primary" onclick="openNewStackModal()">新建堆位</button>
             <button class="btn btn-default" onclick="openModal('modalInspect')">查验完成</button>
-            <button class="btn btn-default">导出</button>
-            <button class="btn btn-default" onclick="openFloorPlanEditor()">平面图管理</button>
           </div>
           <div class="panel"><div class="panel-hd"><h3>堆位一览</h3></div><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>堆位编码</th><th>所属仓库</th><th>片区标识</th><th>报关单号</th><th>生产批次</th><th>库容(吨)</th><th>已用/占用率</th><th>查验状态</th><th>状态</th><th>操作</th></tr></thead>
+              <thead><tr><th>堆位编码</th><th>所属仓库</th><th>片区标识</th><th>网格</th><th>库容(吨)</th><th>状态</th><th>操作</th></tr></thead>
               <tbody id="stackTableBody"></tbody>
             </table>
             <div class="pagination"><span id="stackPagination">共 36 条堆位（5 仓）</span><button class="page-btn active">1</button><button class="page-btn">2</button></div>
@@ -451,7 +473,7 @@
 
         <!-- 物料档案 -->
         <section class="page" data-page="materials">
-          <div class="anno"><strong>基础数据</strong>货物类型分为<strong>达标矿</strong>、<strong>报备矿</strong>；<strong>报备矿</strong>须关联矿源。备案号不在档案维护，<strong>入库预约时按矿源自动匹配当前有效且有剩余的备案</strong>。品质参数属于上架后的本票库存，不在档案展示。</div>
+          <div class="anno"><strong>基础数据</strong>原料货物类型为<strong>达标矿</strong>、<strong>报备矿</strong>（报备矿须关联矿源）；成品货物类型一律为<strong>混成品</strong>。备案号不在档案维护，<strong>入库预约时按矿源自动匹配当前有效且有剩余的备案</strong>。品质参数属于上架后的本票库存，不在档案展示。</div>
           <div class="tabs" id="matTabs">
             <div class="tab active" data-tab="goods">物料档案</div>
             <div class="tab" data-tab="filing">矿源备案</div>
@@ -460,16 +482,16 @@
             <div class="toolbar">
               <button class="btn btn-primary" onclick="openMaterialModal()">新建物料</button>
               <button class="btn btn-default">导入</button>
+              <button type="button" class="btn btn-default" onclick="exportMaterialsExcel()">导出 Excel</button>
               <div class="spacer"></div>
-              <select class="select" style="width:130px"><option>全部货物类型</option><option>达标矿</option><option>报备矿</option></select>
+              <select class="select" style="width:130px"><option>全部货物类型</option><option>达标矿</option><option>报备矿</option><option>混成品</option></select>
               <select class="select" style="width:120px"><option>全部类型</option><option>原料</option><option>成品</option></select>
-              <select class="select" style="width:140px"><option>全部原产国</option><option>秘鲁</option><option>智利</option><option>澳大利亚</option><option>中国</option></select>
               <input class="input" style="width:180px" placeholder="物料编码/名称" />
               <button class="btn btn-primary" onclick="toast('已查询')">查询</button>
             </div>
             <div class="panel"><div class="panel-bd tight">
               <table class="data">
-                <thead><tr><th>物料编码</th><th>名称</th><th>货物类型</th><th>类型</th><th>矿源</th><th>原产国</th><th>附件</th><th>操作</th></tr></thead>
+                <thead><tr><th>物料编码</th><th>名称</th><th>货物类型</th><th>类型</th><th>矿源</th><th>操作</th></tr></thead>
                 <tbody id="materialTableBody"></tbody>
               </table>
               <div class="pagination"><span id="materialTableCount">共 4 条物料档案</span><button class="page-btn active">1</button></div>
@@ -478,6 +500,7 @@
           <div id="mat-filing" style="display:none">
             <div class="toolbar">
               <button class="btn btn-primary" onclick="openSourceFilingModal()">新建矿源备案</button>
+              <button type="button" class="btn btn-default" onclick="exportSourceFilingsExcel()">导出 Excel</button>
               <div class="spacer"></div>
               <select class="select" style="width:160px"><option>全部矿源</option><option>澳洲精矿</option><option>智利精矿</option></select>
               <input class="input" style="width:180px" placeholder="矿源备案编号" />
@@ -486,7 +509,7 @@
             </div>
             <div class="panel"><div class="panel-hd"><h3>矿源备案一览</h3></div><div class="panel-bd tight">
               <table class="data">
-                <thead><tr><th>矿源</th><th>备案原产国</th><th>矿源备案编号</th><th>备案日期</th><th>状态</th><th>备案数量(DMT)</th><th>核销吨数</th><th>剩余吨数</th><th>用量%</th><th>操作</th></tr></thead>
+                <thead><tr><th>矿源</th><th>备案原产国</th><th>矿源备案编号</th><th>备案日期</th><th>状态</th><th>备案数量(DMT)</th><th>核销吨数</th><th>剩余吨数</th><th>用量%</th><th>附件</th><th>操作</th></tr></thead>
               <tbody id="sourceFilingTableBody"></tbody>
               </table>
               <div class="pagination"><span>共 4 条备案（2 个矿源 · 多期备案）</span></div>
@@ -496,55 +519,52 @@
 
         <!-- 往来主体 -->
         <section class="page" data-page="partners">
-          <div class="anno"><strong>基础数据</strong>维护<strong>委托方</strong>（贯穿入库、出库、移库、库存、生产全链路）、<strong>物流账册主体</strong>及下游流向企业；业务单据可按委托方维度查询。</div>
+          <div class="anno"><strong>基础数据</strong>维护<strong>委托方</strong>（贯穿入库、出库、移库、库存、生产全链路）、<strong>物流账册主体</strong>；<strong>流向企业由出库报关单「流向企业」字段自动识别写入</strong>，无需手工建档。</div>
           <div class="toolbar">
-            <button class="btn btn-primary" onclick="openModal('modalPartner')">新建主体</button>
-            <select class="select" style="width:160px"><option selected>全部角色</option><option>委托方</option><option>物流账册主体</option><option>流向企业</option></select>
-            <input class="input" style="width:200px" placeholder="企业名称/信用代码" />
-            <button class="btn btn-primary" onclick="toast('已查询')">查询</button>
+            <button class="btn btn-primary" onclick="openPartnerModal()">新建主体</button>
+            <select class="select" id="partnerRoleFilter" style="width:160px" onchange="renderPartnerTable()">
+              <option value="">全部角色</option>
+              <option>委托方</option>
+              <option>物流账册主体</option>
+              <option>流向企业</option>
+            </select>
+            <input class="input" id="partnerKeyword" style="width:200px" placeholder="企业名称/编码" />
+            <button class="btn btn-primary" onclick="renderPartnerTable()">查询</button>
           </div>
           <div class="panel"><div class="panel-hd"><h3>往来主体一览</h3></div><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>编码</th><th>企业名称</th><th>角色</th><th>统一社会信用代码</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr><td>WT-001</td><td>五矿有色金属股份有限公司</td><td><span class="tag tag-purple">委托方</span></td><td>91110000101931247X</td><td><span class="tag tag-green">启用</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalPartner')">编辑</button></td></tr>
-                <tr><td>WT-002</td><td>广西金川有色金属有限公司</td><td><span class="tag tag-purple">委托方</span></td><td>91450600MA5KXXXXXX</td><td><span class="tag tag-green">启用</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalPartner')">编辑</button></td></tr>
-                <tr><td>WT-003</td><td>广西南国铜业有限责任公司</td><td><span class="tag tag-purple">委托方</span></td><td>91450600MA5NXXXXXX</td><td><span class="tag tag-green">启用</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalPartner')">编辑</button></td></tr>
-                <tr><td>HZ-001</td><td>广西丰联铜业有限公司</td><td><span class="tag tag-blue">物流账册主体</span></td><td>91450600MA5XXXX</td><td><span class="tag tag-green">启用</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalPartner')">编辑</button></td></tr>
-                <tr><td>LX-012</td><td>华东冶炼股份公司</td><td><span class="tag tag-green">流向企业</span></td><td>91320000MA2XXXX</td><td><span class="tag tag-green">启用</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalPartner')">编辑</button></td></tr>
-                <tr><td>LX-015</td><td>滨海贸易有限公司</td><td><span class="tag tag-green">流向企业</span></td><td>91330000MA3XXXX</td><td><span class="tag tag-gray">停用</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalPartner')">编辑</button></td></tr>
-              </tbody>
+              <thead><tr><th>编码</th><th>企业名称</th><th>角色</th><th>来源</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="partnerTableBody"></tbody>
             </table>
-            <div class="pagination"><span>共 6 条</span></div>
+            <div class="pagination"><span id="partnerTableCount">共 0 条</span></div>
           </div></div>
         </section>
 
         <!-- 保税账册 -->
         <section class="page" data-page="bonded">
-          <div class="anno"><strong>基础数据</strong>保税物流账册基础信息备案，入库称重时匹配对应账册。</div>
+          <div class="anno"><strong>基础数据</strong>保税物流账册备案并保存出入库票矿。录入新账册须填写<strong>旧账册预警日期</strong>；旧账册改为<strong>只出不进</strong>，超过预警日后未出库票的入库数据转入新账册。点击账册编号查看票矿并可导出 Excel。</div>
           <div class="toolbar">
-            <button class="btn btn-primary" onclick="openModal('modalBonded')">备案账册</button>
-            <input class="input" style="width:220px" placeholder="账册编号" />
-            <button class="btn btn-primary" onclick="toast('已查询')">查询</button>
+            <button class="btn btn-primary" onclick="openBondedModal()">备案账册</button>
+            <input class="input" id="bondedKeyword" style="width:220px" placeholder="账册编号/名称/报关单号" />
+            <button class="btn btn-primary" onclick="renderBondedTable()">查询</button>
           </div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>账册编号</th><th>账册名称</th><th>经营单位</th><th>备案状态</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr><td>T3700XXXX001</td><td>保税物流账册A</td><td>广西丰联铜业</td><td><span class="tag tag-green">有效</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalBonded')">编辑</button><button class="btn-text" onclick="go('customs')">库存</button></td></tr>
-                <tr><td>T3700XXXX002</td><td>保税物流账册B</td><td>广西丰联铜业</td><td><span class="tag tag-green">有效</span></td><td class="ops"><button class="btn-text">编辑</button></td></tr>
-              </tbody>
+              <thead><tr><th>账册编号</th><th>账册名称</th><th>经营单位</th><th>货值</th><th>报关单号</th><th>备案状态</th><th>衔接</th><th>旧账预警</th><th>操作</th></tr></thead>
+              <tbody id="bondedTableBody"></tbody>
             </table>
+            <div class="pagination"><span id="bondedTableCount">共 0 条</span></div>
           </div></div>
         </section>
 
         <!-- 系统设置 -->
         <section class="page" data-page="settings">
-          <div class="anno"><strong>系统</strong>参数配置、角色权限分级、海关专用账号独立配置、操作日志留存审计。</div>
+          <div class="anno"><strong>系统</strong>参数配置、角色权限分级、<strong>全站账号注册</strong>；<strong>平面图设置</strong>绘制整个园区（五仓+停用仓+办公楼+道路），供驾驶舱整园展示。</div>
           <div class="tabs" id="settingsTabs">
             <div class="tab active" data-tab="roles">角色权限</div>
-            <div class="tab" data-tab="customs-acc">海关专用账号</div>
+            <div class="tab" data-tab="accounts">账号管理</div>
             <div class="tab" data-tab="params">系统参数</div>
+            <div class="tab" data-tab="floorplan">平面图设置</div>
           </div>
           <div class="panel" id="tab-roles">
             <div class="panel-hd"><h3>角色权限分级</h3><button class="btn btn-primary btn-sm">新建角色</button></div>
@@ -552,24 +572,20 @@
               <table class="data">
                 <thead><tr><th>角色</th><th>说明</th><th>权限摘要</th><th>人数</th><th>操作</th></tr></thead>
                 <tbody>
-                  <tr><td>系统管理员</td><td>全量配置</td><td>全部模块</td><td>2</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('admin')">配置权限</button></td></tr>
-                  <tr><td>仓管员</td><td>日常仓储作业</td><td>入出库/移库/库存</td><td>8</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('warehouse')">配置权限</button></td></tr>
-                  <tr><td>关务员</td><td>海关专用隔离</td><td>账册对账/关务报表</td><td>3</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('customs')">配置权限</button></td></tr>
-                  <tr><td>生产员</td><td>投料完工</td><td>生产流转模块</td><td>5</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('production')">配置权限</button></td></tr>
+                  <tr><td>系统管理员</td><td>全量配置</td><td>全部模块</td><td id="roleCountAdmin">2</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('admin')">配置权限</button></td></tr>
+                  <tr><td>仓管员</td><td>日常仓储作业</td><td>入出库/移库/库存</td><td id="roleCountWarehouse">8</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('warehouse')">配置权限</button></td></tr>
+                  <tr><td>关务员</td><td>关务监管作业</td><td>全部模块</td><td id="roleCountCustoms">3</td><td class="ops"><button type="button" class="btn-text" onclick="openRolePermModal('customs')">配置权限</button></td></tr>
                 </tbody>
               </table>
             </div>
           </div>
-          <div class="panel" id="tab-customs-acc" style="display:none">
-            <div class="panel-hd"><h3>海关专用账号</h3><button class="btn btn-primary btn-sm">新建海关账号</button></div>
+          <div class="panel" id="tab-accounts" style="display:none">
+            <div class="panel-hd"><h3>账号管理</h3><button type="button" class="btn btn-primary btn-sm" onclick="openAccountModal()">新建账号</button></div>
             <div class="panel-bd">
-              <p style="color:var(--text-2);margin-bottom:12px">海关账号与业务账号权限隔离，关务操作单独留痕。</p>
+              <p style="color:var(--text-2);margin-bottom:12px">全站统一注册系统管理员、仓管员、关务员账号；登录后按角色权限访问。</p>
               <table class="data">
-                <thead><tr><th>账号</th><th>姓名</th><th>所属关区</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
-                <tbody>
-                  <tr><td>customs01</td><td>关务张</td><td>XX海关</td><td><span class="tag tag-green">启用</span></td><td>2026-08-03 09:12</td><td class="ops"><button class="btn-text">重置密码</button><button class="btn-text">停用</button></td></tr>
-                  <tr><td>customs02</td><td>关务李</td><td>XX海关</td><td><span class="tag tag-green">启用</span></td><td>2026-08-02 16:40</td><td class="ops"><button class="btn-text">重置密码</button></td></tr>
-                </tbody>
+                <thead><tr><th>账号</th><th>姓名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
+                <tbody id="accountTableBody"></tbody>
               </table>
             </div>
           </div>
@@ -578,6 +594,7 @@
               <div class="form-grid cols-2">
                 <div class="form-group"><label>库存预警阈值（库容占用%）</label><input class="input" id="paramCapAlert" type="number" min="1" max="100" /></div>
                 <div class="form-group"><label>原料库龄预警（天）</label><input class="input" id="paramAgingDays" type="number" min="1" /></div>
+                <div class="form-group"><label>码头仓库预警（天）</label><input class="input" id="paramDockAgingDays" type="number" min="1" /><small class="field-hint">码头仓库货品存放超过该天数触发预警（默认 7 天）</small></div>
                 <div class="form-group"><label>矿源备案用量预警（%）</label><input class="input" id="paramFilingUsage" type="number" min="1" max="100" /><small class="field-hint">备案核销用量达到该比例时触发预警（默认 80%）</small></div>
                 <div class="form-group span-2">
                   <label>品质参数配置</label>
@@ -592,69 +609,176 @@
                     <small class="field-hint">入库收货品质字段与 OCR 品质证书识别项将随此配置同步更新</small>
                   </div>
                 </div>
-                <div class="form-group"><label>盘点差异自动生成</label><select class="select"><option>开启</option><option>关闭</option></select></div>
-                <div class="form-group"><label>操作日志保留策略</label><select class="select"><option>永久留存</option><option>5年</option></select></div>
               </div>
               <div style="margin-top:16px"><button class="btn btn-primary" onclick="saveSysParams()">保存参数</button></div>
+            </div>
+          </div>
+          <div class="panel yard-editor-panel" id="tab-floorplan" style="display:none">
+            <div class="fp-layout yard-fp-layout">
+              <div class="fp-canvas-wrap" id="fpCanvasWrap">
+                <div id="fpCanvas"></div>
+                <div class="fp-zoom-bar" onmousedown="event.stopPropagation()">
+                  <button type="button" class="btn btn-default btn-sm" onclick="parkEditorZoom(-1)" title="缩小">−</button>
+                  <span class="fp-zoom-label" id="parkZoomLabel">100%</span>
+                  <button type="button" class="btn btn-default btn-sm" onclick="parkEditorZoom(1)" title="放大">+</button>
+                </div>
+              </div>
+              <aside class="fp-side">
+                <div class="form-group">
+                  <label>网格密度</label>
+                  <div class="fp-unit-row">
+                    <input class="input" id="parkGridRows" type="number" min="2" max="200" step="1" value="26" oninput="onParkGridInput()" onchange="onParkGridChange()" />
+                    <span class="fp-unit">行</span>
+                    <span class="fp-unit">×</span>
+                    <input class="input" id="parkGridCols" type="number" min="2" max="200" step="1" value="42" oninput="onParkGridInput()" onchange="onParkGridChange()" />
+                    <span class="fp-unit">列</span>
+                  </div>
+                  <small class="field-hint">画板划分为行×列，如 26 行 × 42 列；点「保存平面图」后写入平面图。网格吸附按行列格线对齐，改密度后拖拽/缩放会贴到新格线</small>
+                </div>
+                <div class="form-group">
+                  <label>绘制工具</label>
+                  <div class="park-tools" id="parkTools">
+                    <button type="button" class="btn btn-default btn-sm is-active" data-park-tool="select" onclick="setParkTool('select')">选择</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="warehouse" onclick="setParkTool('warehouse')">仓库</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="idle" onclick="setParkTool('idle')">停用仓库</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="office" onclick="setParkTool('office')">办公楼</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="zone" onclick="setParkTool('zone')">功能区</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="line" onclick="setParkTool('line')">生产线</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="door" onclick="setParkTool('door')">门</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="stack" onclick="setParkTool('stack')">堆位</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="road" onclick="setParkTool('road')">道路</button>
+                    <button type="button" class="btn btn-default btn-sm" data-park-tool="bush" onclick="setParkTool('bush')">灌木丛</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>名称</label>
+                  <input class="input" id="parkItemName" maxlength="20" placeholder="点选后改名" disabled onfocus="onParkNameFocus()" oninput="onParkNameInput()" onblur="onParkNameBlur()" />
+                </div>
+                <div class="form-group">
+                  <label>功能区颜色</label>
+                  <input class="input" id="parkItemColor" type="color" value="#f8e4c5" disabled onchange="onParkColorChange()" />
+                </div>
+                <div class="form-group">
+                  <label>绑定仓库</label>
+                  <select class="select" id="parkBindWh" onchange="onParkBindWhChange()"></select>
+                </div>
+                <div class="form-group" style="display:none">
+                  <label>绑定堆位</label>
+                  <select class="select" id="parkBindStack" onchange="onParkBindStackChange()"></select>
+                </div>
+                <div class="fp-side-tools">
+                  <button type="button" class="btn btn-default btn-sm" id="parkUndoBtn" onclick="parkUndo()" disabled>撤销</button>
+                  <button type="button" class="btn btn-default btn-sm" id="parkRedoBtn" onclick="parkRedo()" disabled>重做</button>
+                  <label class="fp-snap-toggle" title="快捷键 G；按住 Shift 临时关闭">
+                    <input type="checkbox" id="parkSnapToggle" checked onchange="parkToggleSnap(this.checked)" />
+                    <span>网格吸附</span>
+                  </label>
+                  <button type="button" class="btn btn-default btn-sm" onclick="parkDeleteSelected()">删除</button>
+                </div>
+                <p class="fp-side-hint" id="parkTypeHint">滚轮缩放后拖拽平移整图（空白处、右键或空格也可）。点选后再拖可移动图形（不改变宽高）。缩放仓库时堆位同步缩放。名称：仓库/堆位左下角，门/功能区/生产线等居中并可换行。</p>
+                <div class="fp-side-actions">
+                  <button type="button" class="btn btn-primary" onclick="saveParkPlan()">保存平面图</button>
+                </div>
+              </aside>
             </div>
           </div>
         </section>
 
         <!-- 入库管理 -->
         <section class="page" data-page="inbound">
-          <div class="anno"><strong>入库</strong>预约与到货收货：须指定<strong>委托方</strong>；支持 OCR 识别回填。<strong>报备矿</strong>预约时按矿源<strong>自动匹配剩余备案号</strong>，收货/上架按<strong>本次干重</strong>扣减剩余量。上架后原料库存身份为<strong>报关单号</strong>，品质参数记入本票；<strong>详情</strong>可查看本票报关单、重量证书、品质证书及参数。</div>
+          <div class="anno"><strong>入库</strong>预约与到货收货：须指定<strong>委托方</strong>；预约须选择<strong>预定堆位并圈选存放位置</strong>。支持按<strong>时间范围、货运方式、矿种</strong>筛选。状态为<strong>暂存码头 / 待收货 / 已入库 / 混成品</strong>。单据维护<strong>矿种、五项有害元素、装运方式（集装箱/散货）及集装箱柜数</strong>。</div>
           <div class="toolbar">
             <button class="btn btn-primary" onclick="openInboundModal()">新建入库预约</button>
-            <button class="btn btn-default" onclick="openModal('modalReceive')">到货收货登记</button>
-            <div class="spacer"></div>
-            <select class="select" style="width:180px" data-consignor-select data-consignor-select-all></select>
-            <select class="select" style="width:120px"><option>全部状态</option><option>待收货</option><option>已收货</option><option>已上架</option></select>
-            <input class="input" style="width:200px" placeholder="单号/提单号/船名" />
-            <button class="btn btn-primary" onclick="toast('已查询')">查询</button>
+            <button class="btn btn-default" onclick="fillBondedSelects();openModal('modalReceive')">到货收货登记</button>
           </div>
+          <div class="panel"><div class="panel-bd">
+            <div class="filter-bar">
+              <div class="filter-item"><label>委托方</label><select class="select" id="inboundConsignorFilter" data-consignor-select data-consignor-select-all></select></div>
+              <div class="filter-item"><label>状态</label>
+                <select class="select" id="inboundStatusFilter">
+                  <option value="">全部状态</option>
+                  <option>暂存码头</option>
+                  <option>待收货</option>
+                  <option>已入库</option>
+                  <option>混成品</option>
+                </select>
+              </div>
+              <div class="filter-item"><label>货运方式</label>
+                <select class="select" id="inboundShipModeFilter">
+                  <option value="">全部</option>
+                  <option>集装箱</option>
+                  <option>散货</option>
+                </select>
+              </div>
+              <div class="filter-item"><label>矿种</label>
+                <select class="select" id="inboundMineralFilter">
+                  <option value="">全部</option>
+                  <option>铜精矿</option>
+                  <option>冰铜</option>
+                </select>
+              </div>
+              <div class="filter-item"><label>时间范围</label>
+                <div class="inv-time-inputs">
+                  <input class="input" type="date" id="inboundTimeFrom" value="2026-07-01" />
+                  <span class="audit-date-sep">至</span>
+                  <input class="input" type="date" id="inboundTimeTo" value="2026-08-31" />
+                </div>
+              </div>
+              <div class="filter-item"><label>关键字</label><input class="input" id="inboundKeyword" placeholder="单号/提单号/船名" /></div>
+              <div class="filter-item"><label>&nbsp;</label><button class="btn btn-primary" onclick="renderInboundTable()">查询</button></div>
+            </div>
+          </div></div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>入库单号</th><th>委托方</th><th>船名</th><th>提单号</th><th>报关单号</th><th>核注清单</th><th>金额</th><th>湿重/干重</th><th>堆位</th><th>片区标识</th><th>状态</th><th>操作</th></tr></thead>
+              <thead><tr>
+                <th>入库单号</th><th>委托方</th><th>矿种</th><th>船名</th><th>提单号</th><th>报关单号</th><th>核注清单</th>
+                <th>金额</th><th>湿重/干重</th><th>装运方式</th><th>柜数</th><th>五项有害元素</th><th>堆位</th><th>状态</th><th>操作</th>
+              </tr></thead>
               <tbody id="inboundTableBody"></tbody>
             </table>
-            <div class="pagination"><span>共 128 条</span><button class="page-btn active">1</button><button class="page-btn">2</button><button class="page-btn">3</button></div>
+            <div class="pagination"><span id="inboundTableCount">共 0 条</span></div>
           </div></div>
         </section>
 
         <!-- 移库 -->
         <section class="page" data-page="transfer">
-          <div class="anno"><strong>移库</strong>移库对象为<strong>报关单号</strong>（原料单）或<strong>生产批次</strong>（成品）。场景分为<strong>整票移位</strong>、<strong>拆票移位</strong>；<strong>批量移库</strong>支持勾选多个原料单同时移位。</div>
+          <div class="anno"><strong>移库</strong>先选<strong>原堆位</strong>，再选该堆位上要移动的<strong>矿批次</strong>（报关单号或生产批次）。<strong>批量移库</strong>每票单独生成一条记录，不合并。移库时间为<strong>起止到时</strong>（不含分）。</div>
           <div class="toolbar">
-            <button class="btn btn-primary" onclick="openModal('modalTransfer')">新建移库单</button>
+            <button class="btn btn-primary" onclick="openTransferModal()">新建移库单</button>
             <button class="btn btn-default" onclick="openBatchTransferModal()">批量移库</button>
             <div class="spacer"></div>
-            <select class="select" style="width:180px" data-consignor-select data-consignor-select-all></select>
-            <select class="select" style="width:120px"><option>全部场景</option><option>整票移位</option><option>拆票移位</option><option>批量移库</option></select>
-            <button class="btn btn-primary" onclick="toast('已查询')">查询</button>
+            <select class="select" style="width:180px" id="transferConsignorFilter" data-consignor-select data-consignor-select-all></select>
+            <select class="select" style="width:140px" id="transferSceneFilter">
+              <option value="">全部场景</option>
+              <option>整票移位</option>
+              <option>拆票移位</option>
+              <option>批量移库</option>
+            </select>
+            <button class="btn btn-primary" onclick="renderTransferTable()">查询</button>
           </div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>移库单号</th><th>委托方</th><th>场景</th><th>报关单号</th><th>生产批次</th><th>物料</th><th>重量(吨)</th><th>原堆位</th><th>目标堆位</th><th>操作人</th><th>移库时间</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr><td>YK-20260803-006</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>整票移位</td><td>BG20260728041</td><td>—</td><td>原料物料-A</td><td>120</td><td>1#A1</td><td>1#B1</td><td>仓管-赵</td><td>2026-08-03 10:22</td><td><span class="tag tag-green">已完成</span></td><td class="ops"><button class="btn-text">详情</button></td></tr>
-                <tr><td>YK-20260803-005</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>拆票移位</td><td>BG20260801022</td><td>—</td><td>原料物料-B</td><td>40</td><td>2#A1</td><td>5#小A</td><td>仓管-钱</td><td>2026-08-03 09:05</td><td><span class="tag tag-green">已完成</span></td><td class="ops"><button class="btn-text">详情</button></td></tr>
-                <tr><td>YK-20260802-021</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>批量移库</td><td>BG20260728041、BG20260801022</td><td>—</td><td>原料物料-A/B</td><td>450</td><td>多堆位</td><td>多堆位</td><td>仓管-赵</td><td>2026-08-02 15:40</td><td><span class="tag tag-green">已完成</span></td><td class="ops"><button class="btn-text" onclick="openBatchTransferModal()">详情</button></td></tr>
-              </tbody>
+              <thead><tr>
+                <th>移库单号</th><th>委托方</th><th>场景</th><th>报关单号</th><th>生产批次</th><th>物料</th>
+                <th>船名</th><th>柜数</th><th>重量(吨)</th><th>原堆位</th><th>目标堆位</th><th>移库时间</th><th>状态</th>
+              </tr></thead>
+              <tbody id="transferTableBody"></tbody>
             </table>
+            <div class="pagination"><span id="transferTableCount">共 0 条</span></div>
           </div></div>
         </section>
 
         <!-- 库存查询 -->
         <section class="page" data-page="inventory">
-          <div class="anno"><strong>库存</strong>多维度实时查询：委托方、原产国、账册、原料/成品、堆位、片区标识、时间。<strong>时间范围</strong>可选<strong>本月</strong>，或自定义起止（精确到时，如 2026/8/01/8时–2026/8/2/16时）。原料列<strong>报关单号</strong>，成品列<strong>生产批次</strong>。<strong>详情</strong>查看本票报关单、重量/品质证书及参数；<strong>台账</strong>下钻重量流水。</div>
+          <div class="anno"><strong>库存</strong>多维度实时查询：委托方、原产国、账册、原料/成品、堆位、片区标识、时间。<strong>货物类型</strong>：原料为<strong>达标矿/报备矿</strong>，成品一律为<strong>混成品</strong>。<strong>本票品质</strong>展示铜/银/金/砷/铅/镉/氟/汞八项。<strong>成品原产国为 —</strong>；<strong>已出库堆位为 —</strong>。成品详情仅看出库报关单与品质证书；台账记录出库<strong>流向企业</strong>。</div>
           <div class="panel"><div class="panel-bd">
             <div class="filter-bar">
               <div class="filter-item"><label>委托方</label><select class="select" data-consignor-select data-consignor-select-all></select></div>
-              <div class="filter-item"><label>货物类型</label><select class="select"><option>全部</option><option>达标矿</option><option>报备矿</option></select></div>
+              <div class="filter-item"><label>货物类型</label><select class="select"><option>全部</option><option>达标矿</option><option>报备矿</option><option>混成品</option></select></div>
               <div class="filter-item"><label>矿源备案号</label><input class="input" placeholder="如 JG-2023-KY04" /></div>
               <div class="filter-item"><label>物料类型</label><select class="select"><option>全部</option><option>原料</option><option>成品</option></select></div>
-              <div class="filter-item"><label>原产国</label><select class="select"><option>全部</option><option>秘鲁</option><option>智利</option><option>中国</option></select></div>
-              <div class="filter-item"><label>保税账册</label><select class="select"><option>全部</option><option>T3700XXXX001</option></select></div>
+              <div class="filter-item"><label>原产国</label><select class="select"><option>全部</option><option>秘鲁</option><option>智利</option><option>澳大利亚</option></select></div>
+              <div class="filter-item"><label>保税账册</label><select class="select" id="invBondedFilter"><option>全部</option></select></div>
               <div class="filter-item"><label>堆位</label><input class="input" placeholder="如 4#A1" /></div>
               <div class="filter-item"><label>时间范围</label>
                 <select class="select" id="invTimeMode" onchange="onInvTimeModeChange()">
@@ -681,13 +805,17 @@
           </div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>报关单号</th><th>生产批次</th><th>委托方</th><th>物料</th><th>货物类型</th><th>矿源备案号</th><th>本票品质</th><th>类型</th><th>原产国</th><th>账册</th><th>堆位</th><th>片区标识</th><th>湿重</th><th>干重</th><th>入库时间</th><th>操作</th></tr></thead>
+              <thead><tr><th>报关单号</th><th>生产批次</th><th>委托方</th><th>物料</th><th>货物类型</th><th>矿源备案号</th><th>本票品质</th><th>原产国</th><th>账册</th><th>堆位</th><th>片区标识</th><th>湿重</th><th>干重</th><th>入库时间</th><th>操作</th></tr></thead>
               <tbody id="invTableBody">
-                <tr data-in-at="2026-08-02T10"><td>BG20260728041</td><td>—</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>原料物料-A</td><td><span class="tag tag-green">达标矿</span></td><td>—</td><td class="mat-quality-cell" title="Cu22.5%；Ag45g/t；Au0.8g/t">Cu22.5%；Ag45g/t；Au0.8g/t</td><td><span class="tag tag-blue">原料</span></td><td>秘鲁</td><td>T3700XXXX001</td><td>1#A1</td><td><span class="tag tag-blue">原料区域</span></td><td>520</td><td>468</td><td>2026-08-02 10时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260728041')">详情</button><button class="btn-text" onclick="openModal('modalLedger')">台账</button></td></tr>
-                <tr data-in-at="2026-07-28T09"><td>BG20260801022</td><td>—</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>原料物料-B</td><td><span class="tag tag-orange">报备矿</span></td><td>JG-2023-KY04</td><td class="mat-quality-cell" title="Cu25.1%；Ag42g/t；Au0.6g/t">Cu25.1%；Ag42g/t；Au0.6g/t</td><td><span class="tag tag-blue">原料</span></td><td>智利</td><td>T3700XXXX001</td><td>1#A2</td><td><span class="tag tag-blue">原料区域</span></td><td>360</td><td>330</td><td>2026-07-28 9时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260801022')">详情</button><button class="btn-text" onclick="openModal('modalLedger')">台账</button></td></tr>
-                <tr data-in-at="2026-04-28T08"><td>BG20260428016</td><td>—</td><td><span class="tag tag-purple" title="五矿有色金属股份有限公司">五矿有色</span></td><td>原料物料-C</td><td><span class="tag tag-orange">报备矿</span></td><td>JG4-2025-KY02</td><td class="mat-quality-cell" title="Cu21.8%；Ag38g/t；Au0.5g/t">Cu21.8%；Ag38g/t；Au0.5g/t</td><td><span class="tag tag-blue">原料</span></td><td>澳大利亚</td><td>T3700XXXX001</td><td>5#小A</td><td><span class="tag tag-orange">待检区域</span></td><td>280</td><td>252</td><td>2026-04-28 8时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260428016')">详情</button><button class="btn-text" onclick="openModal('modalLedger')">台账</button><span class="tag tag-orange">库龄98天</span></td></tr>
-                <tr data-in-at="2026-08-03T14"><td>—</td><td>FL-20260803</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>成品物料-A</td><td><span class="tag tag-green">达标矿</span></td><td>—</td><td class="mat-quality-cell" title="Cu24.8%；Ag28g/t">Cu24.8%；Ag28g/t</td><td><span class="tag tag-green">成品</span></td><td>中国</td><td>T3700XXXX001</td><td>4#A1</td><td><span class="tag tag-orange">待检区域</span></td><td>—</td><td>180</td><td>2026-08-03 14时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('FL-20260803')">详情</button><button class="btn-text" onclick="openModal('modalLedger')">台账</button><span class="tag tag-orange">查验中</span></td></tr>
-                <tr data-in-at="2026-08-02T11"><td>—</td><td>FL-20260802</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>成品物料-A</td><td><span class="tag tag-green">达标矿</span></td><td>—</td><td class="mat-quality-cell" title="Cu24.2%；Ag30g/t">Cu24.2%；Ag30g/t</td><td><span class="tag tag-green">成品</span></td><td>中国</td><td>T3700XXXX001</td><td>4#A2</td><td><span class="tag tag-green">混成品区域</span></td><td>—</td><td>180</td><td>2026-08-02 11时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('FL-20260802')">详情</button><button class="btn-text" onclick="openModal('modalLedger')">台账</button></td></tr>
+                <tr data-in-at="2026-08-02T10" data-ticket="BG20260728041"><td>BG20260728041</td><td>—</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>原料物料-A</td><td><span class="tag tag-green">达标矿</span></td><td>—</td><td class="mat-quality-cell" title="Cu22.5%；Ag45g/t；Au0.8g/t；As0.12%；Pb0.05%；Cd0.01%；F0.02%；Hg0.001%">Cu22.5%；Ag45g/t；Au0.8g/t；As0.12%；Pb0.05%；Cd0.01%；F0.02%；Hg0.001%</td><td>秘鲁</td><td>T3700XXXX002</td><td>1#A1</td><td><span class="tag tag-blue">原料区域</span></td><td>520</td><td>468</td><td>2026-08-02 10时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260728041')">详情</button><button class="btn-text" onclick="openLedger('BG20260728041')">台账</button></td></tr>
+                <tr data-in-at="2026-07-28T09" data-ticket="BG20260801022"><td>BG20260801022</td><td>—</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>原料物料-B</td><td><span class="tag tag-orange">报备矿</span></td><td>JG-2023-KY04</td><td class="mat-quality-cell" title="Cu25.1%；Ag42g/t；Au0.6g/t；As0.10%；Pb0.04%；Cd0.008%；F0.015%；Hg0.0008%">Cu25.1%；Ag42g/t；Au0.6g/t；As0.10%；Pb0.04%；Cd0.008%；F0.015%；Hg0.0008%</td><td>智利</td><td>T3700XXXX002</td><td>1#A2</td><td><span class="tag tag-blue">原料区域</span></td><td>360</td><td>330</td><td>2026-07-28 9时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260801022')">详情</button><button class="btn-text" onclick="openLedger('BG20260801022')">台账</button></td></tr>
+                <tr data-in-at="2026-07-15T11" data-ticket="BG20260715033"><td>BG20260715033</td><td>—</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>原料物料-A</td><td><span class="tag tag-orange">报备矿</span></td><td>—</td><td class="mat-quality-cell" title="Cu23.0%；Ag40g/t；Au0.5g/t；As0.11%；Pb0.05%；Cd0.01%；F0.02%；Hg0.001%">Cu23.0%；Ag40g/t；Au0.5g/t；As0.11%；Pb0.05%；Cd0.01%；F0.02%；Hg0.001%</td><td>秘鲁</td><td>T3700XXXX002</td><td>2#A1</td><td><span class="tag tag-blue">原料区域</span></td><td>4375</td><td>3938</td><td>2026-07-15 11时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260715033')">详情</button><button class="btn-text" onclick="openLedger('BG20260715033')">台账</button></td></tr>
+                <tr data-in-at="2026-04-28T08" data-ticket="BG20260428016"><td>BG20260428016</td><td>—</td><td><span class="tag tag-purple" title="五矿有色金属股份有限公司">五矿有色</span></td><td>原料物料-C</td><td><span class="tag tag-orange">报备矿</span></td><td>JG4-2025-KY02</td><td class="mat-quality-cell" title="Cu21.8%；Ag38g/t；Au0.5g/t；As0.15%；Pb0.06%；Cd0.012%；F0.025%；Hg0.0012%">Cu21.8%；Ag38g/t；Au0.5g/t；As0.15%；Pb0.06%；Cd0.012%；F0.025%；Hg0.0012%</td><td>澳大利亚</td><td>T3700XXXX002</td><td>5#小A</td><td><span class="tag tag-orange">待检区域</span></td><td>280</td><td>252</td><td>2026-04-28 8时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260428016')">详情</button><button class="btn-text" onclick="openLedger('BG20260428016')">台账</button><span class="tag tag-orange">库龄98天</span></td></tr>
+                <tr data-in-at="2026-08-03T14" data-ticket="FL-20260803"><td>—</td><td>FL-20260803</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>成品物料-A</td><td><span class="tag tag-green">混成品</span></td><td>—</td><td class="mat-quality-cell" title="Cu24.8%；Ag28g/t；Au0.3g/t；As0.08%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%">Cu24.8%；Ag28g/t；Au0.3g/t；As0.08%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%</td><td>—</td><td>T3700XXXX002</td><td>4#A1</td><td><span class="tag tag-orange">待检区域</span></td><td>—</td><td>180</td><td>2026-08-03 14时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('FL-20260803')">详情</button><button class="btn-text" onclick="openLedger('FL-20260803')">台账</button><span class="tag tag-orange">查验中</span></td></tr>
+                <tr data-in-at="2026-08-02T11" data-ticket="FL-20260802"><td>—</td><td>FL-20260802</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>成品物料-A</td><td><span class="tag tag-green">混成品</span></td><td>—</td><td class="mat-quality-cell" title="Cu24.2%；Ag30g/t；Au0.3g/t；As0.08%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%">Cu24.2%；Ag30g/t；Au0.3g/t；As0.08%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%</td><td>—</td><td>T3700XXXX002</td><td>4#A2</td><td><span class="tag tag-green">混成品区域</span></td><td>—</td><td>180</td><td>2026-08-02 11时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('FL-20260802')">详情</button><button class="btn-text" onclick="openLedger('FL-20260802')">台账</button></td></tr>
+                <tr data-in-at="2026-07-28T16" data-ticket="FL-20260728"><td>—</td><td>FL-20260728</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>成品物料-A</td><td><span class="tag tag-green">混成品</span></td><td>—</td><td class="mat-quality-cell" title="Cu24.0%；Ag29g/t；Au0.3g/t；As0.09%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%">Cu24.0%；Ag29g/t；Au0.3g/t；As0.09%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%</td><td>—</td><td>T3700XXXX002</td><td>4#B1</td><td><span class="tag tag-green">混成品区域</span></td><td>—</td><td>220</td><td>2026-07-28 16时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('FL-20260728')">详情</button><button class="btn-text" onclick="openLedger('FL-20260728')">台账</button></td></tr>
+                <tr data-in-at="2026-07-25T08" data-ticket="BG20260725088"><td>BG20260725088</td><td>—</td><td><span class="tag tag-purple" title="五矿有色金属股份有限公司">五矿有色</span></td><td>原料物料-D</td><td><span class="tag tag-orange">报备矿</span></td><td>JG-2023-KY04</td><td class="mat-quality-cell" title="Cu22.0%；Ag36g/t；Au0.4g/t；As0.18%；Pb0.11%；Cd0.03%；F0.05%；Hg0.002%">Cu22.0%；Ag36g/t；Au0.4g/t；As0.18%；Pb0.11%；Cd0.03%；F0.05%；Hg0.002%</td><td>智利</td><td>T3700XXXX002</td><td>码头#A1</td><td><span class="tag tag-blue">原料区域</span></td><td>2100</td><td>1920</td><td>2026-07-25 8时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('BG20260725088')">详情</button><button class="btn-text" onclick="openLedger('BG20260725088')">台账</button><span class="tag tag-red">码头9天</span></td></tr>
+                <tr data-in-at="2026-08-01T09" data-ticket="FL-20260801" data-outbound="1"><td>—</td><td>FL-20260801</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>成品物料-A</td><td><span class="tag tag-green">混成品</span></td><td>—</td><td class="mat-quality-cell" title="Cu24.5%；Ag31g/t；Au0.3g/t；As0.08%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%">Cu24.5%；Ag31g/t；Au0.3g/t；As0.08%；Pb0.03%；Cd0.005%；F0.01%；Hg0.0005%</td><td>—</td><td>T3700XXXX002</td><td>—</td><td>—</td><td>—</td><td>240</td><td>2026-08-01 9时</td><td class="ops"><button class="btn-text" onclick="openLotDocs('FL-20260801')">详情</button><button class="btn-text" onclick="openLedger('FL-20260801')">台账</button><span class="tag tag-gray">已出库</span></td></tr>
               </tbody>
             </table>
           </div></div>
@@ -695,10 +823,14 @@
 
         <!-- 盘点 -->
         <section class="page" data-page="stocktake">
-          <div class="anno"><strong>盘点</strong>周期性盘点、动态抽盘；差异自动生成并走审批调整流程。</div>
+          <div class="anno"><strong>盘点</strong>周期性盘点、动态抽盘；差异走审批调整。可按<strong>月份导出各委托方在库</strong>：数量、堆位、货物类型、提单号、报关单号。</div>
           <div class="toolbar">
             <button class="btn btn-primary" onclick="openModal('modalStocktake')">新建盘点</button>
             <button class="btn btn-default">动态抽盘</button>
+            <div class="spacer"></div>
+            <span style="color:var(--text-2);font-size:13px">导出月份</span>
+            <input class="input" type="month" id="stocktakeExportMonth" value="2026-08" style="width:160px" />
+            <button type="button" class="btn btn-default" onclick="exportStocktakeMonthOnhand()">导出月度在库</button>
           </div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
@@ -713,7 +845,7 @@
 
         <!-- 预警 -->
         <section class="page" data-page="alert">
-          <div class="anno"><strong>库存预警</strong>库容占用达阈值触发库容预警；原料在库超期触发库龄预警；<strong>报备矿入库按干重扣减矿源备案剩余量</strong>，用量达系统参数阈值时触发备案预警。</div>
+          <div class="anno"><strong>库存预警</strong>库容占用达阈值触发库容预警；原料在库超期触发库龄预警；<strong>码头仓库货品超过系统参数天数（默认 7 天）触发码头预警</strong>；<strong>报备矿入库按干重扣减矿源备案剩余量</strong>，用量达系统参数阈值时触发备案预警。</div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
               <thead><tr><th>级别</th><th>类型</th><th>对象</th><th>说明</th><th>触发时间</th><th>操作</th></tr></thead>
@@ -724,7 +856,7 @@
 
         <!-- 生产流转 -->
         <section class="page" data-page="production">
-          <div class="anno"><strong>生产</strong>原料在库身份为<strong>报关单号</strong>；产出身份为<strong>生产批次</strong>。<strong>同一生产批次可挂接多个报关单号矿物</strong>；投料/加工按报关单展示<strong>达标矿/报备矿</strong>；完工入库后成品库存即该生产批次，不另编号。</div>
+          <div class="anno"><strong>生产</strong>原料在库身份为<strong>报关单号</strong>；产出身份为<strong>生产批次</strong>。<strong>同一生产批次可挂接多个报关单号矿物</strong>；投料/加工按报关单展示<strong>达标矿/报备矿</strong>；投料出库记录<strong>出库报关单号</strong>；物料、船名/航次、提单号、来源国家见详情。完工入库后成品库存即该生产批次，不另编号。</div>
           <div class="tabs" id="prodTabs">
             <div class="tab active" data-tab="feed">投料出库</div>
             <div class="tab" data-tab="process">加工过程</div>
@@ -735,11 +867,11 @@
             <div class="toolbar"><button class="btn btn-primary" onclick="openFeedModal()">新建投料单</button><select class="select" style="width:180px" data-consignor-select data-consignor-select-all></select></div>
             <div class="panel"><div class="panel-hd"><h3>投料出库记录</h3><span class="tag tag-green">FL-20260803 · 3 票报关单</span></div><div class="panel-bd tight">
               <table class="data">
-                <thead><tr><th>投料单号</th><th>委托方</th><th>生产批次</th><th>报关单号</th><th>货物类型</th><th>船名/航次</th><th>提单号</th><th>来源国家</th><th>投料湿/干重</th><th>堆放堆位</th><th>生产工单</th><th>时间</th><th>操作</th></tr></thead>
+                <thead><tr><th>投料单号</th><th>委托方</th><th>生产批次</th><th>报关单号</th><th>出库报关单号</th><th>货物类型</th><th>投料湿/干重</th><th>堆放堆位</th><th>生产工单</th><th>时间</th><th>操作</th></tr></thead>
                 <tbody>
-                  <tr><td>TL-20260803-004</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>FL-20260803</td><td>BG20260728041</td><td><span class="tag tag-green">达标矿</span></td><td>AMSTEL LION/5舱</td><td>AMSLIOCLL 005</td><td>秘鲁</td><td>2,800 / 80 干吨</td><td><strong>1#A1</strong></td><td>WO-20260803-01</td><td>2026-08-03 07:30</td><td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td></tr>
-                  <tr><td>TL-20260803-004</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>FL-20260803</td><td>BG20260801022</td><td><span class="tag tag-orange">报备矿</span></td><td>NAN GANG 103</td><td>BGD0121866</td><td>智利</td><td>1,695 / 70 干吨</td><td><strong>1#A2</strong></td><td>WO-20260803-01</td><td>2026-08-03 07:30</td><td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td></tr>
-                  <tr><td>TL-20260803-004</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>FL-20260803</td><td>BG20260715033</td><td><span class="tag tag-green">达标矿</span></td><td>DIAS WELL/5舱</td><td>SANDIA052601</td><td>秘鲁</td><td>1,000 / 50 干吨</td><td><strong>2#A1</strong></td><td>WO-20260803-01</td><td>2026-08-03 07:30</td><td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td></tr>
+                  <tr><td>TL-20260803-004</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>FL-20260803</td><td>BG20260728041</td><td>BGCKTL2026080301</td><td><span class="tag tag-green">达标矿</span></td><td>2,800 / 80 干吨</td><td><strong>1#A1</strong></td><td>WO-20260803-01</td><td>2026-08-03 07:30</td><td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td></tr>
+                  <tr><td>TL-20260803-004</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>FL-20260803</td><td>BG20260801022</td><td>BGCKTL2026080301</td><td><span class="tag tag-orange">报备矿</span></td><td>1,695 / 70 干吨</td><td><strong>1#A2</strong></td><td>WO-20260803-01</td><td>2026-08-03 07:30</td><td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td></tr>
+                  <tr><td>TL-20260803-004</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td>FL-20260803</td><td>BG20260715033</td><td>BGCKTL2026080301</td><td><span class="tag tag-green">达标矿</span></td><td>1,000 / 50 干吨</td><td><strong>2#A1</strong></td><td>WO-20260803-01</td><td>2026-08-03 07:30</td><td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td></tr>
                 </tbody>
               </table>
             </div></div>
@@ -784,30 +916,47 @@
 
         <!-- 出库 -->
         <section class="page" data-page="outbound">
-          <div class="anno"><strong>出库</strong>委托方为<strong>南国铜业</strong>；须上传<strong>出库报关单</strong>经 OCR 识别后回填报关单号、核注清单号、流向企业、重量与<strong>报关单金额</strong>；<strong>OCR 字段均可手工修正并写入操作日志</strong>；可填<strong>备注</strong>。审核通过后可点击<strong>出库完成</strong>记录完成时间。</div>
+          <div class="anno"><strong>出库</strong>委托方为<strong>南国铜业</strong>；须上传<strong>出库报关单</strong>经 OCR 识别后回填报关单号、核注清单号、流向企业、<strong>消费使用单位</strong>、重量与<strong>报关单金额</strong>；列表可按<strong>时间范围</strong>筛选；<strong>已出库台账记录流向企业</strong>并同步写入往来主体；<strong>OCR 字段均可手工修正并写入操作日志</strong>；可填<strong>备注</strong>。审核通过后可点击<strong>出库完成</strong>记录完成时间。</div>
           <div class="toolbar">
             <button class="btn btn-primary" onclick="openOutboundModal()">新建出库单</button>
-            <div class="spacer"></div>
-            <select class="select" style="width:180px" data-consignor-select data-consignor-select-all></select>
-            <select class="select" style="width:120px"><option>全部状态</option><option>待审核</option><option>已审核</option><option>已出库</option></select>
-            <button class="btn btn-primary" onclick="toast('已查询')">查询</button>
           </div>
+          <div class="panel"><div class="panel-bd">
+            <div class="filter-bar">
+              <div class="filter-item"><label>委托方</label><select class="select" id="obFilterConsignor" data-consignor-select data-consignor-select-all></select></div>
+              <div class="filter-item"><label>状态</label>
+                <select class="select" id="obFilterStatus">
+                  <option value="">全部状态</option>
+                  <option value="pending">待审核</option>
+                  <option value="approved">已审核</option>
+                  <option value="completed">已出库</option>
+                </select>
+              </div>
+              <div class="filter-item"><label>时间范围</label>
+                <div class="inv-time-inputs">
+                  <input class="input" type="date" id="obTimeFrom" value="2026-08-01" />
+                  <span class="audit-date-sep">至</span>
+                  <input class="input" type="date" id="obTimeTo" value="2026-08-31" />
+                </div>
+              </div>
+              <div class="filter-item"><label>&nbsp;</label><button class="btn btn-primary" onclick="applyOutboundFilter()">查询</button></div>
+            </div>
+          </div></div>
           <div class="panel"><div class="panel-bd tight">
             <table class="data">
-              <thead><tr><th>出库单号</th><th>委托方</th><th>流向企业</th><th>报关单号</th><th>核注清单</th><th>报关单金额</th><th>重量</th><th>备注</th><th>出库/完成时间</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr data-outbound-id="CK-20260804-003" data-status="pending">
-                  <td>CK-20260804-003</td><td><span class="tag tag-purple" title="广西南国铜业有限责任公司">南国铜业</span></td><td>华东冶炼股份公司</td><td>BGCK2026080401</td><td>HZCK2026080401</td><td>$ 96,000</td><td>80 干吨</td><td>—</td><td class="outbound-times">— / —</td>
+              <thead><tr><th>出库单号</th><th>委托方</th><th>流向企业</th><th>消费使用单位</th><th>报关单号</th><th>核注清单</th><th>报关单金额</th><th>重量</th><th>备注</th><th>出库/完成时间</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="outboundTableBody">
+                <tr data-outbound-id="CK-20260804-003" data-status="pending" data-bonded-book="T3700XXXX002" data-out-at="2026-08-04">
+                  <td>CK-20260804-003</td><td><span class="tag tag-purple" title="广西南国铜业有限责任公司">南国铜业</span></td><td>华东冶炼股份公司</td><td>华东冶炼冶炼一分厂</td><td>BGCK2026080401</td><td>HZCK2026080401</td><td>$ 96,000</td><td>80 干吨</td><td>—</td><td class="outbound-times">— / —</td>
                   <td class="outbound-status"><span class="tag tag-blue">待审核</span></td>
                   <td class="ops"><button class="btn-text" onclick="approveOutbound(this)">审核</button><button class="btn-text" onclick="openOutboundModal();runOutboundOcr()">OCR</button><button class="btn-text">详情</button></td>
                 </tr>
-                <tr data-outbound-id="CK-20260803-012" data-status="approved">
-                  <td>CK-20260803-012</td><td><span class="tag tag-purple" title="广西南国铜业有限责任公司">南国铜业</span></td><td>华东冶炼股份公司</td><td>BGCK2026080301</td><td>HZCK2026080301</td><td>$ 218,000</td><td>100 干吨</td><td>成品出库 · 华东冶炼</td><td class="outbound-times">— / —</td>
+                <tr data-outbound-id="CK-20260803-012" data-status="approved" data-bonded-book="T3700XXXX001" data-out-at="2026-08-03">
+                  <td>CK-20260803-012</td><td><span class="tag tag-purple" title="广西南国铜业有限责任公司">南国铜业</span></td><td>华东冶炼股份公司</td><td>华东冶炼冶炼一分厂</td><td>BGCK2026080301</td><td>HZCK2026080301</td><td>$ 218,000</td><td>100 干吨</td><td>成品出库 · 华东冶炼</td><td class="outbound-times">— / —</td>
                   <td class="outbound-status"><span class="tag tag-orange">已审核</span></td>
                   <td class="ops"><button class="btn-text" onclick="completeOutbound(this)">出库完成</button><button class="btn-text" onclick="openOutboundModal();runOutboundOcr()">OCR</button><button class="btn-text">详情</button></td>
                 </tr>
-                <tr data-outbound-id="CK-20260801-008" data-status="completed">
-                  <td>CK-20260801-008</td><td><span class="tag tag-purple" title="广西南国铜业有限责任公司">南国铜业</span></td><td>滨海贸易有限公司</td><td>BGCK2026080102</td><td>HZCK2026080102</td><td>¥ 850,000</td><td>75 干吨</td><td>已放行</td><td class="outbound-times">08-01 10:00 / 08-01 15:30</td>
+                <tr data-outbound-id="CK-20260801-008" data-status="completed" data-bonded-book="T3700XXXX001" data-out-at="2026-08-01">
+                  <td>CK-20260801-008</td><td><span class="tag tag-purple" title="广西南国铜业有限责任公司">南国铜业</span></td><td>滨海贸易有限公司</td><td>滨海贸易加工厂</td><td>BGCK2026080102</td><td>HZCK2026080102</td><td>¥ 850,000</td><td>240 干吨</td><td>FL-20260801 已放行</td><td class="outbound-times">08-01 10:00 / 08-01 15:30</td>
                   <td class="outbound-status"><span class="tag tag-green">已出库</span></td>
                   <td class="ops"><button class="btn-text">详情</button></td>
                 </tr>
@@ -818,7 +967,7 @@
 
         <!-- 关务 -->
         <section class="page" data-page="customs">
-          <div class="anno"><strong>关务保税</strong>海关专用账号权限隔离；账册库存与实物库存自动对账；账实差异报表导出。</div>
+          <div class="anno"><strong>关务保税</strong>账册库存与实物库存自动对账；账实差异报表导出。</div>
           <div class="stats">
             <div class="stat-card"><div class="label">账册物料项</div><div class="value">126</div></div>
             <div class="stat-card ok"><div class="label">账实一致</div><div class="value">124</div></div>
@@ -833,8 +982,8 @@
             <table class="data">
               <thead><tr><th>账册编号</th><th>物料</th><th>账册库存</th><th>实物库存</th><th>差异</th><th>结果</th><th>操作</th></tr></thead>
               <tbody>
-                <tr><td>T3700XXXX001</td><td>原料物料-A</td><td>470.5</td><td>468.0</td><td><span class="tag tag-red">-2.5</span></td><td><span class="tag tag-red">不一致</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalCustomsDiff')">查明细</button></td></tr>
-                <tr><td>T3700XXXX001</td><td>成品物料-A</td><td>180.0</td><td>180.0</td><td>0</td><td><span class="tag tag-green">一致</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalCustomsDiff')">查明细</button></td></tr>
+                <tr><td>T3700XXXX002</td><td>原料物料-A</td><td>470.5</td><td>468.0</td><td><span class="tag tag-red">-2.5</span></td><td><span class="tag tag-red">不一致</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalCustomsDiff')">查明细</button></td></tr>
+                <tr><td>T3700XXXX002</td><td>成品物料-A</td><td>180.0</td><td>180.0</td><td>0</td><td><span class="tag tag-green">一致</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalCustomsDiff')">查明细</button></td></tr>
                 <tr><td>T3700XXXX002</td><td>原料物料-B</td><td>330.0</td><td>330.0</td><td>0</td><td><span class="tag tag-green">一致</span></td><td class="ops"><button class="btn-text" onclick="openModal('modalCustomsDiff')">查明细</button></td></tr>
               </tbody>
             </table>
@@ -843,7 +992,7 @@
 
         <!-- OCR -->
         <section class="page" data-page="ocr">
-          <div class="anno"><strong>OCR</strong>支持报关单（入库/出库）、提单、品质、重量单据扫描上传；识别回填、人工修正（含出库报关单金额等全部识别字段）、附件归档；手工修正写入操作日志。</div>
+          <div class="anno"><strong>OCR</strong>支持报关单（入库/出库）、提单、品质、重量单据扫描上传；识别回填、人工修正（含出库报关单金额、消费使用单位等全部识别字段）、附件归档；手工修正写入操作日志。</div>
           <div class="two-col">
             <div class="panel">
               <div class="panel-hd"><h3>上传识别</h3></div>
@@ -970,14 +1119,16 @@
     <div class="modal">
       <div class="modal-hd"><h3>仓库档案</h3><button class="modal-close" onclick="closeModal('modalWarehouse')">×</button></div>
       <div class="modal-bd">
-        <div class="anno"><strong>说明</strong>仓库仅维护编号与总库容，不设名称。当前系统为 1、2、4、5、6 仓。</div>
+        <div class="anno"><strong>说明</strong>编号仓维护编号、总库容与面积；码头仓库编号为「码头」。面积仅档案展示，不参与库容占用计算。当前系统为 1、2、4、5、6 仓及码头仓库。</div>
+        <input type="hidden" id="whEditId" value="" />
         <div class="form-grid cols-2">
-          <div class="form-group"><label>仓库编号<span class="req">*</span></label><input class="input" type="number" placeholder="如 1" value="1" /></div>
-          <div class="form-group"><label>库容(吨)<span class="req">*</span></label><input class="input" type="number" value="30000" /></div>
-          <div class="form-group"><label>状态</label><select class="select"><option>启用</option><option>停用</option></select></div>
+          <div class="form-group"><label>仓库编号<span class="req">*</span></label><input class="input" id="whNo" type="text" placeholder="如 1 或 码头" value="1" /></div>
+          <div class="form-group"><label>库容(吨)<span class="req">*</span></label><input class="input" id="whCap" type="number" value="30000" /></div>
+          <div class="form-group"><label>面积(㎡)</label><input class="input" id="whFloorArea" type="number" min="0" step="0.01" placeholder="仅展示" /><small class="field-hint">仅档案展示，可编辑，不参与库容占用计算</small></div>
+          <div class="form-group"><label>状态</label><select class="select" id="whStatus"><option>启用</option><option>停用</option></select></div>
         </div>
       </div>
-      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalWarehouse')">取消</button><button class="btn btn-primary" onclick="saveAndClose('modalWarehouse')">保存</button></div>
+      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalWarehouse')">取消</button><button class="btn btn-primary" onclick="saveWarehouse()">保存</button></div>
     </div>
   </div>
 
@@ -985,16 +1136,15 @@
     <div class="modal">
       <div class="modal-hd"><h3>堆位档案</h3><button class="modal-close" onclick="closeModal('modalStack')">×</button></div>
       <div class="modal-bd">
-        <div class="anno"><strong>说明</strong>堆位编码由所属仓库编号与堆位名称自动生成（如 1 号仓 A1 → <strong>1#A1</strong>），不可手动编辑；在库为<strong>报关单号</strong>或<strong>生产批次</strong>二选一；片区标识随查验状态自动更新。</div>
+        <div class="anno"><strong>说明</strong>堆位编码由所属仓库编号与堆位名称自动生成（如 1 号仓 A1 → <strong>1#A1</strong>，码头仓库 A1 → <strong>码头#A1</strong>），不可手动编辑。</div>
         <div class="form-grid cols-2">
           <div class="form-group"><label>所属仓库<span class="req">*</span></label><select class="select" id="stWhSelect" data-wh-select onchange="updateStackCode()"></select></div>
           <div class="form-group"><label>堆位名称<span class="req">*</span></label><input class="input" id="stSlotName" placeholder="如 A1、大A前" value="A1" oninput="updateStackCode()" /></div>
           <div class="form-group"><label>堆位编码</label><input class="input" id="stCode" value="1#A1" readonly /><small class="field-hint">自动拼接：仓库编号#堆位名称</small></div>
           <div class="form-group"><label>库容(吨)<span class="req">*</span></label><input class="input" type="number" value="500" /></div>
           <div class="form-group"><label>片区标识</label><select class="select"><option>原料区域</option><option selected>待检区域</option><option>混成品区域</option><option>成品区域</option></select></div>
-          <div class="form-group"><label>报关单号</label><input class="input" id="stCustomsNo" value="—" readonly /></div>
-          <div class="form-group"><label>生产批次</label><input class="input" id="stProdBatch" value="—" readonly /></div>
           <div class="form-group"><label>状态</label><select class="select"><option>启用</option><option>停用</option></select></div>
+          <div class="form-group span-2"><label>堆位网格</label><input class="input" id="stGridFromPlan" value="" readonly /><small class="field-hint">由平面图设置中该堆位所占行列自动得出，不在此编辑</small></div>
         </div>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalStack')">取消</button><button class="btn btn-primary" onclick="saveStack()">保存</button></div>
@@ -1022,31 +1172,21 @@
     <div class="modal modal--lg">
       <div class="modal-hd"><h3>物料档案</h3><button class="modal-close" onclick="closeModal('modalMaterial')">×</button></div>
       <div class="modal-bd">
-        <div class="anno"><strong>说明</strong>货物类型分<strong>达标矿</strong>、<strong>报备矿</strong>；报备矿须关联矿源。备案号在入库时按矿源自动识别；品质参数在上架后记入本票库存。</div>
+        <div class="anno"><strong>说明</strong>原料货物类型为<strong>达标矿</strong>、<strong>报备矿</strong>（报备矿须关联矿源）；成品一律为<strong>混成品</strong>。备案号在入库时按矿源自动识别；品质参数在上架后记入本票库存。</div>
         <div class="form-grid">
           <div class="section-title">基本信息</div>
           <div class="form-group"><label>物料编码<span class="req">*</span></label><input class="input" id="matCode" placeholder="如 YL-CU-001" /></div>
           <div class="form-group"><label>名称<span class="req">*</span></label><input class="input" id="matName" /></div>
-          <div class="form-group"><label>货物类型<span class="req">*</span></label><select class="select" id="matCargoType" onchange="toggleFilingFields()"><option>达标矿</option><option>报备矿</option></select></div>
-          <div class="form-group"><label>类型<span class="req">*</span></label><select class="select" id="matCategory"><option>原料</option><option>成品</option></select></div>
+          <div class="form-group"><label>货物类型<span class="req">*</span></label><select class="select" id="matCargoType" onchange="toggleFilingFields()"><option>达标矿</option><option>报备矿</option><option>混成品</option></select></div>
+          <div class="form-group"><label>类型<span class="req">*</span></label><select class="select" id="matCategory" onchange="syncMatCargoByCategory()"><option>原料</option><option>成品</option></select></div>
           <div class="section-title" id="matSourceTitle">矿源（报备矿）</div>
           <div class="form-group" id="matSourceGroup"><label>矿源<span class="req">*</span></label><select class="select" id="matSource"><option>智利精矿</option><option>澳洲精矿</option></select></div>
           <div class="section-title">产地与计量</div>
-          <div class="form-group"><label>原产国</label><input class="input" id="matCountry" /></div>
           <div class="form-group"><label>干湿重规则</label><select class="select"><option>同时维护湿重/干重</option><option>仅干重</option></select></div>
-          <div class="form-group"><label>默认账册</label><select class="select"><option>T3700XXXX001</option><option>T3700XXXX002</option></select></div>
+          <div class="form-group"><label>默认账册</label><select class="select" id="matBonded"></select></div>
           <div class="section-title">单证关联字段</div>
           <div class="form-group"><label>报关单号样例字段</label><input class="input" placeholder="用于 OCR 映射" /></div>
           <div class="form-group"><label>核注清单样例字段</label><input class="input" /></div>
-          <div class="section-title">附件资料</div>
-          <div class="form-group span-3">
-            <div class="mat-attach-bar">
-              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('matAttachFile').click()">上传附件</button>
-              <input type="file" id="matAttachFile" hidden multiple accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.txt,.doc,.docx,.xls,.xlsx,.zip,.rar,image/*" onchange="onMatAttachmentUpload(this)" />
-              <small class="field-hint">JPG / PNG / PDF / TXT 等可在线预览；Word / Excel 等其它格式仅支持下载</small>
-            </div>
-            <ul class="mat-attach-list" id="matAttachmentList"></ul>
-          </div>
         </div>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalMaterial')">取消</button><button class="btn btn-primary" onclick="saveMaterial()">保存</button></div>
@@ -1056,7 +1196,7 @@
   <div class="modal-mask" id="modalMatAttachments">
     <div class="modal modal--lg">
       <div class="modal-hd">
-        <h3 id="matAttachModalTitle">物料附件</h3>
+        <h3 id="matAttachModalTitle">矿源备案附件</h3>
         <button class="modal-close" onclick="closeModal('modalMatAttachments')">×</button>
       </div>
       <div class="modal-bd">
@@ -1097,6 +1237,33 @@
     </div>
   </div>
 
+  <div class="modal-mask" id="modalFilingLots">
+    <div class="modal modal--lg">
+      <div class="modal-hd">
+        <h3 id="filingLotsTitle">备案票货</h3>
+        <button class="modal-close" onclick="closeModal('modalFilingLots')">×</button>
+      </div>
+      <div class="modal-bd">
+        <div class="anno" id="filingLotsAnno">该矿源备案核销关联的全部报关单票货。</div>
+        <div class="panel-bd tight">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>报关单号</th><th>委托方</th><th>物料</th><th>货物类型</th>
+                <th>堆位</th><th>湿重</th><th>干重(DMT)</th><th>入库时间</th><th>状态</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="filingLotsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-ft">
+        <button type="button" class="btn btn-default" onclick="exportFilingLotsExcel()">导出 Excel</button>
+        <button type="button" class="btn btn-default" onclick="closeModal('modalFilingLots')">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-mask" id="modalSourceFiling">
     <div class="modal modal--lg">
       <div class="modal-hd"><h3>矿源备案</h3><button class="modal-close" onclick="closeModal('modalSourceFiling')">×</button></div>
@@ -1112,6 +1279,15 @@
           <div class="form-group"><label>核销吨数</label><input class="input" id="sfUsed" readonly /></div>
           <div class="form-group"><label>剩余吨数</label><input class="input" id="sfRemaining" readonly /><small class="field-hint">入库报备矿：剩余 − 本次干重</small></div>
           <div class="form-group"><label>用量%</label><input class="input" id="sfUsage" readonly /></div>
+          <div class="form-group span-2">
+            <label>附件资料</label>
+            <div class="mat-attach-bar">
+              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('matAttachFile').click()">上传附件</button>
+              <input type="file" id="matAttachFile" hidden multiple accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.txt,.doc,.docx,.xls,.xlsx,.zip,.rar,image/*" onchange="onMatAttachmentUpload(this)" />
+              <small class="field-hint">JPG / PNG / PDF / TXT 等可在线预览；Word / Excel 等其它格式仅支持下载</small>
+            </div>
+            <ul class="mat-attach-list" id="matAttachmentList"></ul>
+          </div>
         </div>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalSourceFiling')">取消</button><button class="btn btn-primary" onclick="saveAndClose('modalSourceFiling')">保存</button></div>
@@ -1125,7 +1301,7 @@
         <button class="modal-close" onclick="closeModal('modalRolePerm')">×</button>
       </div>
       <div class="modal-bd">
-        <div class="anno" id="rolePermAnno">按菜单模块勾选该角色可访问的页面。海关专用账号与业务账号菜单、数据、审计隔离。</div>
+        <div class="anno" id="rolePermAnno">按菜单模块勾选该角色可访问的页面。关务员默认菜单全开；关务员操作在审计中单独标识。</div>
         <div id="rolePermTree"></div>
       </div>
       <div class="modal-ft">
@@ -1135,19 +1311,58 @@
     </div>
   </div>
 
+  <div class="modal-mask" id="modalAccount">
+    <div class="modal">
+      <div class="modal-hd"><h3>新建账号</h3><button class="modal-close" onclick="closeModal('modalAccount')">×</button></div>
+      <div class="modal-bd">
+        <div class="anno"><strong>说明</strong>全站统一注册。保存后可使用该账号登录；角色决定可见菜单。</div>
+        <div class="form-grid cols-2">
+          <div class="form-group"><label>账号<span class="req">*</span></label><input class="input" id="accUser" placeholder="登录用户名" /></div>
+          <div class="form-group"><label>姓名<span class="req">*</span></label><input class="input" id="accName" placeholder="显示姓名" /></div>
+          <div class="form-group"><label>角色<span class="req">*</span></label>
+            <select class="select" id="accRole">
+              <option value="warehouse">仓管员</option>
+              <option value="customs">关务员</option>
+              <option value="admin">系统管理员</option>
+            </select>
+          </div>
+          <div class="form-group"><label>状态</label>
+            <select class="select" id="accStatus">
+              <option>启用</option>
+              <option>停用</option>
+            </select>
+          </div>
+          <div class="form-group"><label>密码<span class="req">*</span></label><input class="input" id="accPwd" type="password" placeholder="登录密码" /></div>
+          <div class="form-group"><label>确认密码<span class="req">*</span></label><input class="input" id="accPwd2" type="password" placeholder="再次输入" /></div>
+        </div>
+      </div>
+      <div class="modal-ft">
+        <button type="button" class="btn btn-default" onclick="closeModal('modalAccount')">取消</button>
+        <button type="button" class="btn btn-primary" onclick="saveAccount()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-mask" id="modalPartner">
     <div class="modal">
       <div class="modal-hd"><h3>往来主体</h3><button class="modal-close" onclick="closeModal('modalPartner')">×</button></div>
       <div class="modal-bd">
+        <div class="anno" id="partnerAnno">委托方与物流账册主体可手工维护；流向企业由出库报关单字段自动识别录入。</div>
+        <input type="hidden" id="ptEditCode" value="" />
         <div class="form-grid cols-2">
-          <div class="form-group"><label>企业名称<span class="req">*</span></label><input class="input" /></div>
-          <div class="form-group"><label>角色<span class="req">*</span></label><select class="select"><option>委托方</option><option>物流账册主体</option><option>流向企业</option></select></div>
-          <div class="form-group"><label>统一社会信用代码</label><input class="input" /></div>
-          <div class="form-group"><label>联系电话</label><input class="input" /></div>
-          <div class="form-group"><label>状态</label><select class="select"><option>启用</option><option>停用</option></select></div>
+          <div class="form-group"><label>企业名称<span class="req">*</span></label><input class="input" id="ptName" /></div>
+          <div class="form-group"><label>角色<span class="req">*</span></label>
+            <select class="select" id="ptRole">
+              <option>委托方</option>
+              <option>物流账册主体</option>
+            </select>
+          </div>
+          <div class="form-group"><label>联系电话</label><input class="input" id="ptPhone" /></div>
+          <div class="form-group"><label>状态</label><select class="select" id="ptStatus"><option>启用</option><option>停用</option></select></div>
+          <div class="form-group"><label>来源</label><input class="input" id="ptSource" readonly /></div>
         </div>
       </div>
-      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalPartner')">取消</button><button class="btn btn-primary" onclick="saveAndClose('modalPartner')">保存</button></div>
+      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalPartner')">取消</button><button class="btn btn-primary" onclick="savePartner()">保存</button></div>
     </div>
   </div>
 
@@ -1155,14 +1370,54 @@
     <div class="modal">
       <div class="modal-hd"><h3>保税账册备案</h3><button class="modal-close" onclick="closeModal('modalBonded')">×</button></div>
       <div class="modal-bd">
+        <div class="anno" id="bondedAnno">新建账册若衔接旧账册，须填写旧账册预警日期；保存后旧账只出不进。</div>
+        <input type="hidden" id="bdEditCode" value="" />
         <div class="form-grid cols-2">
-          <div class="form-group"><label>账册编号<span class="req">*</span></label><input class="input" /></div>
-          <div class="form-group"><label>账册名称<span class="req">*</span></label><input class="input" /></div>
-          <div class="form-group"><label>经营单位</label><input class="input" /></div>
-          <div class="form-group"><label>备案状态</label><select class="select"><option>有效</option><option>冻结</option><option>注销</option></select></div>
+          <div class="form-group"><label>账册编号<span class="req">*</span></label><input class="input" id="bdCode" /></div>
+          <div class="form-group"><label>账册名称<span class="req">*</span></label><input class="input" id="bdName" /></div>
+          <div class="form-group"><label>经营单位</label><input class="input" id="bdOwner" /></div>
+          <div class="form-group"><label>货值</label><input class="input" id="bdValue" type="number" placeholder="账册货值" /></div>
+          <div class="form-group span-2"><label>报关单号</label><input class="input" id="bdCustoms" placeholder="多个报关单号用逗号分隔，也可由票矿自动汇总" /></div>
+          <div class="form-group"><label>备案状态</label><select class="select" id="bdStatus"><option>有效</option><option>冻结</option><option>注销</option></select></div>
+          <div class="form-group" id="bdPredGroup">
+            <label>衔接旧账册</label>
+            <select class="select" id="bdPredecessor" onchange="onBondedPredChange()"></select>
+          </div>
+          <div class="form-group" id="bdAlertGroup">
+            <label>旧账册预警日期<span class="req" id="bdAlertReq" hidden>*</span></label>
+            <input class="input" id="bdOldAlertDate" type="date" />
+            <small class="field-hint">超过该日期后，旧账未出库票的入库数据转入本账册</small>
+          </div>
         </div>
       </div>
-      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalBonded')">取消</button><button class="btn btn-primary" onclick="saveAndClose('modalBonded')">保存</button></div>
+      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalBonded')">取消</button><button class="btn btn-primary" onclick="saveBonded()">保存</button></div>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="modalBondedLots">
+    <div class="modal modal--lg">
+      <div class="modal-hd">
+        <h3 id="bondedLotsTitle">账册票矿</h3>
+        <button class="modal-close" onclick="closeModal('modalBondedLots')">×</button>
+      </div>
+      <div class="modal-bd">
+        <div class="anno" id="bondedLotsAnno">该账册下出入库票矿明细。</div>
+        <div class="panel-bd tight">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>方向</th><th>单号</th><th>报关单号</th><th>委托方</th><th>物料</th>
+                <th>湿重</th><th>干重</th><th>货值</th><th>堆位</th><th>时间</th><th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="bondedLotsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-ft">
+        <button type="button" class="btn btn-default" onclick="exportBondedLotsExcel()">导出 Excel</button>
+        <button type="button" class="btn btn-default" onclick="closeModal('modalBondedLots')">关闭</button>
+      </div>
     </div>
   </div>
 
@@ -1182,23 +1437,53 @@
             <span class="ocr-status" id="ibOcrStatus">上传提单或报关单影像，自动识别并回填下方字段</span>
           </div>
         </div>
-        <div class="form-grid">
-          <div class="form-group"><label>委托方<span class="req">*</span></label><select class="select" data-consignor-select></select></div>
-          <div class="form-group"><label>船名<span class="req">*</span></label><input class="input" id="ibShip" /></div>
-          <div class="form-group"><label>提单号<span class="req">*</span></label><input class="input" id="ibBl" /></div>
-          <div class="form-group"><label>预计到货日</label><input class="input" type="date" id="ibArrival" /></div>
-          <div class="form-group"><label>报关单号</label><input class="input" id="ibCustoms" placeholder="OCR 回填" /></div>
-          <div class="form-group"><label>核注清单号</label><input class="input" id="ibHz" /></div>
-          <div class="form-group"><label>金额</label>
-            <div class="input-currency-row">
-              <select class="select" id="ibCurrency"><option value="CNY">人民币 ¥</option><option value="USD">美元 $</option></select>
-              <input class="input" type="number" id="ibAmount" placeholder="金额" />
+        <div class="ib-reserve-layout">
+          <div class="form-grid">
+            <div class="form-group"><label>委托方<span class="req">*</span></label><select class="select" data-consignor-select></select></div>
+            <div class="form-group"><label>船名<span class="req">*</span></label><input class="input" id="ibShip" /></div>
+            <div class="form-group"><label>提单号<span class="req">*</span></label><input class="input" id="ibBl" /></div>
+            <div class="form-group"><label>预计到货日</label><input class="input" type="date" id="ibArrival" /></div>
+            <div class="form-group"><label>报关单号</label><input class="input" id="ibCustoms" placeholder="OCR 回填" /></div>
+            <div class="form-group"><label>核注清单号</label><input class="input" id="ibHz" /></div>
+            <div class="form-group"><label>金额</label>
+              <div class="input-currency-row">
+                <select class="select" id="ibCurrency"><option value="CNY">人民币 ¥</option><option value="USD">美元 $</option></select>
+                <input class="input" type="number" id="ibAmount" placeholder="金额" />
+              </div>
             </div>
+            <div class="form-group"><label>物料<span class="req">*</span></label><select class="select" id="ibMaterial" onchange="syncInboundFiling()"></select></div>
+            <div class="form-group"><label>矿种<span class="req">*</span></label>
+              <select class="select" id="ibMineral"><option>铜精矿</option><option>冰铜</option></select>
+            </div>
+            <div class="form-group"><label>装运方式<span class="req">*</span></label>
+              <select class="select" id="ibShipMode" onchange="onIbShipModeChange()">
+                <option>散货</option>
+                <option>集装箱</option>
+              </select>
+            </div>
+            <div class="form-group" id="ibContainerGroup" hidden>
+              <label>集装箱柜数</label><input class="input" id="ibContainers" type="number" min="1" placeholder="柜" />
+            </div>
+            <div class="form-group span-3"><label>五项有害元素</label>
+              <div class="form-grid cols-2 quality-fields-grid" id="ibHarmfulFields"></div>
+            </div>
+            <div class="form-group"><label>矿源备案号</label><input class="input" id="ibFiling" placeholder="报备矿按矿源自动匹配" readonly /><small class="field-hint">按物料矿源匹配当前有效且有剩余的备案，不从物料档案带出</small></div>
+            <div class="form-group"><label>物流账册主体</label><select class="select" id="ibOwner"><option>广西丰联铜业有限公司</option></select></div>
+            <div class="form-group"><label>匹配账册</label><select class="select" id="ibBonded"></select></div>
           </div>
-          <div class="form-group"><label>物料<span class="req">*</span></label><select class="select" id="ibMaterial" onchange="syncInboundFiling()"></select></div>
-          <div class="form-group"><label>矿源备案号</label><input class="input" id="ibFiling" placeholder="报备矿按矿源自动匹配" readonly /><small class="field-hint">按物料矿源匹配当前有效且有剩余的备案，不从物料档案带出</small></div>
-          <div class="form-group"><label>物流账册主体</label><select class="select" id="ibOwner"><option>广西丰联铜业有限公司</option></select></div>
-          <div class="form-group"><label>匹配账册</label><select class="select" id="ibBonded"><option>T3700XXXX001</option></select></div>
+          <aside class="ib-stack-pane">
+            <div class="form-group">
+              <label>预定堆位 / 存放位置<span class="req">*</span></label>
+              <div class="combo" id="ibStackCombo">
+                <input class="input" id="ibStackSearch" placeholder="搜索堆位，如 4#A1、小A" autocomplete="off" onfocus="openInboundStackList()" oninput="onInboundStackSearch()" onkeydown="onInboundStackKey(event)" />
+                <input type="hidden" id="ibStack" />
+                <ul class="combo-list" id="ibStackList" hidden></ul>
+              </div>
+              <small class="field-hint">支持关键字搜索，选中后再圈选格子</small>
+            </div>
+            <label>存放位置<span class="req">*</span></label>
+            <div class="stack-grid-picker" id="ibStackGrid"></div>
+          </aside>
         </div>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalInbound')">取消</button><button class="btn btn-primary" onclick="saveInbound()">提交预约</button></div>
@@ -1215,6 +1500,19 @@
           <div class="form-group"><label>物料</label><input class="input" id="rcMaterial" readonly /></div>
           <div class="form-group"><label>货物类型</label><input class="input" id="rcCargoType" readonly /></div>
           <div class="form-group"><label>矿源备案号</label><input class="input" id="rcFilingNo" readonly /></div>
+          <div class="form-group"><label>矿种</label><select class="select" id="rcMineral"><option>铜精矿</option><option>冰铜</option></select></div>
+          <div class="form-group"><label>装运方式</label>
+            <select class="select" id="rcShipMode" onchange="onRcShipModeChange()">
+              <option>散货</option>
+              <option>集装箱</option>
+            </select>
+          </div>
+          <div class="form-group" id="rcContainerGroup" hidden>
+            <label>集装箱柜数</label><input class="input" id="rcContainers" type="number" min="1" />
+          </div>
+          <div class="form-group span-3"><label>五项有害元素</label>
+            <div class="form-grid cols-2 quality-fields-grid" id="rcHarmfulFields"></div>
+          </div>
           <div class="form-group span-3">
             <div class="ocr-panel ocr-panel--inline">
               <div class="ocr-panel-hd"><span>OCR 识别</span><span class="tag tag-blue">重量单 · 品质证书</span></div>
@@ -1244,7 +1542,7 @@
             <div class="form-grid cols-2 quality-fields-grid" id="rcQualityFields"></div>
           </div>
           <div class="form-group"><label>品质证书号</label><input class="input" id="rcQualityNo" placeholder="OCR 回填" readonly /></div>
-          <div class="form-group"><label>匹配保税账册<span class="req">*</span></label><select class="select"><option>T3700XXXX001</option><option>T3700XXXX002</option></select></div>
+          <div class="form-group"><label>匹配保税账册<span class="req">*</span></label><select class="select" id="rcBonded"></select></div>
           <div class="form-group"><label>分类</label><select class="select"><option>原料</option><option>成品</option></select></div>
           <div class="form-group"><label>&nbsp;</label><button type="button" class="btn btn-default" onclick="openOcrModal('receive')">查看 OCR 详情</button></div>
           <div class="form-group span-3"><label>收货备注</label><textarea class="textarea" id="rcRemark"></textarea></div>
@@ -1264,8 +1562,7 @@
           <div class="form-group"><label>物料类型</label><input class="input" id="asCargoType" readonly /></div>
           <div class="form-group"><label>矿源备案号</label><input class="input" id="asFilingNo" readonly /></div>
           <div class="form-group"><label>报关单号</label><input class="input" id="asCustomsNo" readonly /></div>
-          <div class="form-group"><label>目标堆位<span class="req">*</span></label><select class="select"><option>1#B1（1仓 / 余 6600吨 / 原料区域）</option><option>2#A1（2仓 / 余 4375吨 / 原料区域）</option><option>4#A1（4仓 / 待检区域）</option></select></div>
-          <div class="form-group"><label>预计片区标识</label><input class="input" value="原料区域（上架后库存取报关单号）" readonly /></div>
+          <div class="form-group"><label>目标堆位<span class="req">*</span></label><select class="select"><option>1#B1（1仓 / 余 6600吨）</option><option>2#A1（2仓 / 余 4375吨）</option><option>4#A1（4仓）</option></select></div>
           <div class="form-group"><label>上架干重(吨)<span class="req">*</span></label><input class="input" type="number" id="asDry" value="720" /></div>
         </div>
       </div>
@@ -1277,18 +1574,39 @@
     <div class="modal">
       <div class="modal-hd"><h3>新建移库单</h3><button class="modal-close" onclick="closeModal('modalTransfer')">×</button></div>
       <div class="modal-bd">
+        <div class="anno">请先选择<strong>原堆位</strong>，再选择该堆位上要移动的矿批次。</div>
         <div class="form-grid cols-2">
-          <div class="form-group"><label>委托方</label><input class="input" value="广西金川有色金属有限公司" readonly /></div>
-          <div class="form-group"><label>场景<span class="req">*</span></label><select class="select" id="transferScene"><option>整票移位</option><option>拆票移位</option></select></div>
-          <div class="form-group"><label>报关单号</label><select class="select"><option value="">— 原料移库选此项 —</option><option>BG20260728041 原料物料-A</option><option>BG20260801022 原料物料-B</option></select></div>
-          <div class="form-group"><label>生产批次</label><select class="select"><option value="">— 成品移库选此项 —</option><option>FL-20260803 成品物料-A</option><option>FL-20260802 成品物料-A</option></select></div>
-          <div class="form-group"><label>原堆位<span class="req">*</span></label><select class="select"><option>1#A1</option><option>1#A2</option></select></div>
-          <div class="form-group"><label>目标堆位<span class="req">*</span></label><select class="select"><option>1#B1</option><option>5#小A</option></select></div>
-          <div class="form-group"><label>移库重量(吨)<span class="req">*</span></label><input class="input" type="number" /></div>
-          <div class="form-group"><label>操作人</label><input class="input" value="当前用户" readonly /></div>
+          <div class="form-group"><label>原堆位<span class="req">*</span></label>
+            <select class="select" id="tfFromStack" onchange="onTransferFromStackChange()"></select>
+          </div>
+          <div class="form-group"><label>矿批次<span class="req">*</span></label>
+            <select class="select" id="tfBatch" onchange="onTransferBatchChange()">
+              <option value="">请先选择原堆位</option>
+            </select>
+          </div>
+          <div class="form-group"><label>委托方</label><input class="input" id="tfConsignor" readonly /></div>
+          <div class="form-group"><label>场景<span class="req">*</span></label>
+            <select class="select" id="transferScene"><option>整票移位</option><option>拆票移位</option></select>
+          </div>
+          <div class="form-group"><label>报关单号</label><input class="input" id="tfCustoms" readonly /></div>
+          <div class="form-group"><label>生产批次</label><input class="input" id="tfProd" readonly /></div>
+          <div class="form-group"><label>物料</label><input class="input" id="tfMaterial" readonly /></div>
+          <div class="form-group"><label>船名</label><input class="input" id="tfShip" /></div>
+          <div class="form-group"><label>柜数</label><input class="input" id="tfContainers" type="number" min="0" placeholder="散货可空" /></div>
+          <div class="form-group"><label>目标堆位<span class="req">*</span></label><select class="select" id="tfToStack"></select></div>
+          <div class="form-group"><label>移库重量(吨)<span class="req">*</span></label><input class="input" type="number" id="tfWeight" /></div>
+          <div class="form-group span-2"><label>移库时间<span class="req">*</span>（精确到时）</label>
+            <div class="inv-time-inputs">
+              <input class="input" type="date" id="tfTimeFromDate" value="2026-08-03" />
+              <select class="select inv-hour" id="tfTimeFromHour"></select>
+              <span class="audit-date-sep">至</span>
+              <input class="input" type="date" id="tfTimeToDate" value="2026-08-03" />
+              <select class="select inv-hour" id="tfTimeToHour"></select>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalTransfer')">取消</button><button class="btn btn-primary" onclick="saveAndClose('modalTransfer')">提交并更新库存</button></div>
+      <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalTransfer')">取消</button><button class="btn btn-primary" onclick="saveTransfer()">提交并更新库存</button></div>
     </div>
   </div>
 
@@ -1389,11 +1707,11 @@
       <div class="modal-bd">
         <div class="panel"><div class="panel-hd"><h3>关联报关单号（3 票）</h3></div><div class="panel-bd tight">
           <table class="data">
-            <thead><tr><th>#</th><th>报关单号</th><th>委托方</th><th>货物类型</th><th>物料来源</th><th>船名/航次</th><th>提单号</th><th>来源国家</th><th>湿重(吨)</th><th>干重(吨)</th><th>堆放堆位</th><th>片区标识</th></tr></thead>
+            <thead><tr><th>#</th><th>报关单号</th><th>出库报关单号</th><th>委托方</th><th>货物类型</th><th>物料</th><th>船名/航次</th><th>提单号</th><th>来源国家</th><th>湿重(吨)</th><th>干重(吨)</th><th>堆放堆位</th><th>片区标识</th></tr></thead>
             <tbody>
-              <tr><td>1</td><td>BG20260728041</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td><span class="tag tag-green">达标矿</span></td><td>秘鲁精矿</td><td>AMSTEL LION/艾米斯特/5舱</td><td>AMSLIOCLL 005</td><td>秘鲁</td><td>2,800.00</td><td>2,549.12</td><td><strong>1#A1</strong></td><td><span class="tag tag-blue">原料区域</span></td></tr>
-              <tr><td>2</td><td>BG20260801022</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td><span class="tag tag-orange">报备矿</span></td><td>智利精矿</td><td>NAN GANG 103</td><td>BGD0121866</td><td>智利</td><td>1,695.46</td><td>1,582.71</td><td><strong>1#A2</strong></td><td><span class="tag tag-blue">原料区域</span></td></tr>
-              <tr><td>3</td><td>BG20260715033</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td><span class="tag tag-green">达标矿</span></td><td>秘鲁精矿</td><td>DIAS WELL/迪亚斯好人</td><td>SANDIA052601</td><td>秘鲁</td><td>999.54</td><td>899.17</td><td><strong>2#A1</strong></td><td><span class="tag tag-blue">原料区域</span></td></tr>
+              <tr><td>1</td><td>BG20260728041</td><td>BGCKTL2026080301</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td><span class="tag tag-green">达标矿</span></td><td>原料物料-A</td><td>AMSTEL LION/艾米斯特/5舱</td><td>AMSLIOCLL 005</td><td>秘鲁</td><td>2,800.00</td><td>2,549.12</td><td><strong>1#A1</strong></td><td><span class="tag tag-blue">原料区域</span></td></tr>
+              <tr><td>2</td><td>BG20260801022</td><td>BGCKTL2026080301</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td><span class="tag tag-orange">报备矿</span></td><td>原料物料-B</td><td>NAN GANG 103</td><td>BGD0121866</td><td>智利</td><td>1,695.46</td><td>1,582.71</td><td><strong>1#A2</strong></td><td><span class="tag tag-blue">原料区域</span></td></tr>
+              <tr><td>3</td><td>BG20260715033</td><td>BGCKTL2026080301</td><td><span class="tag tag-purple" title="广西金川有色金属有限公司">广西金川</span></td><td><span class="tag tag-green">达标矿</span></td><td>原料物料-A</td><td>DIAS WELL/迪亚斯好人</td><td>SANDIA052601</td><td>秘鲁</td><td>999.54</td><td>899.17</td><td><strong>2#A1</strong></td><td><span class="tag tag-blue">原料区域</span></td></tr>
             </tbody>
           </table>
         </div></div>
@@ -1449,20 +1767,22 @@
           </div>
           <div class="upload-zone" style="margin-bottom:10px;padding:14px" onclick="document.getElementById('obOcrFile').click()">
             <strong>点击或拖拽上传出库报关单</strong>
-            <span>支持 PDF / JPG / PNG · 识别报关单号、核注清单号、流向企业、重量与报关单金额；识别字段可手工修正并留痕</span>
+            <span>支持 PDF / JPG / PNG · 识别报关单号、核注清单号、流向企业、消费使用单位、重量与报关单金额；识别字段可手工修正并留痕</span>
           </div>
           <input type="file" id="obOcrFile" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="onOutboundOcrUpload(this)" />
           <div class="ocr-doc-row">
             <button type="button" class="btn btn-default btn-sm" onclick="document.getElementById('obOcrFile').click()">上传报关单</button>
             <button type="button" class="btn btn-default btn-sm" onclick="runOutboundOcr()">上传报关单</button>
             <button type="button" class="btn btn-text btn-sm" onclick="openOcrModal('outbound')">打开识别详情</button>
-            <span class="ocr-status" id="obOcrStatus">上传出库报关单影像，自动识别并回填报关单号、核注清单号、流向企业、重量与报关单金额</span>
+            <span class="ocr-status" id="obOcrStatus">上传出库报关单影像，自动识别并回填报关单号、核注清单号、流向企业、消费使用单位、重量与报关单金额</span>
           </div>
         </div>
         <div class="form-grid">
           <div class="form-group"><label>委托方<span class="req">*</span></label><select class="select" data-consignor-select></select></div>
-          <div class="form-group"><label>流向企业<span class="req">*</span></label><select class="select" id="obConsignee"><option>华东冶炼股份公司</option><option>滨海贸易有限公司</option></select></div>
+          <div class="form-group"><label>流向企业<span class="req">*</span></label><input class="input" id="obConsignee" placeholder="OCR 回填，自动写入往来主体" /></div>
+          <div class="form-group"><label>消费使用单位<span class="req">*</span></label><input class="input" id="obConsumerUnit" placeholder="OCR 回填，可手工修正" /></div>
           <div class="form-group"><label>出库报关单号<span class="req">*</span></label><input class="input" id="obCustoms" placeholder="OCR 回填，可手工修正" /></div>
+          <div class="form-group"><label>匹配保税账册<span class="req">*</span></label><select class="select" id="obBonded"></select></div>
           <div class="form-group"><label>核注清单号<span class="req">*</span></label><input class="input" id="obHz" placeholder="OCR 回填，可手工修正" /></div>
           <div class="form-group"><label>生产批次<span class="req">*</span></label><select class="select" id="obBatch"><option>FL-20260803 成品物料-A</option><option>FL-20260802 成品物料-A</option></select></div>
           <div class="form-group"><label>出库重量<span class="req">*</span></label><input class="input" type="number" id="obWeight" placeholder="OCR 回填，可手工修正" /></div>
@@ -1509,6 +1829,7 @@
               <div class="form-group"><label>报关单号</label><input class="input" id="ocrCustoms" value="BG20260801088" /></div>
               <div class="form-group"><label>核注清单号</label><input class="input" id="ocrHz" value="HZ20260801012" /></div>
               <div class="form-group"><label>流向企业</label><input class="input" id="ocrConsignee" value="华东冶炼股份公司" /></div>
+              <div class="form-group"><label>消费使用单位</label><input class="input" id="ocrConsumerUnit" value="华东冶炼冶炼一分厂" /></div>
               <div class="form-group"><label>报关单金额</label>
                 <div class="input-currency-row">
                   <select class="select" id="ocrCurrency"><option value="CNY">人民币 ¥</option><option value="USD">美元 $</option></select>
@@ -1531,16 +1852,18 @@
     <div class="modal modal--lg">
       <div class="modal-hd"><h3>批量移库任务</h3><button class="modal-close" onclick="closeModal('modalBatchTransfer')">×</button></div>
       <div class="modal-bd">
-        <div class="anno"><strong>批量移库</strong>勾选多个<strong>原料单（报关单号）</strong>同时移位；逐票指定整票/拆票方式、目标堆位与重量，提交后统一校验库容并生成库存流水。</div>
+        <div class="anno"><strong>批量移库</strong>先选<strong>原堆位</strong>，再勾选该堆位上要移动的矿批次。提交后<strong>每票各生成一条移库记录</strong>，不合并。</div>
         <div class="batch-transfer-bar">
-          <label class="batch-transfer-all"><input type="checkbox" id="batchTransferAll" checked onchange="toggleBatchTransferAll(this)" /> 全选原料单</label>
-          <span class="field-hint" id="batchTransferSelCount">已选 2 票原料单</span>
+          <div class="form-group" style="margin:0;min-width:200px">
+            <label>原堆位</label>
+            <select class="select" id="batchFromStack" onchange="renderBatchTransferLots()"></select>
+          </div>
+          <label class="batch-transfer-all"><input type="checkbox" id="batchTransferAll" onchange="toggleBatchTransferAll(this)" /> 全选批次</label>
+          <span class="field-hint" id="batchTransferSelCount">已选 0 票</span>
         </div>
-        <table class="data"><thead><tr><th>选择</th><th>报关单号（原料单）</th><th>物料</th><th>原堆位</th><th>可移重量</th><th>目标堆位</th><th>移位方式</th></tr></thead><tbody id="batchTransferBody">
-          <tr><td><input type="checkbox" class="batch-transfer-check" checked onchange="updateBatchTransferCount()" /></td><td>BG20260728041</td><td>原料物料-A</td><td>1#A1</td><td>468 吨</td><td><select class="select"><option>1#B1</option><option>1#A2</option></select></td><td><select class="select"><option>拆票移位 · 120 吨</option><option>整票移位</option></select></td></tr>
-          <tr><td><input type="checkbox" class="batch-transfer-check" checked onchange="updateBatchTransferCount()" /></td><td>BG20260801022</td><td>原料物料-B</td><td>1#A2</td><td>330 吨</td><td><select class="select"><option>2#A1</option><option>1#B1</option></select></td><td><select class="select"><option>整票移位</option><option>拆票移位 · 指定重量</option></select></td></tr>
-          <tr><td><input type="checkbox" class="batch-transfer-check" onchange="updateBatchTransferCount()" /></td><td>BG20260715033</td><td>原料物料-A</td><td>2#A1</td><td>899 吨</td><td><select class="select"><option>1#B1</option><option>2#A2</option></select></td><td><select class="select"><option>整票移位</option><option>拆票移位 · 指定重量</option></select></td></tr>
-        </tbody></table>
+        <table class="data"><thead><tr><th>选择</th><th>报关单号</th><th>生产批次</th><th>物料</th><th>船名</th><th>柜数</th><th>可移重量</th><th>目标堆位</th><th>移位方式</th></tr></thead>
+          <tbody id="batchTransferBody"></tbody>
+        </table>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalBatchTransfer')">取消</button><button class="btn btn-primary" onclick="saveBatchTransfer()">校验并提交</button></div>
     </div>
@@ -1591,21 +1914,21 @@
       </div>
       <div class="modal-ft">
         <button class="btn btn-default" onclick="closeModal('modalLotDocs')">关闭</button>
-        <button class="btn btn-primary" onclick="closeModal('modalLotDocs');openModal('modalLedger')">查看台账</button>
+        <button class="btn btn-primary" onclick="closeModal('modalLotDocs');openLedger(lotDocsCurrentKey)">查看台账</button>
       </div>
     </div>
   </div>
 
   <div class="modal-mask" id="modalLedger">
     <div class="modal modal--lg">
-      <div class="modal-hd"><h3>重量台账 · BG20260728041（报关单号）</h3><button class="modal-close" onclick="closeModal('modalLedger')">×</button></div>
+      <div class="modal-hd"><h3 id="ledgerTitle">重量台账</h3><button class="modal-close" onclick="closeModal('modalLedger')">×</button></div>
       <div class="modal-bd">
-        <div class="anno"><strong>本票品质</strong>（上架后记入）Cu22.5%；Ag45g/t；Au0.8g/t · 证书 QA-20260803-001</div>
-        <div class="stats"><div class="stat-card"><div class="label">委托方</div><div class="value" style="font-size:14px">广西金川</div><div class="sub">有色金属</div></div><div class="stat-card"><div class="label">入库湿重</div><div class="value">520</div><div class="sub">吨</div></div><div class="stat-card ok"><div class="label">折算干重</div><div class="value">468</div><div class="sub">吨</div></div><div class="stat-card warn"><div class="label">当前结存</div><div class="value">388</div><div class="sub">干吨</div></div></div>
-        <table class="data"><thead><tr><th>时间</th><th>业务类型</th><th>业务单号</th><th>原/目标堆位</th><th>湿重变化</th><th>干重变化</th><th>结存干重</th><th>操作人</th></tr></thead><tbody>
-          <tr><td>08-02 11:05</td><td>入库上架</td><td>RK-20260802-018</td><td>— / 1#A1</td><td>+520</td><td>+468</td><td>468</td><td>仓管-赵</td></tr>
-          <tr><td>08-03 07:30</td><td>生产投料</td><td>TL-20260803-004</td><td>1#A1 / FL-20260803</td><td>—</td><td>-80</td><td>388</td><td>生产-孙</td></tr>
-        </tbody></table>
+        <div class="anno" id="ledgerAnno"></div>
+        <div class="stats" id="ledgerStats"></div>
+        <table class="data">
+          <thead><tr><th>时间</th><th>业务类型</th><th>业务单号</th><th>流向企业</th><th>原/目标堆位</th><th>湿重变化</th><th>干重变化</th><th>结存干重</th><th>操作人</th></tr></thead>
+          <tbody id="ledgerBody"></tbody>
+        </table>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalLedger')">关闭</button><button class="btn btn-primary" onclick="toast('台账已导出','ok')">导出台账</button></div>
     </div>
@@ -1617,7 +1940,7 @@
       <div class="modal-bd">
         <div class="anno"><strong>电子账册核销</strong>从汇总差异穿透至核注清单、报关单号与生产批次及盘点调整记录。</div>
         <table class="data"><thead><tr><th>账册</th><th>核注清单</th><th>报关单号</th><th>生产批次</th><th>账册数量</th><th>实物数量</th><th>差异原因</th><th>核销状态</th></tr></thead><tbody>
-          <tr><td>T3700XXXX001</td><td>HZ20260728009</td><td>BG20260728041</td><td>—</td><td>470.5</td><td>468.0</td><td>盘点待复核</td><td><span class="tag tag-orange">待核销</span></td></tr>
+          <tr><td>T3700XXXX002</td><td>HZ20260728009</td><td>BG20260728041</td><td>—</td><td>470.5</td><td>468.0</td><td>盘点待复核</td><td><span class="tag tag-orange">待核销</span></td></tr>
         </tbody></table>
       </div>
       <div class="modal-ft"><button class="btn btn-default" onclick="closeModal('modalCustomsDiff')">关闭</button><button class="btn btn-primary" onclick="toast('已提交关务复核','ok')">提交核销复核</button></div>
@@ -1638,86 +1961,6 @@
         </div>
       </div>
       <div class="modal-ft"><button class="btn btn-primary" onclick="closeModal('modalAuditDetail')">关闭</button></div>
-    </div>
-  </div>
-
-  <div class="modal-mask" id="modalFloorPlan">
-    <div class="modal modal--floor-plan">
-      <div class="modal-hd">
-        <h3 id="fpTitle">平面图管理</h3>
-        <button class="modal-close" onclick="closeModal('modalFloorPlan')">×</button>
-      </div>
-      <div class="modal-bd fp-bd">
-        <div class="fp-layout">
-          <div class="fp-canvas-wrap" id="fpCanvasWrap">
-            <div id="fpCanvas"></div>
-          </div>
-          <aside class="fp-side">
-            <div class="form-group">
-              <label>功能区</label>
-              <div class="fp-unit-row">
-                <input class="input" id="fpRoomCount" type="number" min="0" max="12" value="1" onchange="onFloorPlanCountChange()" />
-                <span class="fp-unit">个</span>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>门</label>
-              <div class="fp-unit-row">
-                <input class="input" id="fpDoorCount" type="number" min="0" max="12" value="3" onchange="onFloorPlanCountChange()" />
-                <span class="fp-unit">个</span>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>名称</label>
-              <input class="input" id="fpItemName" maxlength="16" placeholder="点选堆位、门或功能区后改名" disabled onfocus="onFloorPlanNameFocus()" oninput="onFloorPlanNameInput()" onblur="onFloorPlanNameBlur()" />
-            </div>
-            <div class="fp-side-tools">
-              <button type="button" class="btn btn-default btn-sm" id="fpUndoBtn" onclick="fpUndo()" disabled>撤销</button>
-              <button type="button" class="btn btn-default btn-sm" id="fpRedoBtn" onclick="fpRedo()" disabled>重做</button>
-              <label class="fp-snap-toggle" title="快捷键 G；按住 Shift 临时关闭">
-                <input type="checkbox" id="fpSnapToggle" checked onchange="fpToggleSnap(this.checked)" />
-                <span>网格吸附</span>
-              </label>
-              <button type="button" class="btn btn-default btn-sm" onclick="fpRotateSelected(-90)">左旋 90°</button>
-              <button type="button" class="btn btn-default btn-sm" onclick="fpRotateSelected(90)">右旋 90°</button>
-            </div>
-            <p class="fp-side-hint">堆位、功能区只画矩形：拖动平移，四角缩放，顶部圆点或按钮旋转 90°。拖时对齐网格，松手贴边且不重叠。Ctrl+Z / Ctrl+Y 撤销重做，G 开关网格吸附，Shift 临时自由拖。双击改名。保存后驾驶舱展示物料标注。</p>
-            <div class="fp-side-actions">
-              <button type="button" class="btn btn-default" onclick="closeModal('modalFloorPlan')">取消</button>
-              <button type="button" class="btn btn-primary" onclick="saveFloorPlan()">保存</button>
-            </div>
-          </aside>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-mask" id="modalWhPlan">
-    <div class="modal modal--lg modal--wh-plan">
-      <div class="modal-hd">
-        <h3 id="whPlanTitle">仓库平面图</h3>
-        <button class="modal-close" onclick="closeModal('modalWhPlan')">×</button>
-      </div>
-      <div class="modal-bd wh-plan-bd">
-        <div class="wh-plan-toolbar">
-          <button type="button" class="btn btn-default btn-sm" onclick="whPlanZoom(0.15)">放大</button>
-          <button type="button" class="btn btn-default btn-sm" onclick="whPlanZoom(-0.15)">缩小</button>
-          <button type="button" class="btn btn-default btn-sm" onclick="whPlanRotate(-90)">左旋 90°</button>
-          <button type="button" class="btn btn-default btn-sm" onclick="whPlanRotate(90)">右旋 90°</button>
-          <button type="button" class="btn btn-default btn-sm" onclick="whPlanReset()">重置视图</button>
-          <span class="wh-plan-meta" id="whPlanMeta">100% · 0°</span>
-          <span class="wh-plan-hint">已按在库重量划分堆位空间并标注物料 · 滚轮缩放 · 拖拽平移</span>
-        </div>
-        <div class="wh-plan-viewport" id="whPlanViewport">
-          <div class="wh-plan-stage" id="whPlanStage">
-            <div id="whPlanSvgHost" class="wh-plan-svg-host"></div>
-          </div>
-        </div>
-      </div>
-      <div class="modal-ft">
-        <button class="btn btn-default" onclick="closeModal('modalWhPlan')">关闭</button>
-        <button type="button" class="btn btn-primary" id="whPlanGoStacks" onclick="whPlanGoStacks()">查看堆位</button>
-      </div>
     </div>
   </div>
 
@@ -1771,6 +2014,7 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <script src="app.js?v=proto-floor17"></script>
+  <script src="app.js?v=proto-floor44"></script>
+  <script src="yard-plan.js?v=park18"></script>
 </body>
 </html>

@@ -139,10 +139,10 @@ def normalize_floor_plan(raw):
     rooms = raw.get("rooms")
     doors = raw.get("doors")
     try:
-        rooms_n = max(0, min(12, round(float(rooms)))) if rooms is not None else len(
-            [it for it in items if isinstance(it, dict) and it.get("type") == "room"]
+        rooms_n = max(0, min(200, round(float(rooms)))) if rooms is not None else len(
+            [it for it in items if isinstance(it, dict) and it.get("type") in ("room", "zone")]
         )
-        doors_n = max(0, min(12, round(float(doors)))) if doors is not None else len(
+        doors_n = max(0, min(200, round(float(doors)))) if doors is not None else len(
             [it for it in items if isinstance(it, dict) and it.get("type") == "door"]
         )
     except (TypeError, ValueError):
@@ -151,7 +151,32 @@ def normalize_floor_plan(raw):
     from datetime import datetime, timezone
 
     saved = str(raw.get("savedAt") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")
-    return {"rooms": int(rooms_n), "doors": int(doors_n), "items": items, "savedAt": saved}
+    plan = {"rooms": int(rooms_n), "doors": int(doors_n), "items": items, "savedAt": saved}
+    kind = str(raw.get("kind") or "").strip()
+    if kind:
+        plan["kind"] = kind
+    try:
+        if raw.get("grid") is not None:
+            plan["grid"] = max(8, min(80, int(raw.get("grid"))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        if raw.get("gridCols") is not None:
+            plan["gridCols"] = max(2, min(200, int(raw.get("gridCols"))))
+        if raw.get("gridRows") is not None:
+            plan["gridRows"] = max(2, min(200, int(raw.get("gridRows"))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        if raw.get("canvasW") is not None:
+            plan["canvasW"] = max(400, min(8000, int(raw.get("canvasW"))))
+        if raw.get("canvasH") is not None:
+            plan["canvasH"] = max(300, min(8000, int(raw.get("canvasH"))))
+    except (TypeError, ValueError):
+        pass
+    if isinstance(raw.get("stackGrids"), dict):
+        plan["stackGrids"] = raw.get("stackGrids")
+    return plan
 
 
 WH_PLAN_RE = re.compile(r"^/api/warehouses/([^/]+)/floor-plan$")
@@ -293,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/floor-plans", "/api/floorplans"):
             wid = str(body.get("id") or body.get("whId") or "").strip()
             if not wid:
-                return json_response(self, 400, {"success": False, "data": None, "message": "仓库编号无效"})
+                return json_response(self, 400, {"success": False, "data": None, "message": "平面图编号无效"})
             plan = normalize_floor_plan(body)
             if not plan:
                 return json_response(self, 400, {"success": False, "data": None, "message": "平面图须包含 items"})
@@ -312,7 +337,7 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             wid = m.group(1)
             if not wid:
-                return json_response(self, 400, {"success": False, "data": None, "message": "仓库编号无效"})
+                return json_response(self, 400, {"success": False, "data": None, "message": "平面图编号无效"})
             plan = normalize_floor_plan(body)
             if not plan:
                 return json_response(self, 400, {"success": False, "data": None, "message": "平面图须包含 items"})

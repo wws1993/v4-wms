@@ -39,7 +39,7 @@ const PAGE_TITLE = {
   materials: '基础数据 / 物料档案',
   partners: '基础数据 / 往来主体',
   bonded: '基础数据 / 保税账册',
-  settings: '系统设置 / 权限与参数',
+  settings: '系统设置 / 权限、参数与平面图',
   inbound: '入库管理',
   transfer: '库内移库管理',
   inventory: '库存精细化 / 多维查询',
@@ -57,32 +57,160 @@ const ROLE_MAP = {
   warehouse: { name: '仓管员', short: '仓', customs: false },
   customs: { name: '关务员（海关专用）', short: '关', customs: true },
   admin: { name: '系统管理员', short: '管', customs: false },
-  production: { name: '生产员', short: '生', customs: false },
 };
 
 /** 各角色可见菜单（null = 全部）；对齐项目设计 §3 角色权限 */
 const ROLE_PAGES = {
   admin: null,
   warehouse: ['dashboard', 'inbound', 'transfer', 'inventory', 'stocktake', 'alert', 'outbound'],
-  customs: ['customs', 'bonded', 'audit'],
-  production: ['production', 'inventory', 'inbound'],
+  customs: null,
 };
 
 const ROLE_DEFAULT_PAGE = {
   admin: 'dashboard',
   warehouse: 'dashboard',
-  customs: 'customs',
-  production: 'production',
+  customs: 'dashboard',
 };
 
-const ROLE_ORDER = ['admin', 'warehouse', 'customs', 'production'];
-const ROLE_PAGES_KEY = 'wms_role_pages';
+const ROLE_ORDER = ['admin', 'warehouse', 'customs'];
+const ROLE_PAGES_KEY = 'wms_role_pages_v2';
 const ROLE_PERM_HINTS = {
   admin: '管理员默认可访问全部模块，可按需收窄菜单。',
   warehouse: '仓管员负责入出库、移库、盘点与日常库存查询。',
-  customs: '关务员使用海关专用账号，菜单、数据与审计与业务账号隔离。',
-  production: '生产员负责投料、加工过程与完工入库登记。',
+  customs: '关务员菜单默认全开；关务员操作在审计中单独标识。',
 };
+
+const SYS_ACCOUNTS_KEY = 'wms_sys_accounts';
+const DEFAULT_SYS_ACCOUNTS = [
+  { user: 'admin', name: '系统管理员', roleKey: 'admin', status: '启用', lastLogin: '2026-08-03 09:00', password: '' },
+  { user: 'wh01', name: '仓管-赵', roleKey: 'warehouse', status: '启用', lastLogin: '2026-08-03 10:22', password: '' },
+  { user: 'wh02', name: '仓管-钱', roleKey: 'warehouse', status: '启用', lastLogin: '2026-08-03 09:05', password: '' },
+  { user: 'customs01', name: '关务张', roleKey: 'customs', status: '启用', lastLogin: '2026-08-03 09:12', password: '' },
+  { user: 'customs02', name: '关务李', roleKey: 'customs', status: '启用', lastLogin: '2026-08-02 16:40', password: '' },
+];
+
+function loadSysAccounts() {
+  try {
+    const raw = localStorage.getItem(SYS_ACCOUNTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch { /* empty */ }
+  return DEFAULT_SYS_ACCOUNTS.map((a) => ({ ...a }));
+}
+
+function persistSysAccounts(list) {
+  localStorage.setItem(SYS_ACCOUNTS_KEY, JSON.stringify(list));
+}
+
+function findSysAccount(user) {
+  const key = String(user || '').trim();
+  return loadSysAccounts().find((a) => a.user === key) || null;
+}
+
+function openAccountModal() {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
+  set('accUser', '');
+  set('accName', '');
+  set('accRole', 'warehouse');
+  set('accStatus', '启用');
+  set('accPwd', '');
+  set('accPwd2', '');
+  openModal('modalAccount');
+}
+
+function saveAccount() {
+  const user = document.getElementById('accUser')?.value.trim() || '';
+  const name = document.getElementById('accName')?.value.trim() || '';
+  const roleKey = document.getElementById('accRole')?.value || 'warehouse';
+  const status = document.getElementById('accStatus')?.value || '启用';
+  const pwd = document.getElementById('accPwd')?.value || '';
+  const pwd2 = document.getElementById('accPwd2')?.value || '';
+  if (!user || !name) {
+    toast('请填写账号和姓名', 'warn');
+    return;
+  }
+  if (!ROLE_MAP[roleKey]) {
+    toast('请选择角色', 'warn');
+    return;
+  }
+  if (!pwd) {
+    toast('请设置密码', 'warn');
+    return;
+  }
+  if (pwd !== pwd2) {
+    toast('两次密码不一致', 'warn');
+    return;
+  }
+  const list = loadSysAccounts();
+  if (list.some((a) => a.user === user)) {
+    toast('账号已存在', 'warn');
+    return;
+  }
+  list.push({
+    user,
+    name,
+    roleKey,
+    status,
+    lastLogin: '—',
+    password: pwd,
+  });
+  persistSysAccounts(list);
+  renderAccountTable();
+  closeModal('modalAccount');
+  toast(`账号 ${user} 已注册`, 'ok');
+}
+
+function resetAccountPassword(user) {
+  toast(`已向 ${user} 发出重置密码提示（演示）`, 'ok');
+}
+
+function toggleAccountStatus(user) {
+  const list = loadSysAccounts();
+  const acc = list.find((a) => a.user === user);
+  if (!acc) return;
+  acc.status = acc.status === '启用' ? '停用' : '启用';
+  persistSysAccounts(list);
+  renderAccountTable();
+  toast(`${user} 已${acc.status}`, 'ok');
+}
+
+function renderAccountTable() {
+  const tbody = document.getElementById('accountTableBody');
+  if (!tbody) return;
+  const list = loadSysAccounts();
+  tbody.innerHTML = list.map((a) => {
+    const role = ROLE_MAP[a.roleKey];
+    const st = a.status === '停用'
+      ? '<span class="tag tag-orange">停用</span>'
+      : '<span class="tag tag-green">启用</span>';
+    const toggleLabel = a.status === '停用' ? '启用' : '停用';
+    return `<tr>
+      <td>${a.user}</td>
+      <td>${a.name}</td>
+      <td>${role ? role.name.replace('（海关专用）', '') : a.roleKey}</td>
+      <td>${st}</td>
+      <td>${a.lastLogin || '—'}</td>
+      <td class="ops">
+        <button type="button" class="btn-text" onclick="resetAccountPassword('${a.user}')">重置密码</button>
+        <button type="button" class="btn-text" onclick="toggleAccountStatus('${a.user}')">${toggleLabel}</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const counts = { admin: 0, warehouse: 0, customs: 0 };
+  list.forEach((a) => {
+    if (counts[a.roleKey] != null) counts[a.roleKey] += 1;
+  });
+  const setCount = (id, n) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(n);
+  };
+  setCount('roleCountAdmin', counts.admin);
+  setCount('roleCountWarehouse', counts.warehouse);
+  setCount('roleCountCustoms', counts.customs);
+}
 
 let currentRole = null;
 let rolePermEditing = null;
@@ -216,15 +344,29 @@ function go(pageId) {
   content.classList.toggle('cockpit-on', isCockpit);
   if (isCockpit) initCockpit();
   else stopCockpit();
-  if (pageId === 'stacks') { renderStackTable(); applyLocationFilter(); }
+  if (pageId === 'stacks') {
+    const paint = () => { renderStackTable(); applyLocationFilter(); };
+    paint();
+    if (typeof ensureParkPlanLoaded === 'function') Promise.resolve(ensureParkPlanLoaded()).then(paint).catch(() => {});
+  }
   if (pageId === 'warehouses') renderWarehouseTable();
+  if (pageId === 'partners') renderPartnerTable();
+  if (pageId === 'bonded') renderBondedTable();
   if (pageId === 'inbound') renderInboundTable();
+  if (pageId === 'transfer') renderTransferTable();
   if (pageId === 'materials') {
     renderMaterialTable();
     renderSourceFilingTable();
   }
-  if (pageId === 'settings') initSysParamsForm();
+  if (pageId === 'settings') {
+    initSysParamsForm();
+    renderAccountTable();
+    const floorOn = document.querySelector('#settingsTabs .tab.active')?.dataset.tab === 'floorplan';
+    document.querySelector('[data-page="settings"]')?.classList.toggle('settings-floorplan', !!floorOn);
+    if (floorOn && typeof openParkEditor === 'function') openParkEditor();
+  }
   if (pageId === 'alert') renderAlertPage();
+  if (pageId === 'inventory') applyPendingInventoryTicket();
   renderAnnoPins();
   highlightActiveAnnoPin();
 }
@@ -245,7 +387,33 @@ function goWarehouse(whId, stackCode) {
   if (stackCode) sessionStorage.setItem('wms_stack', stackCode);
   else sessionStorage.removeItem('wms_stack');
   go('stacks');
-  toast(`已进入 ${wh.name}${stackCode ? ' · ' + stackCode : ''}`, 'ok');
+  toast(`已进入堆位管理${stackCode ? ' · ' + stackCode : ''}`, 'ok');
+}
+
+function goInventoryLot(ticket) {
+  const key = String(ticket || '').trim();
+  if (!key || key === '—') {
+    go('inventory');
+    return;
+  }
+  sessionStorage.setItem('wms_inv_ticket', key);
+  go('inventory');
+}
+
+function applyPendingInventoryTicket() {
+  const ticket = sessionStorage.getItem('wms_inv_ticket');
+  if (!ticket) return;
+  sessionStorage.removeItem('wms_inv_ticket');
+  let hit = 0;
+  document.querySelectorAll('#invTableBody tr').forEach((row) => {
+    const customs = (row.dataset.ticket || row.cells[0]?.textContent || '').replace(/[—\s]/g, '');
+    const prod = (row.cells[1]?.textContent || '').replace(/[—\s]/g, '');
+    const match = customs === ticket || prod === ticket || (row.dataset.ticket || '') === ticket;
+    row.style.display = match ? '' : 'none';
+    row.classList.toggle('row-highlight', match);
+    if (match) hit += 1;
+  });
+  toast(hit ? `已定位本票 ${ticket}` : `库存中未找到本票 ${ticket}`, hit ? 'ok' : 'warn');
 }
 
 function onWarehouseFilterChange() {
@@ -270,7 +438,7 @@ function applyLocationFilter() {
   if (sel) sel.value = whKey;
   if (hint) {
     hint.hidden = false;
-    hint.innerHTML = `本页仅支持<strong>单仓库</strong>展示，默认第一个仓库。当前：<strong>${whKey}</strong>（共 ${WAREHOUSES.length} 个仓库可选）${stack ? ` · 定位堆位 <strong>${stack}</strong>` : ''}。平面图保存后可在驾驶舱点击该仓模型查看。`;
+    hint.innerHTML = `本页仅支持<strong>单仓库</strong>展示，默认第一个仓库。当前：<strong>${whKey}</strong>（共 ${WAREHOUSES.length} 个仓库可选）${stack ? ` · 定位堆位 <strong>${stack}</strong>` : ''}。堆位网格取自<strong>系统设置 · 平面图设置</strong>中该堆位所占行列。`;
   }
   document.querySelectorAll('#stackTableBody tr').forEach((row) => {
     row.classList.remove('row-highlight');
@@ -371,19 +539,33 @@ function selectRole(roleKey) {
 
 function doLogin(opts = {}) {
   const silent = !!opts.silent;
-  const roleKey = opts.roleKey || document.getElementById('loginRole').value;
-  const user = (opts.user != null
+  const typedUser = (opts.user != null
     ? String(opts.user).trim()
     : document.getElementById('loginUser').value.trim()) || 'admin';
+  const acc = findSysAccount(typedUser);
+  if (acc && acc.status === '停用') {
+    if (!silent) toast('该账号已停用', 'warn');
+    return;
+  }
+  if (acc && acc.password && !silent) {
+    const pwd = document.getElementById('loginPwd')?.value || '';
+    if (pwd !== acc.password) {
+      toast('密码不正确', 'warn');
+      return;
+    }
+  }
+  let roleKey = opts.roleKey || document.getElementById('loginRole').value;
+  if (acc && ROLE_MAP[acc.roleKey]) roleKey = acc.roleKey;
+  const user = acc ? acc.name : typedUser;
   if (!ROLE_MAP[roleKey]) return;
 
   document.getElementById('loginRole').value = roleKey;
-  document.getElementById('loginUser').value = user;
+  document.getElementById('loginUser').value = typedUser;
   document.getElementById('loginPage').style.display = 'none';
   document.getElementById('app').classList.add('show');
   document.getElementById('userName').textContent = user;
   applyRole(roleKey);
-  writeAuthSession(roleKey, user);
+  writeAuthSession(roleKey, typedUser);
   initAnnotations();
   go(ROLE_DEFAULT_PAGE[roleKey] || 'dashboard');
   if (!silent) toast('登录成功', 'ok');
@@ -428,8 +610,244 @@ function saveAndClose(id) {
   toast('已保存（原型演示）', 'ok');
 }
 
+const TRANSFER_LOTS = [
+  { stack: '1#A1', customs: 'BG20260728041', prod: '', material: '原料物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 120, ship: '远航号', containers: '8' },
+  { stack: '1#A1', customs: 'BG20260801088', prod: '', material: '原料物料-A', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', weight: 200, ship: '海洋之星', containers: '12' },
+  { stack: '1#A2', customs: 'BG20260801022', prod: '', material: '原料物料-B', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 330, ship: '海豚号', containers: '' },
+  { stack: '2#A1', customs: 'BG20260715033', prod: '', material: '原料物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 40, ship: '金海轮', containers: '' },
+  { stack: '4#A1', customs: '', prod: 'FL-20260803', material: '成品物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 180, ship: '—', containers: '' },
+  { stack: '码头#A1', customs: 'BG20260725088', prod: '', material: '原料物料-D', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', weight: 1920, ship: '远洋号', containers: '' },
+];
+
+let TRANSFER_LIST = [
+  { id: 'YK-20260803-006', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', scene: '整票移位', customs: 'BG20260728041', prod: '—', material: '原料物料-A', ship: '远航号', containers: '8', weight: 120, from: '1#A1', to: '1#B1', timeFrom: '2026-08-03T10', timeTo: '2026-08-03T11', status: '已完成' },
+  { id: 'YK-20260803-005', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', scene: '拆票移位', customs: 'BG20260801022', prod: '—', material: '原料物料-B', ship: '海豚号', containers: '—', weight: 40, from: '2#A1', to: '5#小A', timeFrom: '2026-08-03T09', timeTo: '2026-08-03T10', status: '已完成' },
+  { id: 'YK-20260802-021', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', scene: '批量移库', customs: 'BG20260728041', prod: '—', material: '原料物料-A', ship: '远航号', containers: '8', weight: 120, from: '1#A1', to: '1#B1', timeFrom: '2026-08-02T15', timeTo: '2026-08-02T16', status: '已完成' },
+  { id: 'YK-20260802-022', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', scene: '批量移库', customs: 'BG20260801088', prod: '—', material: '原料物料-A', ship: '海洋之星', containers: '12', weight: 200, from: '1#A1', to: '1#A2', timeFrom: '2026-08-02T15', timeTo: '2026-08-02T16', status: '已完成' },
+];
+
+function formatHourRange(fromKey, toKey) {
+  const parse = (k) => {
+    const m = String(k || '').match(/^(\d{4}-\d{2}-\d{2})T(\d{1,2})$/);
+    return m ? { d: m[1], h: Number(m[2]) } : null;
+  };
+  const a = parse(fromKey);
+  const b = parse(toKey);
+  if (!a || !b) return '—';
+  if (a.d === b.d) return `${a.d} ${a.h}时–${b.h}时`;
+  return `${a.d} ${a.h}时 – ${b.d} ${b.h}时`;
+}
+
+function lotsOnTransferStack(stack) {
+  return TRANSFER_LOTS.filter((l) => l.stack === stack);
+}
+
+function transferLotKey(lot) {
+  return `${lot.stack}|${lot.customs || lot.prod}`;
+}
+
+function findTransferLot(key) {
+  return TRANSFER_LOTS.find((l) => transferLotKey(l) === key);
+}
+
+function fillHourSelect(id, def) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!el.options.length) {
+    for (let h = 0; h < 24; h++) {
+      const o = document.createElement('option');
+      o.value = String(h);
+      o.textContent = `${h}时`;
+      el.appendChild(o);
+    }
+  }
+  if (def != null) el.value = String(def);
+}
+
+function fillTransferStackSelects() {
+  const opts = (typeof allStackOptions === 'function'
+    ? allStackOptions()
+    : TRANSFER_LOTS.map((l) => ({ code: l.stack }))
+  );
+  const seen = new Set();
+  const html = opts.map((s) => {
+    const code = s.code || s;
+    if (seen.has(code)) return '';
+    seen.add(code);
+    return `<option value="${code}">${code}</option>`;
+  }).join('');
+  const fromStacks = [...new Set(TRANSFER_LOTS.map((l) => l.stack))];
+  const fromHtml = fromStacks.map((c) => `<option value="${c}">${c}</option>`).join('');
+  const tfFrom = document.getElementById('tfFromStack');
+  const tfTo = document.getElementById('tfToStack');
+  const batchFrom = document.getElementById('batchFromStack');
+  if (tfFrom) tfFrom.innerHTML = '<option value="">请选择原堆位</option>' + fromHtml;
+  if (tfTo) tfTo.innerHTML = html || fromHtml;
+  if (batchFrom) batchFrom.innerHTML = fromHtml;
+}
+
+function onTransferFromStackChange() {
+  const stack = document.getElementById('tfFromStack')?.value || '';
+  const sel = document.getElementById('tfBatch');
+  if (!sel) return;
+  const lots = lotsOnTransferStack(stack);
+  sel.innerHTML = lots.length
+    ? '<option value="">请选择矿批次</option>' + lots.map((l) => {
+      const label = l.customs ? `${l.customs}（报关单）` : `${l.prod}（生产批次）`;
+      return `<option value="${transferLotKey(l)}">${label} · ${l.material}</option>`;
+    }).join('')
+    : '<option value="">该堆位暂无可移批次</option>';
+  onTransferBatchChange();
+}
+
+function onTransferBatchChange() {
+  const lot = findTransferLot(document.getElementById('tfBatch')?.value || '');
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  };
+  set('tfConsignor', lot?.consignor || '');
+  set('tfCustoms', lot?.customs || '—');
+  set('tfProd', lot?.prod || '—');
+  set('tfMaterial', lot?.material || '');
+  set('tfShip', lot?.ship === '—' ? '' : (lot?.ship || ''));
+  set('tfContainers', lot?.containers || '');
+  set('tfWeight', lot?.weight != null ? String(lot.weight) : '');
+}
+
+function renderTransferTable() {
+  const tbody = document.getElementById('transferTableBody');
+  if (!tbody) return;
+  const consignor = document.getElementById('transferConsignorFilter')?.value || '';
+  const scene = document.getElementById('transferSceneFilter')?.value || '';
+  const rows = TRANSFER_LIST.filter((r) => {
+    if (consignor && r.consignor !== consignor) return false;
+    if (scene && r.scene !== scene) return false;
+    return true;
+  });
+  tbody.innerHTML = rows.map((r) => `
+    <tr>
+      <td>${r.id}</td>
+      <td><span class="tag tag-purple" title="${r.consignor}">${r.consignorShort}</span></td>
+      <td>${r.scene}</td>
+      <td>${r.customs || '—'}</td>
+      <td>${r.prod || '—'}</td>
+      <td>${r.material}</td>
+      <td>${r.ship || '—'}</td>
+      <td>${r.containers || '—'}</td>
+      <td>${r.weight}</td>
+      <td>${r.from}</td>
+      <td>${r.to}</td>
+      <td>${formatHourRange(r.timeFrom, r.timeTo)}</td>
+      <td><span class="tag tag-green">${r.status}</span></td>
+    </tr>
+  `).join('') || '<tr><td colspan="13" style="color:var(--text-2)">暂无移库单</td></tr>';
+  const count = document.getElementById('transferTableCount');
+  if (count) count.textContent = `共 ${rows.length} 条`;
+}
+
+function nextTransferId() {
+  const d = (typeof wmsDemoToday === 'function' ? wmsDemoToday() : '2026-08-03').replace(/-/g, '');
+  const nums = TRANSFER_LIST
+    .map((r) => Number(String(r.id).split('-').pop()) || 0);
+  const n = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `YK-${d}-${String(n).padStart(3, '0')}`;
+}
+
+function openTransferModal() {
+  fillTransferStackSelects();
+  fillHourSelect('tfTimeFromHour', '10');
+  fillHourSelect('tfTimeToHour', '11');
+  const from = document.getElementById('tfFromStack');
+  if (from) from.value = '';
+  onTransferFromStackChange();
+  openModal('modalTransfer');
+}
+
+function saveTransfer() {
+  const from = document.getElementById('tfFromStack')?.value || '';
+  const lotKey = document.getElementById('tfBatch')?.value || '';
+  const to = document.getElementById('tfToStack')?.value || '';
+  const weight = document.getElementById('tfWeight')?.value?.trim();
+  const fromDate = document.getElementById('tfTimeFromDate')?.value || '';
+  const toDate = document.getElementById('tfTimeToDate')?.value || '';
+  const fromHour = document.getElementById('tfTimeFromHour')?.value ?? '0';
+  const toHour = document.getElementById('tfTimeToHour')?.value ?? '0';
+  if (!from || !lotKey) {
+    toast('请先选择原堆位，再选择要移动的矿批次', 'warn');
+    return;
+  }
+  if (!to || !weight) {
+    toast('请填写目标堆位与移库重量', 'warn');
+    return;
+  }
+  if (!fromDate || !toDate) {
+    toast('请填写移库起止时间（精确到时）', 'warn');
+    return;
+  }
+  const timeFrom = `${fromDate}T${fromHour}`;
+  const timeTo = `${toDate}T${toHour}`;
+  if (timeFrom > timeTo) {
+    toast('开始时间不能晚于结束时间', 'warn');
+    return;
+  }
+  const lot = findTransferLot(lotKey);
+  TRANSFER_LIST.unshift({
+    id: nextTransferId(),
+    consignor: lot?.consignor || document.getElementById('tfConsignor')?.value || '',
+    consignorShort: lot?.consignorShort || '',
+    scene: document.getElementById('transferScene')?.value || '整票移位',
+    customs: lot?.customs || '—',
+    prod: lot?.prod || '—',
+    material: lot?.material || '',
+    ship: document.getElementById('tfShip')?.value?.trim() || '—',
+    containers: document.getElementById('tfContainers')?.value?.trim() || '—',
+    weight: Number(weight) || 0,
+    from,
+    to,
+    timeFrom,
+    timeTo,
+    status: '已完成',
+  });
+  closeModal('modalTransfer');
+  renderTransferTable();
+  toast('移库单已提交并更新库存', 'ok');
+}
+
 function openBatchTransferModal() {
+  fillTransferStackSelects();
+  const sel = document.getElementById('batchFromStack');
+  if (sel && !sel.value) sel.value = '1#A1';
+  renderBatchTransferLots();
   openModal('modalBatchTransfer');
+}
+
+function renderBatchTransferLots() {
+  const stack = document.getElementById('batchFromStack')?.value || '';
+  const tbody = document.getElementById('batchTransferBody');
+  if (!tbody) return;
+  const lots = lotsOnTransferStack(stack);
+  const toOpts = (typeof allStackOptions === 'function' ? allStackOptions() : TRANSFER_LOTS)
+    .map((s) => s.code || s.stack)
+    .filter((c, i, arr) => c && c !== stack && arr.indexOf(c) === i)
+    .slice(0, 8)
+    .map((c) => `<option>${c}</option>`)
+    .join('');
+  tbody.innerHTML = lots.length
+    ? lots.map((l, i) => `
+      <tr data-lot-key="${transferLotKey(l)}">
+        <td><input type="checkbox" class="batch-transfer-check" ${i < 2 ? 'checked' : ''} onchange="updateBatchTransferCount()" /></td>
+        <td>${l.customs || '—'}</td>
+        <td>${l.prod || '—'}</td>
+        <td>${l.material}</td>
+        <td>${l.ship || '—'}</td>
+        <td>${l.containers || '—'}</td>
+        <td>${l.weight} 吨</td>
+        <td><select class="select batch-to">${toOpts}</select></td>
+        <td><select class="select batch-scene"><option>整票移位</option><option>拆票移位</option></select></td>
+      </tr>`)
+      .join('')
+    : '<tr><td colspan="9" style="color:var(--text-2)">该堆位暂无可移批次</td></tr>';
   updateBatchTransferCount();
 }
 
@@ -444,7 +862,7 @@ function updateBatchTransferCount() {
   const checks = document.querySelectorAll('#batchTransferBody .batch-transfer-check');
   const selected = document.querySelectorAll('#batchTransferBody .batch-transfer-check:checked').length;
   const countEl = document.getElementById('batchTransferSelCount');
-  if (countEl) countEl.textContent = `已选 ${selected} 票原料单`;
+  if (countEl) countEl.textContent = `已选 ${selected} 票`;
   const allEl = document.getElementById('batchTransferAll');
   if (allEl && checks.length) {
     allEl.checked = selected === checks.length;
@@ -453,19 +871,48 @@ function updateBatchTransferCount() {
 }
 
 function saveBatchTransfer() {
-  const selected = document.querySelectorAll('#batchTransferBody .batch-transfer-check:checked');
+  const selected = [...document.querySelectorAll('#batchTransferBody .batch-transfer-check:checked')];
   if (!selected.length) {
-    toast('请至少勾选一票原料单', 'warn');
+    toast('请至少勾选一票矿批次', 'warn');
     return;
   }
+  const from = document.getElementById('batchFromStack')?.value || '';
+  const today = typeof wmsDemoToday === 'function' ? wmsDemoToday() : '2026-08-03';
+  selected.forEach((cb) => {
+    const tr = cb.closest('tr');
+    const lot = findTransferLot(tr?.dataset.lotKey || '');
+    if (!lot) return;
+    TRANSFER_LIST.unshift({
+      id: nextTransferId(),
+      consignor: lot.consignor,
+      consignorShort: lot.consignorShort,
+      scene: '批量移库',
+      customs: lot.customs || '—',
+      prod: lot.prod || '—',
+      material: lot.material,
+      ship: lot.ship || '—',
+      containers: lot.containers || '—',
+      weight: lot.weight,
+      from,
+      to: tr.querySelector('.batch-to')?.value || '',
+      timeFrom: `${today}T15`,
+      timeTo: `${today}T16`,
+      status: '已完成',
+    });
+  });
   closeModal('modalBatchTransfer');
-  toast(`批量移库已提交（${selected.length} 票原料单）`, 'ok');
+  renderTransferTable();
+  toast(`批量移库已提交，生成 ${selected.length} 条记录`, 'ok');
 }
 
 /* ===== 原料投料出库 · 列表筛选 ===== */
 function cargoTypeTagHtml(type) {
-  const cls = type === '达标矿' ? 'tag-green' : 'tag-orange';
+  const cls = type === '报备矿' ? 'tag-orange' : 'tag-green';
   return `<span class="tag ${cls}">${type}</span>`;
+}
+
+function cargoTypeClass(type) {
+  return type === '报备矿' ? 'tag-orange' : 'tag-green';
 }
 
 const FEED_MATERIAL_LIST = [
@@ -601,6 +1048,7 @@ const OCR_SAMPLES = {
     customs: 'BGCK2026080301',
     hz: 'HZCK2026080301',
     consignee: '华东冶炼股份公司',
+    consumerUnit: '华东冶炼冶炼一分厂',
     weight: '100',
     amount: '218000',
     currency: 'USD',
@@ -620,6 +1068,7 @@ const OCR_FIELD_LABELS = {
   amount: '报关单金额',
   currency: '币种',
   consignee: '流向企业',
+  consumerUnit: '消费使用单位',
   weight: '出库重量',
   wet: '湿重',
   dry: '干重',
@@ -729,11 +1178,11 @@ function openAuditDetail(btn) {
 }
 
 function collectOutboundOcrFields() {
-  const consignee = document.getElementById('obConsignee');
   return {
     customs: document.getElementById('obCustoms')?.value?.trim() || '',
     hz: document.getElementById('obHz')?.value?.trim() || '',
-    consignee: consignee?.selectedOptions?.[0]?.text?.trim() || consignee?.value || '',
+    consignee: document.getElementById('obConsignee')?.value?.trim() || '',
+    consumerUnit: document.getElementById('obConsumerUnit')?.value?.trim() || '',
     weight: document.getElementById('obWeight')?.value?.trim() || '',
     amount: document.getElementById('obAmount')?.value?.trim() || '',
     currency: document.getElementById('obCurrency')?.value || 'CNY',
@@ -777,6 +1226,7 @@ function collectOcrModalFields(target) {
       customs: document.getElementById('ocrCustoms')?.value,
       hz: document.getElementById('ocrHz')?.value,
       consignee: document.getElementById('ocrConsignee')?.value,
+      consumerUnit: document.getElementById('ocrConsumerUnit')?.value,
       weight: document.getElementById('ocrDry')?.value,
       amount: document.getElementById('ocrAmount')?.value,
       currency: document.getElementById('ocrCurrency')?.value,
@@ -857,8 +1307,10 @@ function applyOutboundOcr(data) {
   setInputValue('obAmount', data.amount);
   const currencySel = document.getElementById('obCurrency');
   if (currencySel && data.currency) currencySel.value = data.currency;
-  selectOptionByText('obConsignee', data.consignee);
+  setInputValue('obConsignee', data.consignee);
+  setInputValue('obConsumerUnit', data.consumerUnit);
   selectOptionByText('obBatch', data.batch);
+  upsertFlowPartner(data.consignee);
   setOcrStatus('obOcrStatus', `已识别：${data.preview || '出库报关单'} → 字段已回填（可手工修正）`, 'is-ok');
   rememberOcrRecognized('outbound', collectOutboundOcrFields());
 }
@@ -886,29 +1338,48 @@ function onOutboundOcrUpload(input) {
 function openInboundModal() {
   populateConsignorSelects();
   populateInboundMaterials();
+  fillBondedSelects();
   syncInboundFiling();
-  openModal('modalInbound');
-  const sel = document.querySelector('#modalInbound [data-consignor-select]');
-  if (sel) {
-    const opt = Array.from(sel.options).find((o) => o.text.includes('南国铜业') || o.value.includes('南国铜业'));
-    if (opt) sel.value = opt.value;
+  const afterPlan = () => {
+    populateInboundStacks();
+    openModal('modalInbound');
+    const sel = document.querySelector('#modalInbound [data-consignor-select]');
+    if (sel) {
+      const opt = Array.from(sel.options).find((o) => o.text.includes('南国铜业') || o.value.includes('南国铜业'));
+      if (opt) sel.value = opt.value;
+    }
+    setOcrStatus('ibOcrStatus', '上传提单或报关单影像，自动识别并回填下方字段');
+    const currencySel = document.getElementById('ibCurrency');
+    if (currencySel) currencySel.value = 'CNY';
+    const mineral = document.getElementById('ibMineral');
+    if (mineral) mineral.value = '铜精矿';
+    const shipMode = document.getElementById('ibShipMode');
+    if (shipMode) shipMode.value = '散货';
+    const containers = document.getElementById('ibContainers');
+    if (containers) containers.value = '';
+    onIbShipModeChange();
+    renderHarmfulFields('ibHarmfulFields', 'ib', {});
+  };
+  if (typeof ensureParkPlanLoaded === 'function') {
+    Promise.resolve(ensureParkPlanLoaded()).then(afterPlan).catch(afterPlan);
+  } else {
+    afterPlan();
   }
-  setOcrStatus('ibOcrStatus', '上传提单或报关单影像，自动识别并回填下方字段');
-  const currencySel = document.getElementById('ibCurrency');
-  if (currencySel) currencySel.value = 'CNY';
 }
 
 function openOutboundModal() {
+  fillBondedSelects();
   openModal('modalOutbound');
   const sel = document.querySelector('#modalOutbound [data-consignor-select]');
   if (sel) {
     const opt = Array.from(sel.options).find((o) => o.text.includes('南国铜业'));
     if (opt) sel.value = opt.value;
   }
-  setOcrStatus('obOcrStatus', '上传出库报关单影像，自动识别并回填报关单号、核注清单号、流向企业、重量与报关单金额');
+  setOcrStatus('obOcrStatus', '上传出库报关单影像，自动识别并回填报关单号、核注清单号、流向企业、消费使用单位、重量与报关单金额');
   const currencySel = document.getElementById('obCurrency');
   if (currencySel) currencySel.value = 'USD';
   setInputValue('obAmount', '');
+  setInputValue('obConsumerUnit', '');
   const remark = document.getElementById('obRemark');
   if (remark) remark.value = '';
 }
@@ -963,7 +1434,47 @@ function completeOutbound(btn) {
   const tagCell = row.querySelector('.outbound-status');
   if (tagCell) tagCell.innerHTML = '<span class="tag tag-green">已出库</span>';
   renderOutboundOps(row);
+  const cells = row.querySelectorAll('td');
+  appendBondedLot({
+    book: row.dataset.bondedBook || document.getElementById('obBonded')?.value || '',
+    direction: '出库',
+    orderNo: row.dataset.outboundId,
+    customs: cells[4]?.textContent?.trim() || '',
+    consignor: cells[1]?.textContent?.trim() || '',
+    consignorShort: cells[1]?.textContent?.trim() || '',
+    material: '',
+    wet: '',
+    dry: Number(String(cells[7]?.textContent || '').replace(/[^\d.]/g, '')) || '',
+    value: Number(String(cells[6]?.textContent || '').replace(/[^\d.]/g, '')) || 0,
+    stack: '—',
+    at: finishAt,
+    status: '已出库',
+  });
   toast(`出库单 ${row.dataset.outboundId} 已完成 · 完成时间 ${finishAt}`, 'ok');
+}
+
+function applyOutboundFilter() {
+  const consignor = (document.getElementById('obFilterConsignor')?.value || '').trim();
+  const status = document.getElementById('obFilterStatus')?.value || '';
+  const from = document.getElementById('obTimeFrom')?.value || '';
+  const to = document.getElementById('obTimeTo')?.value || '';
+  if (from && to && from > to) {
+    toast('开始日期不能晚于结束日期', 'warn');
+    return;
+  }
+  let visible = 0;
+  document.querySelectorAll('#outboundTableBody tr').forEach((row) => {
+    const at = row.dataset.outAt || '';
+    const rowStatus = row.dataset.status || '';
+    let show = true;
+    if (status && rowStatus !== status) show = false;
+    if (consignor && !(row.innerHTML || '').includes(consignor)) show = false;
+    if (from && at && at < from) show = false;
+    if (to && at && at > to) show = false;
+    row.style.display = show ? '' : 'none';
+    if (show) visible += 1;
+  });
+  toast(visible ? `已查询，共 ${visible} 条` : '该条件下暂无出库单', visible ? 'ok' : 'warn');
 }
 
 function saveOutbound() {
@@ -971,15 +1482,37 @@ function saveOutbound() {
   const hz = document.getElementById('obHz')?.value?.trim();
   const weight = document.getElementById('obWeight')?.value?.trim();
   const consignee = document.getElementById('obConsignee')?.value?.trim();
+  const consumerUnit = document.getElementById('obConsumerUnit')?.value?.trim();
   const remark = document.getElementById('obRemark')?.value?.trim() || '';
   if (!customs || !hz) {
     toast('请先上传并 OCR 识别出库报关单，回填报关单号与核注清单号', 'warn');
     return;
   }
-  if (!weight || !consignee) {
-    toast('请填写出库重量与流向企业（可通过 OCR 回填）', 'warn');
+  if (!weight || !consignee || !consumerUnit) {
+    toast('请填写出库重量、流向企业与消费使用单位（可通过 OCR 回填）', 'warn');
     return;
   }
+  const bonded = document.getElementById('obBonded')?.value || '';
+  if (!bonded) {
+    toast('请匹配保税账册', 'warn');
+    return;
+  }
+  upsertFlowPartner(consignee);
+  appendBondedLot({
+    book: bonded,
+    direction: '出库',
+    orderNo: `CK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-NEW`,
+    customs,
+    consignor: document.querySelector('#modalOutbound [data-consignor-select]')?.selectedOptions?.[0]?.text || '',
+    consignorShort: '',
+    material: document.getElementById('obBatch')?.value || '',
+    wet: '',
+    dry: Number(weight) || '',
+    value: Number(document.getElementById('obAmount')?.value) || 0,
+    stack: '—',
+    at: '—',
+    status: '待出库',
+  });
   const current = collectOutboundOcrFields();
   const baseline = ocrState.recognized?.target === 'outbound' ? ocrState.recognized.data : null;
   const changes = diffOcrFields(baseline || current, current);
@@ -1044,6 +1577,7 @@ function configureOcrModalFields(target) {
     ocrCustoms: target === 'inbound' || target === 'outbound',
     ocrHz: target === 'inbound' || target === 'outbound',
     ocrConsignee: target === 'outbound',
+    ocrConsumerUnit: target === 'outbound',
     ocrAmount: target === 'inbound' || target === 'outbound',
     ocrCurrency: target === 'inbound' || target === 'outbound',
   };
@@ -1071,6 +1605,7 @@ function fillOcrModalFromData(target, data) {
     setInputValue('ocrCustoms', data.customs);
     setInputValue('ocrHz', data.hz);
     setInputValue('ocrConsignee', data.consignee);
+    setInputValue('ocrConsumerUnit', data.consumerUnit);
     setInputValue('ocrDry', data.weight);
     setInputValue('ocrAmount', data.amount);
     const obCur = document.getElementById('ocrCurrency');
@@ -1154,6 +1689,7 @@ function applyOcrModal() {
       customs: edited.customs,
       hz: edited.hz,
       consignee: edited.consignee,
+      consumerUnit: edited.consumerUnit,
       weight: edited.weight,
       amount: edited.amount,
       currency: edited.currency,
@@ -1210,8 +1746,79 @@ function saveInbound() {
     });
     rememberOcrRecognized('inbound', current);
   }
+  if (!inboundPick.stackCode) {
+    toast('请选择预定堆位', 'warn');
+    return;
+  }
+  const grid = getStackGrid(inboundPick.stackCode);
+  if (!grid.fromPlan) {
+    toast('该堆位未在平面图中绘制，请先到系统设置 · 平面图设置绘制后再选存放位置', 'warn');
+    return;
+  }
+  if (!inboundPick.cells.size) {
+    toast('请在右侧网格圈选存放位置', 'warn');
+    return;
+  }
+  const bonded = document.getElementById('ibBonded')?.value;
+  if (!bonded || !bondedAllowsInbound(bonded)) {
+    toast('请匹配可入库的保税账册（只出不进的旧账不可再入库）', 'warn');
+    return;
+  }
+  INBOUND_RESERVES = INBOUND_RESERVES.filter((r) => r.id !== 'RK-预约');
+  INBOUND_RESERVES.push({
+    id: `RK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-NEW`,
+    stackCode: inboundPick.stackCode,
+    cells: [...inboundPick.cells].map((k) => {
+      const [r, c] = k.split(',');
+      return { r: Number(r), c: Number(c) };
+    }),
+  });
+  persistInboundReserves();
+  const newId = `RK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-NEW`;
+  const consignorName = document.querySelector('#modalInbound [data-consignor-select]')?.value || '';
+  const consignorMeta = (typeof CONSIGNORS !== 'undefined' ? CONSIGNORS : []).find((c) => c.name === consignorName);
+  const shipMode = document.getElementById('ibShipMode')?.value || '散货';
+  const docked = String(inboundPick.stackCode || '').includes('码头');
+  INBOUND_LIST.unshift({
+    id: newId,
+    at: wmsDemoToday(),
+    consignor: consignorName,
+    consignorShort: consignorMeta?.short || consignorName,
+    mineral: document.getElementById('ibMineral')?.value || '铜精矿',
+    ship: document.getElementById('ibShip')?.value?.trim() || '',
+    bl: document.getElementById('ibBl')?.value?.trim() || '',
+    customs: document.getElementById('ibCustoms')?.value?.trim() || '',
+    hz: document.getElementById('ibHz')?.value?.trim() || '',
+    amount: Number(document.getElementById('ibAmount')?.value) || 0,
+    currency: document.getElementById('ibCurrency')?.value || 'CNY',
+    wetDry: '— / —',
+    stack: inboundPick.stackCode,
+    shipMode,
+    containers: shipMode === '集装箱' ? (document.getElementById('ibContainers')?.value || '') : '',
+    harmful: collectHarmfulFrom('ibHarmfulFields'),
+    status: docked ? '暂存码头' : '待收货',
+  });
+  renderInboundTable();
+  appendBondedLot({
+    book: bonded,
+    direction: '入库',
+    orderNo: newId,
+    customs: document.getElementById('ibCustoms')?.value?.trim() || '',
+    consignor: document.querySelector('#modalInbound [data-consignor-select]')?.selectedOptions?.[0]?.text || '',
+    consignorShort: '',
+    material: document.getElementById('ibMaterial')?.selectedOptions?.[0]?.text || '',
+    wet: '',
+    dry: '',
+    value: Number(document.getElementById('ibAmount')?.value) || 0,
+    stack: inboundPick.stackCode,
+    at: wmsDemoToday(),
+    status: '待收货',
+  });
   closeModal('modalInbound');
-  toast('入库预约已提交（原型演示）', 'ok');
+  toast(`入库预约已提交，预定 ${inboundPick.stackCode} 共 ${inboundPick.cells.size} 格`, 'ok');
+  if (typeof renderParkYard === 'function' && document.getElementById('app')?.classList.contains('cockpit-mode')) {
+    renderParkYard();
+  }
 }
 
 /* ===== 矿源备案 · 系统参数 · 入库扣减 ===== */
@@ -1232,6 +1839,7 @@ const DEFAULT_QUALITY_PARAMS = [
 const DEFAULT_SYS_PARAMS = {
   capAlertPct: 70,
   agingDays: 90,
+  dockAgingDays: 7,
   filingUsageAlertPct: 80,
   qualityParams: DEFAULT_QUALITY_PARAMS.map((p) => ({ ...p })),
 };
@@ -1243,11 +1851,90 @@ const DEFAULT_SOURCE_FILINGS = [
   { code: 'JG-2022-KY03', source: '智利精矿', country: '智利', date: '2022-08-10', quotaDmt: 20000, usedDmt: 20000 },
 ];
 
+const FILING_LOTS = [
+  { filing: 'JG-2023-KY04', customs: 'BG20260801022', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '原料物料-B', cargoType: '报备矿', wet: 360, dry: 330, stack: '1#A2', inAt: '2026-07-28 9时', status: '在库' },
+  { filing: 'JG-2023-KY04', customs: 'BG20260725088', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', material: '原料物料-D', cargoType: '报备矿', wet: 2100, dry: 1920, stack: '码头#A1', inAt: '2026-07-25 8时', status: '在库' },
+  { filing: 'JG-2023-KY04', customs: 'BG20260512009', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '原料物料-B', cargoType: '报备矿', wet: 8200, dry: 7380, stack: '1#A2', inAt: '2026-05-12 10时', status: '已投料' },
+  { filing: 'JG-2023-KY04', customs: 'BG20250418031', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', material: '原料物料-B', cargoType: '报备矿', wet: 11000, dry: 10007.76, stack: '2#B1', inAt: '2025-04-18 14时', status: '已核销' },
+  { filing: 'JG4-2025-KY02', customs: 'BG20260428016', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', material: '原料物料-C', cargoType: '报备矿', wet: 280, dry: 252, stack: '5#小A', inAt: '2026-04-28 8时', status: '在库' },
+  { filing: 'JG4-2025-KY02', customs: 'BG20250120014', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', material: '原料物料-C', cargoType: '报备矿', wet: 8800, dry: 7948, stack: '5#小A', inAt: '2025-01-20 11时', status: '已核销' },
+  { filing: 'JG4-2024-KY01', customs: 'BG20240601008', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', material: '原料物料-C', cargoType: '报备矿', wet: 8900, dry: 8000, stack: '5#大A前', inAt: '2024-06-08 9时', status: '已核销' },
+  { filing: 'JG-2022-KY03', customs: 'BG20220810044', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', material: '原料物料-B', cargoType: '报备矿', wet: 22200, dry: 20000, stack: '2#A2', inAt: '2022-08-16 15时', status: '已核销' },
+];
+
+let filingLotsViewCode = '';
+
+const HARMFUL5 = [
+  { code: 'As', name: '砷' },
+  { code: 'Pb', name: '铅' },
+  { code: 'Cd', name: '镉' },
+  { code: 'F', name: '氟' },
+  { code: 'Hg', name: '汞' },
+];
+
+function formatHarmful5(h) {
+  if (!h) return '—';
+  const parts = HARMFUL5.map((p) => (h[p.code] ? `${p.code}${h[p.code]}` : '')).filter(Boolean);
+  return parts.length ? parts.join('；') : '—';
+}
+
+function renderHarmfulFields(containerId, prefix, values = {}) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = HARMFUL5.map((p) => `
+    <div class="form-group"><label>${p.name}(${p.code})</label>
+      <input class="input" id="${prefix}H_${p.code}" data-h-code="${p.code}" value="${values[p.code] || ''}" placeholder="如 0.12%" />
+    </div>`).join('');
+}
+
+function collectHarmfulFrom(containerId) {
+  const values = {};
+  document.querySelectorAll(`#${containerId} [data-h-code]`).forEach((input) => {
+    if (input.dataset.hCode && input.value.trim()) values[input.dataset.hCode] = input.value.trim();
+  });
+  return values;
+}
+
+function inboundStatusTag(status) {
+  if (status === '暂存码头') return '<span class="tag tag-red">暂存码头</span>';
+  if (status === '待收货') return '<span class="tag tag-orange">待收货</span>';
+  if (status === '混成品') return '<span class="tag tag-purple">混成品</span>';
+  return '<span class="tag tag-green">已入库</span>';
+}
+
+function inboundOps(row) {
+  if (row.status === '待收货' || row.status === '暂存码头') {
+    return `<button class="btn-text" onclick="openReceiveModal('${row.id}')">收货</button><button class="btn-text" onclick="openInboundModal();runInboundOcr('bl')">OCR</button>`;
+  }
+  return `<button class="btn-text" onclick="openLotDocs('${row.id}')">详情</button>`;
+}
+
 const INBOUND_LIST = [
   {
-    id: 'RK-20260803-001',
+    id: 'RK-20260725-020',
+    at: '2026-07-25',
     consignor: '五矿有色金属股份有限公司',
     consignorShort: '五矿有色',
+    mineral: '铜精矿',
+    ship: '远洋号',
+    bl: 'BL20260720008',
+    customs: 'BG20260725088',
+    hz: 'HZ20260725008',
+    amount: 1800000,
+    currency: 'USD',
+    wetDry: '2100 / 1920',
+    stack: '码头#A1',
+    shipMode: '散货',
+    containers: '',
+    harmful: { As: '0.18%', Pb: '0.11%', Cd: '0.03%', F: '0.05%', Hg: '0.002%' },
+    status: '暂存码头',
+  },
+  {
+    id: 'RK-20260803-001',
+    at: '2026-08-03',
+    consignor: '五矿有色金属股份有限公司',
+    consignorShort: '五矿有色',
+    mineral: '铜精矿',
     ship: '海洋之星',
     bl: 'BL20260801001',
     customs: 'BG20260801088',
@@ -1256,15 +1943,17 @@ const INBOUND_LIST = [
     currency: 'USD',
     wetDry: '— / —',
     stack: '—',
-    area: '—',
+    shipMode: '集装箱',
+    containers: '12',
+    harmful: { As: '0.12%', Pb: '0.08%', Cd: '0.02%', F: '0.04%', Hg: '0.001%' },
     status: '待收货',
-    statusCls: 'tag-orange',
-    actions: '<button class="btn-text" onclick="openReceiveModal(\'RK-20260803-001\')">收货</button><button class="btn-text" onclick="openInboundModal();runInboundOcr(\'bl\')">OCR</button>',
   },
   {
     id: 'RK-20260804-004',
+    at: '2026-08-04',
     consignor: '广西南国铜业有限责任公司',
     consignorShort: '南国铜业',
+    mineral: '铜精矿',
     ship: '海豚号',
     bl: 'BL20260804002',
     customs: 'BG20260804088',
@@ -1273,15 +1962,17 @@ const INBOUND_LIST = [
     currency: 'USD',
     wetDry: '— / —',
     stack: '—',
-    area: '—',
+    shipMode: '散货',
+    containers: '',
+    harmful: { As: '0.09%', Pb: '0.06%', Cd: '0.01%', F: '0.03%', Hg: '0.001%' },
     status: '待收货',
-    statusCls: 'tag-orange',
-    actions: '<button class="btn-text" onclick="openReceiveModal(\'RK-20260804-004\')">收货</button><button class="btn-text" onclick="openInboundModal();runInboundOcr(\'customs\')">OCR</button>',
   },
   {
     id: 'RK-20260801-015',
+    at: '2026-08-01',
     consignor: '广西南国铜业有限责任公司',
     consignorShort: '南国铜业',
+    mineral: '铜精矿',
     ship: '金海轮',
     bl: 'BL20260725003',
     customs: 'BG20260725022',
@@ -1289,16 +1980,18 @@ const INBOUND_LIST = [
     amount: 2100000,
     currency: 'USD',
     wetDry: '800 / 720',
-    stack: '待分配',
-    area: '—',
-    status: '已称重',
-    statusCls: 'tag-blue',
-    actions: '<button class="btn-text" onclick="openAssignModal(\'RK-20260801-015\')">分配堆位</button><button class="btn-text" onclick="openLotDocs(\'RK-20260801-015\')">详情</button>',
+    stack: '2#A1',
+    shipMode: '散货',
+    containers: '',
+    harmful: { As: '0.15%', Pb: '0.09%', Cd: '0.02%', F: '0.04%', Hg: '0.001%' },
+    status: '已入库',
   },
   {
     id: 'RK-20260802-018',
+    at: '2026-08-02',
     consignor: '广西金川有色金属有限公司',
     consignorShort: '广西金川',
+    mineral: '冰铜',
     ship: '远航号',
     bl: 'BL20260728005',
     customs: 'BG20260728041',
@@ -1306,15 +1999,15 @@ const INBOUND_LIST = [
     amount: 860000,
     currency: 'CNY',
     wetDry: '520 / 468',
-    stack: '1#A1',
-    area: '<span class="tag tag-blue">原料区域</span>',
-    status: '已上架',
-    statusCls: 'tag-green',
-    actions: '<button class="btn-text" onclick="openLotDocs(\'RK-20260802-018\')">详情</button>',
+    stack: '4#A2',
+    shipMode: '集装箱',
+    containers: '8',
+    harmful: { As: '0.10%', Pb: '0.07%', Cd: '0.02%', F: '0.03%', Hg: '0.001%' },
+    status: '混成品',
   },
 ];
 
-const INBOUND_STATUS_ORDER = { 待收货: 0, 已称重: 1, 已上架: 2 };
+const INBOUND_STATUS_ORDER = { 暂存码头: 0, 待收货: 1, 已入库: 2, 混成品: 3 };
 
 function sortInboundList(list) {
   return [...list].sort((a, b) => {
@@ -1335,25 +2028,69 @@ function formatInboundAmount(amount, currency = 'CNY') {
 function renderInboundTable() {
   const tbody = document.getElementById('inboundTableBody');
   if (!tbody) return;
-  tbody.innerHTML = sortInboundList(INBOUND_LIST).map((row) => `
+  const consignor = document.getElementById('inboundConsignorFilter')?.value || '';
+  const status = document.getElementById('inboundStatusFilter')?.value || '';
+  const shipMode = document.getElementById('inboundShipModeFilter')?.value || '';
+  const mineral = document.getElementById('inboundMineralFilter')?.value || '';
+  const from = document.getElementById('inboundTimeFrom')?.value || '';
+  const to = document.getElementById('inboundTimeTo')?.value || '';
+  const kw = (document.getElementById('inboundKeyword')?.value || '').trim().toLowerCase();
+  const rows = sortInboundList(INBOUND_LIST).filter((row) => {
+    if (consignor && row.consignor !== consignor) return false;
+    if (status && row.status !== status) return false;
+    if (shipMode && row.shipMode !== shipMode) return false;
+    if (mineral && row.mineral !== mineral) return false;
+    if (from && row.at && row.at < from) return false;
+    if (to && row.at && row.at > to) return false;
+    if (kw && !(`${row.id}${row.ship}${row.bl}${row.customs}`).toLowerCase().includes(kw)) return false;
+    return true;
+  });
+  tbody.innerHTML = rows.map((row) => {
+    const harm = formatHarmful5(row.harmful);
+    return `
     <tr>
       <td>${row.id}</td>
       <td><span class="tag tag-purple" title="${row.consignor}">${row.consignorShort}</span></td>
+      <td>${row.mineral || '—'}</td>
       <td>${row.ship}</td>
       <td>${row.bl}</td>
       <td>${row.customs}</td>
       <td>${row.hz}</td>
       <td>${formatInboundAmount(row.amount, row.currency)}</td>
       <td>${row.wetDry}</td>
+      <td>${row.shipMode || '—'}</td>
+      <td>${row.shipMode === '集装箱' && row.containers ? row.containers : '—'}</td>
+      <td class="mat-quality-cell" title="${harm}">${harm}</td>
       <td>${row.stack}</td>
-      <td>${row.area}</td>
-      <td><span class="tag ${row.statusCls}">${row.status}</span></td>
-      <td class="ops">${row.actions}</td>
-    </tr>
-  `).join('');
+      <td>${inboundStatusTag(row.status)}</td>
+      <td class="ops">${inboundOps(row)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="15" style="color:var(--text-2)">无符合条件的入库单</td></tr>';
+  const count = document.getElementById('inboundTableCount');
+  if (count) count.textContent = `共 ${rows.length} 条`;
+}
+
+function onIbShipModeChange() {
+  const mode = document.getElementById('ibShipMode')?.value;
+  const g = document.getElementById('ibContainerGroup');
+  if (g) g.hidden = mode !== '集装箱';
+}
+
+function onRcShipModeChange() {
+  const mode = document.getElementById('rcShipMode')?.value;
+  const g = document.getElementById('rcContainerGroup');
+  if (g) g.hidden = mode !== '集装箱';
 }
 
 const INBOUND_ORDERS = {
+  'RK-20260725-020': {
+    consignor: '五矿有色金属股份有限公司',
+    material: '原料物料-D',
+    cargoType: '报备矿',
+    filingCode: 'JG-2023-KY04',
+    customs: 'BG20260725088',
+    defaultDry: 1920,
+  },
   'RK-20260803-001': {
     consignor: '五矿有色金属股份有限公司',
     material: '原料物料-A',
@@ -1571,6 +2308,7 @@ function initSysParamsForm() {
   };
   set('paramCapAlert', p.capAlertPct);
   set('paramAgingDays', p.agingDays);
+  set('paramDockAgingDays', p.dockAgingDays);
   set('paramFilingUsage', p.filingUsageAlertPct);
   renderParamQualityTable();
 }
@@ -1578,6 +2316,7 @@ function initSysParamsForm() {
 function saveSysParams() {
   const cap = Number(document.getElementById('paramCapAlert')?.value);
   const aging = Number(document.getElementById('paramAgingDays')?.value);
+  const dockAging = Number(document.getElementById('paramDockAgingDays')?.value);
   const filing = Number(document.getElementById('paramFilingUsage')?.value);
   const qualityParams = collectQualityParamsFromForm();
   if (!qualityParams.length) {
@@ -1589,6 +2328,10 @@ function saveSysParams() {
     toast('品质参数符号不可重复', 'warn');
     return;
   }
+  if (!dockAging || dockAging <= 0) {
+    toast('码头仓库预警天数须大于 0', 'warn');
+    return;
+  }
   if (!filing || filing <= 0 || filing > 100) {
     toast('矿源备案用量预警阈值须为 1–100', 'warn');
     return;
@@ -1596,6 +2339,7 @@ function saveSysParams() {
   persistSysParams({
     capAlertPct: cap || DEFAULT_SYS_PARAMS.capAlertPct,
     agingDays: aging || DEFAULT_SYS_PARAMS.agingDays,
+    dockAgingDays: dockAging || DEFAULT_SYS_PARAMS.dockAgingDays,
     filingUsageAlertPct: filing,
     qualityParams,
   });
@@ -1618,20 +2362,119 @@ function renderSourceFilingTable() {
       ? `<span class="tag tag-orange">${pct.toFixed(2)}%</span>`
       : `${pct.toFixed(2)}%`;
     return `<tr>
-      <td>${f.source}</td><td>${f.country}</td><td>${f.code}</td><td>${f.date}</td>
+      <td>${f.source}</td><td>${f.country}</td>
+      <td><button type="button" class="btn-text" onclick="openFilingLotsModal('${f.code}')" title="查看该备案下全部票货">${f.code}</button></td>
+      <td>${f.date}</td>
       <td><span class="tag ${st.cls}">${st.label}</span></td>
       <td>${f.quotaDmt.toLocaleString('zh-CN')}</td>
       <td>${f.usedDmt.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
       <td>${rem.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
       <td>${pctCell}</td>
-      <td class="ops"><button class="btn-text" onclick="openSourceFilingModal('${f.code}')">编辑</button></td>
+      <td>${getMatAttachmentCount(f.code) ? `<span class="tag tag-blue">${getMatAttachmentCount(f.code)} 个</span>` : '—'}</td>
+      <td class="ops">
+        <button class="btn-text" onclick="openFilingLotsModal('${f.code}')">票货</button>
+        <button class="btn-text" onclick="openSourceFilingModal('${f.code}')">编辑</button>
+        <button class="btn-text" onclick="openMaterialAttachmentsModal('${f.code}')">查看附件</button>
+      </td>
     </tr>`;
   }).join('');
+}
+
+function lotsOfFiling(code) {
+  return FILING_LOTS.filter((lot) => lot.filing === code);
+}
+
+function lotStatusTag(status) {
+  if (status === '在库') return '<span class="tag tag-green">在库</span>';
+  if (status === '已投料') return '<span class="tag tag-orange">已投料</span>';
+  return '<span class="tag tag-gray">已核销</span>';
+}
+
+function openFilingLotsModal(code) {
+  const f = getSourceFiling(code);
+  filingLotsViewCode = code;
+  const lots = lotsOfFiling(code);
+  const title = document.getElementById('filingLotsTitle');
+  if (title) title.textContent = `备案票货 · ${code}`;
+  const anno = document.getElementById('filingLotsAnno');
+  if (anno) {
+    const src = f ? `${f.source} · ${f.country}` : '';
+    anno.innerHTML = `<strong>${code}</strong>${src ? `（${src}）` : ''} 下共 <strong>${lots.length}</strong> 票货。点击报关单号可查看本票详情。`;
+  }
+  const tbody = document.getElementById('filingLotsBody');
+  if (tbody) {
+    tbody.innerHTML = lots.length
+      ? lots.map((lot) => `
+        <tr>
+          <td><button type="button" class="btn-text" onclick="closeModal('modalFilingLots');openLotDocs('${lot.customs}')">${lot.customs}</button></td>
+          <td><span class="tag tag-purple" title="${lot.consignor}">${lot.consignorShort}</span></td>
+          <td>${lot.material}</td>
+          <td><span class="tag tag-orange">${lot.cargoType}</span></td>
+          <td>${lot.stack}</td>
+          <td>${Number(lot.wet).toLocaleString('zh-CN')}</td>
+          <td>${Number(lot.dry).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          <td>${lot.inAt}</td>
+          <td>${lotStatusTag(lot.status)}</td>
+          <td class="ops"><button type="button" class="btn-text" onclick="closeModal('modalFilingLots');openLotDocs('${lot.customs}')">详情</button></td>
+        </tr>`).join('')
+      : '<tr><td colspan="10" style="color:var(--text-2)">该备案下暂无票货</td></tr>';
+  }
+  openModal('modalFilingLots');
+}
+
+function exportSourceFilingsExcel() {
+  const list = loadSourceFilings();
+  if (!list.length) {
+    toast('暂无矿源备案可导出', 'warn');
+    return;
+  }
+  const threshold = loadSysParams().filingUsageAlertPct;
+  downloadExcel(
+    `矿源备案_${new Date().toISOString().slice(0, 10)}.xls`,
+    '矿源备案',
+    ['矿源', '备案原产国', '矿源备案编号', '备案日期', '状态', '备案数量(DMT)', '核销吨数', '剩余吨数', '用量%'],
+    list.map((f) => {
+      const rem = filingRemaining(f);
+      const pct = filingUsagePct(f);
+      const st = filingStatusMeta(f);
+      return [
+        f.source, f.country, f.code, f.date, st.label,
+        f.quotaDmt, f.usedDmt, rem, `${pct.toFixed(2)}%${pct >= threshold ? '（预警）' : ''}`,
+      ];
+    }),
+  );
+  toast(`已导出 ${list.length} 条矿源备案`, 'ok');
+}
+
+function exportFilingLotsExcel() {
+  const code = filingLotsViewCode;
+  const lots = lotsOfFiling(code);
+  if (!code) {
+    toast('请先打开一条矿源备案', 'warn');
+    return;
+  }
+  if (!lots.length) {
+    toast('该备案下暂无票货可导出', 'warn');
+    return;
+  }
+  downloadExcel(
+    `矿源备案票货_${code}.xls`,
+    '备案票货',
+    ['矿源备案编号', '报关单号', '委托方', '物料', '货物类型', '堆位', '湿重', '干重(DMT)', '入库时间', '状态'],
+    lots.map((lot) => [
+      lot.filing, lot.customs, lot.consignor, lot.material, lot.cargoType,
+      lot.stack, lot.wet, lot.dry, lot.inAt, lot.status,
+    ]),
+  );
+  toast(`已导出 ${lots.length} 票货`, 'ok');
 }
 
 function openSourceFilingModal(code) {
   const f = getSourceFiling(code);
   if (!f) {
+    const draftCode = document.getElementById('sfCode')?.value?.trim() || '';
+    matAttachState.code = draftCode;
+    renderMatAttachmentLists(draftCode);
     openModal('modalSourceFiling');
     return;
   }
@@ -1655,6 +2498,8 @@ function openSourceFilingModal(code) {
     const opt = Array.from(srcSel.options).find((o) => o.text === f.source);
     if (opt) srcSel.value = opt.value;
   }
+  matAttachState.code = f.code;
+  renderMatAttachmentLists(f.code);
   openModal('modalSourceFiling');
 }
 
@@ -1670,6 +2515,12 @@ function openReceiveModal(orderId) {
   set('rcMaterial', order.material);
   set('rcCargoType', order.cargoType);
   set('rcFilingNo', order.cargoType === '报备矿' ? order.filingCode : '—');
+  const listRow = INBOUND_LIST.find((r) => r.id === orderId);
+  set('rcMineral', listRow?.mineral || '铜精矿');
+  set('rcShipMode', listRow?.shipMode || '散货');
+  set('rcContainers', listRow?.containers || '');
+  onRcShipModeChange();
+  renderHarmfulFields('rcHarmfulFields', 'rc', listRow?.harmful || {});
   set('rcWet', '');
   set('rcDry', order.defaultDry || '');
   set('rcQualityNo', '');
@@ -1677,6 +2528,7 @@ function openReceiveModal(orderId) {
   renderReceiveQualityFields({});
   setOcrStatus('rcWeightOcrStatus', '重量单：待上传');
   setOcrStatus('rcQualityOcrStatus', '品质证书：待上传');
+  fillBondedSelects();
   openModal('modalReceive');
 }
 
@@ -1889,17 +2741,19 @@ const LOT_DOCS = {
     consignor: '广西金川有色金属有限公司',
     consignorShort: '广西金川',
     material: '成品物料-A',
-    cargoType: '达标矿',
+    cargoType: '混成品',
     category: '成品',
     stack: '4#A1',
     wet: '—',
     dry: '180',
     customsDoc: {
-      name: '关联原料报关单（完工谱系）',
+      name: '—',
+      pending: true,
       fields: [
+        ['出库报关单号', '—'],
+        ['流向企业', '—'],
         ['生产批次', 'FL-20260803'],
-        ['关联报关单', 'BG20260728041、BG20260801022、BG20260715033'],
-        ['说明', '成品无进口报关单，追溯原料票'],
+        ['说明', '尚未出库，出库完成后归档出库报关单'],
       ],
     },
     weightDoc: {
@@ -1930,17 +2784,19 @@ const LOT_DOCS = {
     consignor: '广西金川有色金属有限公司',
     consignorShort: '广西金川',
     material: '成品物料-A',
-    cargoType: '达标矿',
+    cargoType: '混成品',
     category: '成品',
     stack: '4#A2',
     wet: '—',
     dry: '180',
     customsDoc: {
-      name: '关联原料报关单（完工谱系）',
+      name: '—',
+      pending: true,
       fields: [
+        ['出库报关单号', '—'],
+        ['流向企业', '—'],
         ['生产批次', 'FL-20260802'],
-        ['关联报关单', 'BG20260715033 等'],
-        ['说明', '成品无进口报关单，追溯原料票'],
+        ['说明', '尚未出库，出库完成后归档出库报关单'],
       ],
     },
     weightDoc: {
@@ -1963,10 +2819,191 @@ const LOT_DOCS = {
       elements: { Cu: '24.2%', Ag: '30g/t', Au: '0.3g/t', As: '0.08%', Pb: '0.03%', Cd: '0.005%', F: '0.01%', Hg: '0.0005%' },
     },
   },
+  'FL-20260728': {
+    title: '本票详情 · 生产批次 FL-20260728',
+    inboundNo: 'WG-20260728-01',
+    customs: '—',
+    prodBatch: 'FL-20260728',
+    consignor: '广西金川有色金属有限公司',
+    consignorShort: '广西金川',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    category: '成品',
+    stack: '4#B1',
+    wet: '—',
+    dry: '220',
+    customsDoc: {
+      name: '—',
+      pending: true,
+      fields: [
+        ['出库报关单号', '—'],
+        ['流向企业', '—'],
+        ['生产批次', 'FL-20260728'],
+        ['说明', '尚未出库，出库完成后归档出库报关单'],
+      ],
+    },
+    weightDoc: {
+      name: '完工计量单 WG-20260728-01.pdf',
+      no: 'WG-20260728-01',
+      fields: [
+        ['证书编号', 'WG-20260728-01'],
+        ['产量干重', '220 吨'],
+        ['完工日期', '2026-07-28'],
+      ],
+    },
+    qualityDoc: {
+      name: '成品品质报告 QA-FL-20260728.pdf',
+      no: 'QA-FL-20260728',
+      fields: [
+        ['证书编号', 'QA-FL-20260728'],
+        ['物料', '成品物料-A'],
+        ['检定日期', '2026-07-28'],
+      ],
+      elements: { Cu: '24.0%', Ag: '29g/t', Au: '0.3g/t', As: '0.09%', Pb: '0.03%', Cd: '0.005%', F: '0.01%', Hg: '0.0005%' },
+    },
+  },
+  'FL-20260801': {
+    title: '本票详情 · 生产批次 FL-20260801',
+    inboundNo: 'WG-20260801-01',
+    customs: 'BGCK2026080102',
+    prodBatch: 'FL-20260801',
+    consignor: '广西金川有色金属有限公司',
+    consignorShort: '广西金川',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    category: '成品',
+    stack: '—',
+    wet: '—',
+    dry: '240',
+    outbound: true,
+    flowTo: '滨海贸易有限公司',
+    customsDoc: {
+      name: '出口货物报关单 BGCK2026080102.pdf',
+      fields: [
+        ['出库报关单号', 'BGCK2026080102'],
+        ['核注清单', 'HZCK2026080102'],
+        ['流向企业', '滨海贸易有限公司'],
+        ['生产批次', 'FL-20260801'],
+        ['重量', '240 干吨'],
+        ['报关单金额', '¥ 850,000'],
+      ],
+    },
+    weightDoc: {
+      name: '完工计量单 WG-20260801-01.pdf',
+      no: 'WG-20260801-01',
+      fields: [
+        ['证书编号', 'WG-20260801-01'],
+        ['产量干重', '240 吨'],
+        ['完工日期', '2026-08-01'],
+      ],
+    },
+    qualityDoc: {
+      name: '成品品质报告 QA-FL-20260801.pdf',
+      no: 'QA-FL-20260801',
+      fields: [
+        ['证书编号', 'QA-FL-20260801'],
+        ['物料', '成品物料-A'],
+        ['检定日期', '2026-08-01'],
+      ],
+      elements: { Cu: '24.5%', Ag: '31g/t', Au: '0.3g/t', As: '0.08%', Pb: '0.03%', Cd: '0.005%', F: '0.01%', Hg: '0.0005%' },
+    },
+  },
+  'BG20260715033': {
+    title: '本票详情 · BG20260715033',
+    inboundNo: 'RK-20260715-009',
+    customs: 'BG20260715033',
+    prodBatch: '—',
+    consignor: '广西金川有色金属有限公司',
+    consignorShort: '广西金川',
+    material: '原料物料-A',
+    cargoType: '报备矿',
+    category: '原料',
+    stack: '2#A1',
+    wet: '4375',
+    dry: '3938',
+    customsDoc: {
+      name: '进口货物报关单 BG20260715033.pdf',
+      fields: [
+        ['报关单号', 'BG20260715033'],
+        ['核注清单', 'HZ20260715006'],
+        ['境内收货人', '广西金川有色金属有限公司'],
+        ['原产国', '秘鲁'],
+      ],
+    },
+    weightDoc: {
+      name: '重量证书 WGT-20260715-009.pdf',
+      no: 'WGT-20260715-009',
+      fields: [
+        ['证书编号', 'WGT-20260715-009'],
+        ['湿重', '4375 吨'],
+        ['干重', '3938 吨'],
+        ['水分', '10.0%'],
+        ['检定日期', '2026-07-15'],
+      ],
+    },
+    qualityDoc: {
+      name: '品质检验证书 QA-20260715-009.pdf',
+      no: 'QA-20260715-009',
+      fields: [
+        ['证书编号', 'QA-20260715-009'],
+        ['物料', '原料物料-A'],
+        ['检定日期', '2026-07-15'],
+      ],
+      elements: { Cu: '23.0%', Ag: '40g/t', Au: '0.5g/t', As: '0.11%', Pb: '0.05%', Cd: '0.01%', F: '0.02%', Hg: '0.001%' },
+    },
+  },
+  'BG20260725088': {
+    title: '本票详情 · BG20260725088',
+    inboundNo: 'RK-20260725-012',
+    customs: 'BG20260725088',
+    prodBatch: '—',
+    consignor: '五矿有色金属股份有限公司',
+    consignorShort: '五矿有色',
+    material: '原料物料-D',
+    cargoType: '报备矿',
+    category: '原料',
+    stack: '码头#A1',
+    wet: '2100',
+    dry: '1920',
+    customsDoc: {
+      name: '进口货物报关单 BG20260725088.pdf',
+      fields: [
+        ['报关单号', 'BG20260725088'],
+        ['核注清单', 'HZ20260725011'],
+        ['境内收货人', '五矿有色金属股份有限公司'],
+        ['矿源备案号', 'JG-2023-KY04'],
+        ['原产国', '智利'],
+      ],
+    },
+    weightDoc: {
+      name: '重量证书 WGT-20260725-012.pdf',
+      no: 'WGT-20260725-012',
+      fields: [
+        ['证书编号', 'WGT-20260725-012'],
+        ['湿重', '2100 吨'],
+        ['干重', '1920 吨'],
+        ['水分', '8.6%'],
+        ['检定日期', '2026-07-25'],
+      ],
+    },
+    qualityDoc: {
+      name: '品质检验证书 QA-20260725-012.pdf',
+      no: 'QA-20260725-012',
+      fields: [
+        ['证书编号', 'QA-20260725-012'],
+        ['物料', '原料物料-D'],
+        ['检定日期', '2026-07-25'],
+      ],
+      elements: { Cu: '22.0%', Ag: '36g/t', Au: '0.4g/t', As: '0.18%', Pb: '0.11%', Cd: '0.03%', F: '0.05%', Hg: '0.002%' },
+    },
+  },
 };
 
 LOT_DOCS.BG20260728041 = LOT_DOCS['RK-20260802-018'];
 LOT_DOCS.BG20260725022 = LOT_DOCS['RK-20260801-015'];
+LOT_DOCS.BGCK2026080102 = LOT_DOCS['FL-20260801'];
+
+let lotDocsCurrentKey = '';
 
 function lotDocsFieldHtml(pairs) {
   return (pairs || []).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -1980,9 +3017,13 @@ function lotDocsPaperHtml(title, fileName, lines) {
     <div class="lot-doc-meta">${fileName || '已归档附件'}</div>`;
 }
 
-function resetLotDocsTabs() {
+function resetLotDocsTabs(finished) {
   const root = document.getElementById('lotDocsTabs');
   if (!root) return;
+  const weightTab = root.querySelector('[data-tab="weight"]');
+  const customsTab = root.querySelector('[data-tab="customs"]');
+  if (weightTab) weightTab.style.display = finished ? 'none' : '';
+  if (customsTab) customsTab.textContent = finished ? '出库报关单' : '报关单';
   root.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === 'customs'));
   ['customs', 'weight', 'quality'].forEach((k) => {
     const panel = document.getElementById(`lot-docs-${k}`);
@@ -1996,20 +3037,32 @@ function openLotDocs(key) {
     toast('未找到本票单证', 'warn');
     return;
   }
+  lotDocsCurrentKey = key;
+  const finished = lot.category === '成品';
   const titleEl = document.getElementById('lotDocsTitle');
   if (titleEl) titleEl.textContent = lot.title;
+  const anno = document.getElementById('lotDocsAnno');
+  if (anno) {
+    anno.innerHTML = finished
+      ? '<strong>成品</strong>详情仅展示<strong>出库报关单</strong>与<strong>品质证书</strong>；尚未出库时出库报关单为 —。'
+      : '上架后本票归档报关单、重量证书、品质证书；品质参数仅属于这一票货。';
+  }
   const stats = document.getElementById('lotDocsStats');
   if (stats) {
+    const flow = lot.flowTo ? `<div class="sub">流向 ${lot.flowTo}</div>` : `<div class="sub">${lot.category}</div>`;
     stats.innerHTML = `
       <div class="stat-card"><div class="label">委托方</div><div class="value" style="font-size:14px">${lot.consignorShort}</div><div class="sub">${lot.material}</div></div>
-      <div class="stat-card"><div class="label">报关单号 / 生产批次</div><div class="value" style="font-size:14px">${lot.customs}</div><div class="sub">${lot.prodBatch}</div></div>
+      <div class="stat-card"><div class="label">${finished ? '出库报关单 / 生产批次' : '报关单号 / 生产批次'}</div><div class="value" style="font-size:14px">${lot.customs}</div><div class="sub">${lot.prodBatch}</div></div>
       <div class="stat-card"><div class="label">湿重 / 干重</div><div class="value" style="font-size:14px">${lot.wet} / ${lot.dry}</div><div class="sub">吨 · ${lot.stack}</div></div>
-      <div class="stat-card ok"><div class="label">货物类型</div><div class="value" style="font-size:14px">${lot.cargoType}</div><div class="sub">${lot.category}</div></div>`;
+      <div class="stat-card ok"><div class="label">货物类型</div><div class="value" style="font-size:14px">${lot.cargoType}</div>${flow}</div>`;
   }
   const customsPaper = document.getElementById('lotDocsCustomsPaper');
   if (customsPaper) {
+    const paperTitle = finished
+      ? (lot.customsDoc.pending ? '出库报关单（尚未出库）' : '海关出口货物报关单')
+      : '海关进口货物报关单';
     customsPaper.innerHTML = lotDocsPaperHtml(
-      lot.category === '成品' ? '关联原料报关单' : '海关进口货物报关单',
+      paperTitle,
       lot.customsDoc.name,
       lot.customsDoc.fields.slice(0, 3).map(([k, v]) => `${k}：${v}`),
     );
@@ -2017,14 +3070,14 @@ function openLotDocs(key) {
   const customsFields = document.getElementById('lotDocsCustomsFields');
   if (customsFields) customsFields.innerHTML = lotDocsFieldHtml(lot.customsDoc.fields);
   const weightPaper = document.getElementById('lotDocsWeightPaper');
-  if (weightPaper) {
+  if (weightPaper && lot.weightDoc) {
     weightPaper.innerHTML = lotDocsPaperHtml('重量证书', lot.weightDoc.name, [
       `编号 ${lot.weightDoc.no}`,
       `湿重 ${lot.wet} 吨 · 干重 ${lot.dry} 吨`,
     ]);
   }
   const weightFields = document.getElementById('lotDocsWeightFields');
-  if (weightFields) weightFields.innerHTML = lotDocsFieldHtml(lot.weightDoc.fields);
+  if (weightFields && lot.weightDoc) weightFields.innerHTML = lotDocsFieldHtml(lot.weightDoc.fields);
   const qualityPaper = document.getElementById('lotDocsQualityPaper');
   if (qualityPaper) {
     qualityPaper.innerHTML = lotDocsPaperHtml('品质检验证书', lot.qualityDoc.name, [
@@ -2042,8 +3095,108 @@ function openLotDocs(key) {
       return `<div class="form-group"><label>${p.name}(${p.code})</label><input class="input" value="${val}" readonly /></div>`;
     }).join('');
   }
-  resetLotDocsTabs();
+  resetLotDocsTabs(finished);
   openModal('modalLotDocs');
+}
+
+function ledgerRowHtml(row) {
+  return `<tr>
+    <td>${row.time}</td>
+    <td>${row.type}</td>
+    <td>${row.bizNo}</td>
+    <td>${row.flowTo || '—'}</td>
+    <td>${row.stack}</td>
+    <td>${row.wet}</td>
+    <td>${row.dry}</td>
+    <td>${row.balance}</td>
+    <td>${row.operator}</td>
+  </tr>`;
+}
+
+function defaultLedgerForLot(key, lot) {
+  const isOut = !!lot.outbound;
+  const inboundType = lot.category === '成品' ? '完工入库' : '入库上架';
+  const inboundNo = lot.inboundNo || '—';
+  const inTime = lot.category === '成品' ? '2026-08-01 09时' : '2026-08-02 10时';
+  const rows = [
+    { time: inTime, type: inboundType, bizNo: inboundNo, flowTo: '—', stack: lot.stack === '—' ? '6#C2' : lot.stack, wet: lot.wet === '—' ? '—' : `+${lot.wet}`, dry: `+${lot.dry}`, balance: lot.dry, operator: '仓管员' },
+  ];
+  if (isOut) {
+    rows.push({
+      time: '2026-08-01 15时',
+      type: '出库',
+      bizNo: 'CK-20260801-008',
+      flowTo: lot.flowTo || '滨海贸易有限公司',
+      stack: '6#C2 → —',
+      wet: '—',
+      dry: `-${lot.dry}`,
+      balance: '0',
+      operator: '仓管员',
+    });
+  }
+  return rows;
+}
+
+const LOT_LEDGERS = {
+  BG20260728041: [
+    { time: '2026-08-02 10时', type: '入库上架', bizNo: 'RK-20260802-018', flowTo: '—', stack: '→ 1#A1', wet: '+520', dry: '+468', balance: '468', operator: '仓管员' },
+  ],
+  BG20260801022: [
+    { time: '2026-07-28 9时', type: '入库上架', bizNo: 'RK-20260728-011', flowTo: '—', stack: '→ 1#A2', wet: '+360', dry: '+330', balance: '330', operator: '仓管员' },
+  ],
+  BG20260715033: [
+    { time: '2026-07-15 11时', type: '入库上架', bizNo: 'RK-20260715-009', flowTo: '—', stack: '→ 2#A1', wet: '+4375', dry: '+3938', balance: '3938', operator: '仓管员' },
+  ],
+  BG20260428016: [
+    { time: '2026-04-28 8时', type: '入库上架', bizNo: 'RK-20260428-006', flowTo: '—', stack: '→ 5#小A', wet: '+280', dry: '+252', balance: '252', operator: '仓管员' },
+  ],
+  BG20260725088: [
+    { time: '2026-07-25 8时', type: '入库上架', bizNo: 'RK-20260725-012', flowTo: '—', stack: '→ 码头#A1', wet: '+2100', dry: '+1920', balance: '1920', operator: '仓管员' },
+  ],
+  'FL-20260803': [
+    { time: '2026-08-03 14时', type: '完工入库', bizNo: 'WG-20260803-01', flowTo: '—', stack: '→ 4#A1', wet: '—', dry: '+180', balance: '180', operator: '仓管员' },
+  ],
+  'FL-20260802': [
+    { time: '2026-08-02 11时', type: '完工入库', bizNo: 'WG-20260802-01', flowTo: '—', stack: '→ 4#A2', wet: '—', dry: '+180', balance: '180', operator: '仓管员' },
+  ],
+  'FL-20260728': [
+    { time: '2026-07-28 16时', type: '完工入库', bizNo: 'WG-20260728-01', flowTo: '—', stack: '→ 4#B1', wet: '—', dry: '+220', balance: '220', operator: '仓管员' },
+  ],
+  'FL-20260801': [
+    { time: '2026-08-01 9时', type: '完工入库', bizNo: 'WG-20260801-01', flowTo: '—', stack: '→ 6#C2', wet: '—', dry: '+240', balance: '240', operator: '仓管员' },
+    { time: '2026-08-01 15时', type: '出库', bizNo: 'CK-20260801-008', flowTo: '滨海贸易有限公司', stack: '6#C2 → —', wet: '—', dry: '-240', balance: '0', operator: '仓管员' },
+  ],
+};
+
+function openLedger(key) {
+  const resolved = key || lotDocsCurrentKey;
+  const lot = resolved ? LOT_DOCS[resolved] : null;
+  const titleEl = document.getElementById('ledgerTitle');
+  const anno = document.getElementById('ledgerAnno');
+  const stats = document.getElementById('ledgerStats');
+  const body = document.getElementById('ledgerBody');
+  const label = lot
+    ? (lot.category === '成品' ? `生产批次 ${lot.prodBatch}` : `报关单号 ${lot.customs}`)
+    : '本票';
+  if (titleEl) titleEl.textContent = `重量台账 · ${label}`;
+  if (anno) {
+    anno.innerHTML = lot?.category === '成品'
+      ? '<strong>成品台账</strong>出库流水记录<strong>流向企业</strong>；已出库后堆位为 —。'
+      : '<strong>原料台账</strong>按报关单号记录入库、移库干湿重；出库时记录流向企业。';
+  }
+  const rows = (resolved && LOT_LEDGERS[resolved]) || (lot ? defaultLedgerForLot(resolved, lot) : []);
+  if (stats && lot) {
+    const last = rows[rows.length - 1];
+    stats.innerHTML = `
+      <div class="stat-card"><div class="label">物料</div><div class="value" style="font-size:14px">${lot.material}</div><div class="sub">${lot.consignorShort}</div></div>
+      <div class="stat-card"><div class="label">当前堆位</div><div class="value" style="font-size:14px">${lot.stack}</div><div class="sub">${lot.outbound ? '已出库' : '在库'}</div></div>
+      <div class="stat-card"><div class="label">结存干重</div><div class="value" style="font-size:14px">${last?.balance || lot.dry}</div><div class="sub">吨</div></div>
+      <div class="stat-card ${lot.outbound ? 'ok' : ''}"><div class="label">流向企业</div><div class="value" style="font-size:14px">${lot.flowTo || '—'}</div><div class="sub">${lot.outbound ? '出库报关单已归档' : '未出库'}</div></div>`;
+  } else if (stats) {
+    stats.innerHTML = '';
+  }
+  if (body) body.innerHTML = rows.length ? rows.map(ledgerRowHtml).join('') : '<tr><td colspan="9">暂无台账流水</td></tr>';
+  openModal('modalLedger');
 }
 
 function tryDeductFilingOnInbound(orderId, dryTon) {
@@ -2096,11 +3249,42 @@ function saveReceive() {
   }
   const orderId = document.getElementById('rcInboundNo')?.value?.trim();
   const cargoType = document.getElementById('rcCargoType')?.value?.trim();
+  const bonded = document.getElementById('rcBonded')?.value;
+  if (!bonded || !bondedAllowsInbound(bonded)) {
+    toast('请匹配可入库的保税账册（只出不进的旧账不可再入库）', 'warn');
+    return;
+  }
   const deduct = cargoType === '报备矿' ? tryDeductFilingOnInbound(orderId, dry) : { ok: true, skipped: true };
   if (!deduct.ok) {
     toast(deduct.msg, 'warn');
     return;
   }
+  const inbound = typeof INBOUND_LIST !== 'undefined' ? INBOUND_LIST.find((r) => r.id === orderId) : null;
+  const harmful = collectHarmfulFrom('rcHarmfulFields');
+  if (inbound) {
+    inbound.status = '已入库';
+    inbound.mineral = document.getElementById('rcMineral')?.value || inbound.mineral;
+    inbound.shipMode = document.getElementById('rcShipMode')?.value || inbound.shipMode;
+    inbound.containers = inbound.shipMode === '集装箱' ? (document.getElementById('rcContainers')?.value || '') : '';
+    inbound.harmful = Object.keys(harmful).length ? harmful : inbound.harmful;
+    inbound.wetDry = `${wet} / ${dry}`;
+    renderInboundTable();
+  }
+  appendBondedLot({
+    book: bonded,
+    direction: '入库',
+    orderNo: orderId,
+    customs: inbound?.customs || '',
+    consignor: document.getElementById('rcConsignor')?.value || '',
+    consignorShort: inbound?.consignorShort || '',
+    material: document.getElementById('rcMaterial')?.value || '',
+    wet: Number(wet) || '',
+    dry: Number(dry) || '',
+    value: inbound?.amount || 0,
+    stack: inbound?.stack || '—',
+    at: wmsDemoToday(),
+    status: '在库',
+  });
   closeModal('modalReceive');
   if (deduct.skipped) {
     toast('收货登记已确认（原型演示）', 'ok');
@@ -2134,10 +3318,12 @@ function bindTabs(containerSel, prefix) {
       });
       // settings tabs are siblings after tabs
       if (prefix === 'tab-') {
-        ['roles', 'customs-acc', 'params'].forEach((k) => {
+        ['roles', 'accounts', 'params', 'floorplan'].forEach((k) => {
           const p = document.getElementById('tab-' + k);
           if (p) p.style.display = k === id ? '' : 'none';
         });
+        document.querySelector('[data-page="settings"]')?.classList.toggle('settings-floorplan', id === 'floorplan');
+        if (id === 'floorplan' && typeof openParkEditor === 'function') openParkEditor();
       }
       if (prefix === 'prod-') {
         ['feed', 'process', 'finish', 'ledger'].forEach((k) => {
@@ -2242,6 +3428,7 @@ function applyInventoryFilter() {
     const at = row.dataset.inAt || '';
     const show = (!from || at >= from) && (!to || at <= to);
     row.style.display = show ? '' : 'none';
+    row.classList.remove('row-highlight');
     if (show) visible += 1;
   });
   toast(visible ? `已查询，共 ${visible} 条` : '该时间范围内暂无库存', visible ? 'ok' : 'warn');
@@ -2296,6 +3483,20 @@ function toggleFilingFields() {
   });
 }
 
+function syncMatCargoByCategory() {
+  const cat = document.getElementById('matCategory')?.value || '原料';
+  const cargoSel = document.getElementById('matCargoType');
+  if (!cargoSel) return;
+  if (cat === '成品') {
+    cargoSel.value = '混成品';
+    cargoSel.disabled = true;
+  } else {
+    cargoSel.disabled = false;
+    if (cargoSel.value === '混成品') cargoSel.value = '达标矿';
+  }
+  toggleFilingFields();
+}
+
 function resolveActiveFiling(source) {
   if (!source || source === '—') return null;
   return loadSourceFilings()
@@ -2305,7 +3506,7 @@ function resolveActiveFiling(source) {
 
 function inboundMaterialLabel(m) {
   if (m.cargoType === '报备矿') return `${m.name}（报备矿·${m.source}）`;
-  return `${m.name}（${m.cargoType}·${m.country}）`;
+  return `${m.name}（${m.cargoType}）`;
 }
 
 function populateInboundMaterials() {
@@ -2338,21 +3539,21 @@ function syncInboundFiling() {
 }
 
 /* ===== 物料档案 ===== */
-const MATERIALS_STORAGE_KEY = 'wms_materials_v2';
-const MAT_ATTACHMENTS_STORAGE_KEY = 'wms_material_attachments';
+const MATERIALS_STORAGE_KEY = 'wms_materials_v3';
+const MAT_ATTACHMENTS_STORAGE_KEY = 'wms_filing_attachments';
 const MAT_ATTACH_MAX_BYTES = 4 * 1024 * 1024;
 
 const matAttachState = { code: null, viewRecord: null };
 
 const DEFAULT_MAT_ATTACHMENTS = {
-  'YL-CU-001': [
+  'JG-2023-KY04': [
     {
-      id: 'demo-qa-spec',
-      name: '品质标准说明.txt',
+      id: 'demo-filing-spec',
+      name: '智利精矿备案说明.txt',
       mime: 'text/plain',
-      dataUrl: `data:text/plain;charset=utf-8,${encodeURIComponent('原料物料-A 品质标准\nCu≥22%\nAg≤50g/t\nAu≤0.8g/t')}`,
+      dataUrl: `data:text/plain;charset=utf-8,${encodeURIComponent('矿源备案 JG-2023-KY04\n矿源：智利精矿\n备案数量 30000 DMT')}`,
       uploadedAt: '2026-08-01T08:00:00.000Z',
-      size: 72,
+      size: 80,
     },
   ],
 };
@@ -2366,7 +3567,6 @@ const DEFAULT_MATERIALS = [
     category: '原料',
     categoryCls: 'tag-blue',
     source: '—',
-    country: '秘鲁',
   },
   {
     code: 'YL-CU-002',
@@ -2376,7 +3576,6 @@ const DEFAULT_MATERIALS = [
     category: '原料',
     categoryCls: 'tag-blue',
     source: '智利精矿',
-    country: '智利',
   },
   {
     code: 'YL-CU-003',
@@ -2386,17 +3585,15 @@ const DEFAULT_MATERIALS = [
     category: '原料',
     categoryCls: 'tag-blue',
     source: '澳洲精矿',
-    country: '澳大利亚',
   },
   {
     code: 'CP-CU-01',
     name: '成品物料-A',
-    cargoType: '达标矿',
+    cargoType: '混成品',
     cargoTypeCls: 'tag-green',
     category: '成品',
     categoryCls: 'tag-green',
     source: '—',
-    country: '中国',
   },
 ];
 
@@ -2423,16 +3620,106 @@ function renderMaterialTable() {
       <td><span class="tag ${m.cargoTypeCls}">${m.cargoType}</span></td>
       <td><span class="tag ${m.categoryCls}">${m.category}</span></td>
       <td>${m.source}</td>
-      <td>${m.country}</td>
-      <td>${getMatAttachmentCount(m.code) ? `<span class="tag tag-blue">${getMatAttachmentCount(m.code)} 个</span>` : '—'}</td>
       <td class="ops">
         <button type="button" class="btn-text" onclick="openMaterialModal('${m.code}')">编辑</button>
-        <button type="button" class="btn-text" onclick="openMaterialAttachmentsModal('${m.code}')">查看附件</button>
       </td>
     </tr>`;
   }).join('');
   const countEl = document.getElementById('materialTableCount');
   if (countEl) countEl.textContent = `共 ${materials.length} 条物料档案`;
+}
+
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function monthEndDate(ym) {
+  const [y, m] = String(ym || '').split('-').map(Number);
+  if (!y || !m) return '';
+  const last = new Date(y, m, 0).getDate();
+  return `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+}
+
+const STOCKTAKE_ONHAND = [
+  { inAt: '2026-08-02', outAt: '', consignor: '广西金川有色金属有限公司', cargoType: '达标矿', stack: '1#A1', bl: 'BL20260728005', customs: 'BG20260728041', wet: '520', dry: '468' },
+  { inAt: '2026-07-28', outAt: '', consignor: '广西金川有色金属有限公司', cargoType: '报备矿', stack: '1#A2', bl: 'BL20260728011', customs: 'BG20260801022', wet: '360', dry: '330' },
+  { inAt: '2026-07-15', outAt: '', consignor: '广西金川有色金属有限公司', cargoType: '报备矿', stack: '2#A1', bl: 'SANDIA052601', customs: 'BG20260715033', wet: '4375', dry: '3938' },
+  { inAt: '2026-04-28', outAt: '', consignor: '五矿有色金属股份有限公司', cargoType: '报备矿', stack: '5#小A', bl: 'BL20260428004', customs: 'BG20260428016', wet: '280', dry: '252' },
+  { inAt: '2026-08-03', outAt: '', consignor: '广西金川有色金属有限公司', cargoType: '混成品', stack: '4#A1', bl: '—', customs: '—', wet: '—', dry: '180' },
+  { inAt: '2026-08-02', outAt: '', consignor: '广西金川有色金属有限公司', cargoType: '混成品', stack: '4#A2', bl: '—', customs: '—', wet: '—', dry: '180' },
+  { inAt: '2026-07-28', outAt: '', consignor: '广西金川有色金属有限公司', cargoType: '混成品', stack: '4#B1', bl: '—', customs: '—', wet: '—', dry: '220' },
+  { inAt: '2026-07-25', outAt: '', consignor: '五矿有色金属股份有限公司', cargoType: '报备矿', stack: '码头#A1', bl: 'BL20260720008', customs: 'BG20260725088', wet: '2100', dry: '1920' },
+];
+
+function stocktakeOnhandForMonth(ym) {
+  const end = monthEndDate(ym);
+  if (!end) return [];
+  return STOCKTAKE_ONHAND.filter((r) => r.inAt <= end && (!r.outAt || r.outAt > end));
+}
+
+function exportStocktakeMonthOnhand() {
+  const ym = document.getElementById('stocktakeExportMonth')?.value || '';
+  if (!ym) {
+    toast('请选择导出月份', 'warn');
+    return;
+  }
+  const rows = stocktakeOnhandForMonth(ym);
+  if (!rows.length) {
+    toast(`${ym} 月末无在库记录`, 'warn');
+    return;
+  }
+  const sorted = [...rows].sort((a, b) => a.consignor.localeCompare(b.consignor, 'zh-CN') || a.customs.localeCompare(b.customs));
+  downloadExcel(
+    `盘点月度在库_${ym}.xls`,
+    '月度在库',
+    ['月份', '委托方', '货物类型', '堆位', '提单号', '报关单号', '在库湿重(吨)', '在库干重(吨)'],
+    sorted.map((r) => [ym, r.consignor, r.cargoType, r.stack, r.bl, r.customs, r.wet, r.dry]),
+  );
+  toast(`已导出 ${ym} 月末在库 ${sorted.length} 条`, 'ok');
+}
+
+function downloadExcel(filename, sheetName, headers, rows) {
+  const cell = (text) => `<Cell><Data ss:Type="String">${xmlEscape(text)}</Data></Cell>`;
+  const xmlRows = [
+    `<Row>${headers.map(cell).join('')}</Row>`,
+    ...rows.map((r) => `<Row>${r.map(cell).join('')}</Row>`),
+  ].join('');
+  const safeSheet = String(sheetName || 'Sheet1').slice(0, 31);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="${xmlEscape(safeSheet)}">
+    <Table>${xmlRows}</Table>
+  </Worksheet>
+</Workbook>`;
+  const blob = new Blob([`\uFEFF${xml}`], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportMaterialsExcel() {
+  const materials = loadMaterials();
+  if (!materials.length) {
+    toast('暂无物料档案可导出', 'warn');
+    return;
+  }
+  downloadExcel(
+    `物料档案_${new Date().toISOString().slice(0, 10)}.xls`,
+    '物料档案',
+    ['物料编码', '名称', '货物类型', '类型', '矿源'],
+    materials.map((m) => [m.code, m.name, m.cargoType, m.category, m.source || '—']),
+  );
+  toast(`已导出 ${materials.length} 条物料档案`, 'ok');
 }
 
 function openMaterialModal(code) {
@@ -2444,16 +3731,13 @@ function openMaterialModal(code) {
   };
   set('matCode', m?.code || '');
   set('matName', m?.name || '');
-  set('matCountry', m?.country || '');
   const cargoSel = document.getElementById('matCargoType');
-  if (cargoSel) cargoSel.value = m?.cargoType || '达标矿';
+  if (cargoSel) cargoSel.value = m?.cargoType || (m?.category === '成品' ? '混成品' : '达标矿');
   const catSel = document.getElementById('matCategory');
   if (catSel) catSel.value = m?.category || '原料';
   const srcSel = document.getElementById('matSource');
   if (srcSel && m?.source && m.source !== '—') srcSel.value = m.source;
-  matAttachState.code = m?.code || '';
-  renderMatAttachmentLists(m?.code || '');
-  toggleFilingFields();
+  syncMatCargoByCategory();
   openModal('modalMaterial');
 }
 
@@ -2464,8 +3748,18 @@ function saveMaterial() {
     toast('请填写物料编码与名称', 'warn');
     return;
   }
-  const cargoType = document.getElementById('matCargoType')?.value || '达标矿';
   const category = document.getElementById('matCategory')?.value || '原料';
+  const cargoType = category === '成品'
+    ? '混成品'
+    : (document.getElementById('matCargoType')?.value || '达标矿');
+  if (category === '原料' && cargoType === '混成品') {
+    toast('原料货物类型请选择达标矿或报备矿', 'warn');
+    return;
+  }
+  if (category === '成品' && cargoType !== '混成品') {
+    toast('成品货物类型须为混成品', 'warn');
+    return;
+  }
   const source = cargoType === '报备矿'
     ? (document.getElementById('matSource')?.value || '—')
     : '—';
@@ -2479,11 +3773,10 @@ function saveMaterial() {
     code,
     name,
     cargoType,
-    cargoTypeCls: cargoType === '报备矿' ? 'tag-orange' : 'tag-green',
+    cargoTypeCls: cargoTypeClass(cargoType),
     category,
     categoryCls: category === '成品' ? 'tag-green' : 'tag-blue',
     source,
-    country: document.getElementById('matCountry')?.value?.trim() || '—',
   };
   if (idx >= 0) materials[idx] = { ...materials[idx], ...record };
   else materials.push(record);
@@ -2517,7 +3810,7 @@ function getMatAttachmentCount(code) {
 }
 
 function getMatEditingCode() {
-  return document.getElementById('matCode')?.value?.trim() || matAttachState.code || '';
+  return document.getElementById('sfCode')?.value?.trim() || matAttachState.code || '';
 }
 
 function formatMatFileSize(bytes) {
@@ -2572,10 +3865,10 @@ function renderMatAttachmentLists(code) {
 }
 
 function openMaterialAttachmentsModal(code) {
-  const m = loadMaterials().find((item) => item.code === code);
+  const f = getSourceFiling(code);
   matAttachState.code = code;
   const title = document.getElementById('matAttachModalTitle');
-  if (title) title.textContent = `物料附件 · ${m?.name || code}`;
+  if (title) title.textContent = `备案附件 · ${f?.source || ''} ${code}`;
   renderMatAttachmentLists(code);
   openModal('modalMatAttachments');
 }
@@ -2585,7 +3878,7 @@ function onMatAttachmentUpload(input) {
   if (!files?.length) return;
   const code = getMatEditingCode();
   if (!code) {
-    toast('请先填写物料编码后再上传附件', 'warn');
+    toast('请先填写矿源备案编号后再上传附件', 'warn');
     input.value = '';
     return;
   }
@@ -2621,7 +3914,7 @@ function uploadMatAttachment(file, code) {
     }
     matAttachState.code = code;
     renderMatAttachmentLists(code);
-    renderMaterialTable();
+    renderSourceFilingTable();
     toast(`附件已上传：${file.name}`, 'ok');
   };
   reader.readAsDataURL(file);
@@ -2635,7 +3928,7 @@ function deleteMatAttachment(code, id) {
   if (!store[code].length) delete store[code];
   persistMatAttachmentStore(store);
   renderMatAttachmentLists(code);
-  renderMaterialTable();
+  renderSourceFilingTable();
   toast('附件已删除', 'ok');
 }
 
@@ -2713,15 +4006,18 @@ document.addEventListener('DOMContentLoaded', () => {
   bindTabs('#matTabs', 'mat-');
   bindTabs('#lotDocsTabs', 'lot-docs-');
   initSysParamsForm();
+  renderAccountTable();
   renderReceiveQualityFields({});
   renderOcrQualityFields({});
+  renderHarmfulFields('ibHarmfulFields', 'ib', {});
+  renderHarmfulFields('rcHarmfulFields', 'rc', {});
   renderSourceFilingTable();
   renderMaterialTable();
   renderInboundTable();
+  renderTransferTable();
   renderAllAlerts();
-  initWhPlanViewer();
-  initFloorPlanEditor();
-  ensureFloorPlansLoaded();
+  if (typeof initParkEditor === 'function') initParkEditor();
+  if (typeof ensureParkPlanLoaded === 'function') ensureParkPlanLoaded();
   initFeedMaterialFilters();
   renderFeedMaterialRows();
 
@@ -2765,6 +4061,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   populateWarehouseSelects();
   populateConsignorSelects();
+  seedFlowPartnersFromOutbound();
+  renderPartnerTable();
+  migrateOverdueBondedLots();
+  fillBondedSelects();
+  renderBondedTable();
   if (!sessionStorage.getItem('wms_wh')) sessionStorage.setItem('wms_wh', defaultWarehouseFilter());
   toggleFilingFields();
   populateInboundMaterials();
@@ -2796,64 +4097,652 @@ function consignorTag(name) {
   return `<span class="tag tag-purple" title="${name}">${short}</span>`;
 }
 
+const PARTNERS_KEY = 'wms_partners_v1';
+const DEFAULT_PARTNERS = [
+  { code: 'WT-001', name: '五矿有色金属股份有限公司', role: '委托方', phone: '', status: '启用', source: 'manual' },
+  { code: 'WT-002', name: '广西金川有色金属有限公司', role: '委托方', phone: '', status: '启用', source: 'manual' },
+  { code: 'WT-003', name: '广西南国铜业有限责任公司', role: '委托方', phone: '', status: '启用', source: 'manual' },
+  { code: 'HZ-001', name: '广西丰联铜业有限公司', role: '物流账册主体', phone: '', status: '启用', source: 'manual' },
+];
+
+function loadPartners() {
+  try {
+    const raw = localStorage.getItem(PARTNERS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length) {
+      return parsed.map(({ credit, ...p }) => p);
+    }
+  } catch { /* empty */ }
+  return DEFAULT_PARTNERS.map((p) => ({ ...p }));
+}
+
+function persistPartners(list) {
+  localStorage.setItem(PARTNERS_KEY, JSON.stringify(list));
+}
+
+function partnerRoleTag(role) {
+  if (role === '委托方') return '<span class="tag tag-purple">委托方</span>';
+  if (role === '物流账册主体') return '<span class="tag tag-blue">物流账册主体</span>';
+  return '<span class="tag tag-green">流向企业</span>';
+}
+
+function partnerSourceLabel(source) {
+  return source === 'outbound' ? '出库自动录入' : '手工维护';
+}
+
+function nextFlowPartnerCode(list) {
+  const nums = list
+    .filter((p) => p.role === '流向企业')
+    .map((p) => Number(String(p.code).replace(/\D/g, '')) || 0);
+  const n = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `LX-${String(n).padStart(3, '0')}`;
+}
+
+function upsertFlowPartner(name) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const list = loadPartners();
+  const found = list.find((p) => p.role === '流向企业' && p.name === n);
+  if (found) {
+    if (found.status === '停用') {
+      found.status = '启用';
+      persistPartners(list);
+      renderPartnerTable();
+    }
+    return found;
+  }
+  list.push({
+    code: nextFlowPartnerCode(list),
+    name: n,
+    role: '流向企业',
+    phone: '',
+    status: '启用',
+    source: 'outbound',
+  });
+  persistPartners(list);
+  renderPartnerTable();
+  toast(`流向企业「${n}」已根据出库字段自动写入往来主体`, 'ok');
+  return list[list.length - 1];
+}
+
+function seedFlowPartnersFromOutbound() {
+  document.querySelectorAll('[data-page="outbound"] tbody tr').forEach((tr) => {
+    const name = tr.children[2]?.textContent?.trim();
+    if (!name) return;
+    const list = loadPartners();
+    if (list.some((p) => p.role === '流向企业' && p.name === name)) return;
+    list.push({
+      code: nextFlowPartnerCode(list),
+      name,
+      role: '流向企业',
+      phone: '',
+      status: '启用',
+      source: 'outbound',
+    });
+    persistPartners(list);
+  });
+}
+
+function renderPartnerTable() {
+  const tbody = document.getElementById('partnerTableBody');
+  if (!tbody) return;
+  const role = document.getElementById('partnerRoleFilter')?.value || '';
+  const kw = (document.getElementById('partnerKeyword')?.value || '').trim().toLowerCase();
+  const rows = loadPartners().filter((p) => {
+    if (role && p.role !== role) return false;
+    if (kw && !(`${p.code}${p.name}`).toLowerCase().includes(kw)) return false;
+    return true;
+  });
+  tbody.innerHTML = rows.map((p) => `
+    <tr>
+      <td>${p.code}</td>
+      <td>${p.name}</td>
+      <td>${partnerRoleTag(p.role)}</td>
+      <td>${partnerSourceLabel(p.source)}</td>
+      <td>${p.status === '停用' ? '<span class="tag tag-gray">停用</span>' : '<span class="tag tag-green">启用</span>'}</td>
+      <td class="ops"><button type="button" class="btn-text" onclick="openPartnerModal('${p.code}')">编辑</button></td>
+    </tr>
+  `).join('');
+  const count = document.getElementById('partnerTableCount');
+  if (count) count.textContent = `共 ${rows.length} 条`;
+}
+
+function openPartnerModal(code) {
+  const list = loadPartners();
+  const p = code ? list.find((x) => x.code === code) : null;
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  };
+  set('ptEditCode', p?.code || '');
+  set('ptName', p?.name || '');
+  const roleSel = document.getElementById('ptRole');
+  if (roleSel) {
+    Array.from(roleSel.options).forEach((o) => {
+      if (o.textContent === '流向企业' && p?.role !== '流向企业') o.remove();
+    });
+    if (p?.role === '流向企业' && !Array.from(roleSel.options).some((o) => o.textContent === '流向企业')) {
+      roleSel.insertAdjacentHTML('beforeend', '<option>流向企业</option>');
+    }
+    roleSel.value = p?.role || '委托方';
+    roleSel.disabled = !!p && p.role === '流向企业';
+  }
+  set('ptPhone', p?.phone || '');
+  set('ptStatus', p?.status || '启用');
+  set('ptSource', p ? partnerSourceLabel(p.source) : '手工维护');
+  const anno = document.getElementById('partnerAnno');
+  if (anno) {
+    anno.innerHTML = p?.role === '流向企业'
+      ? '<strong>流向企业</strong>由出库报关单「流向企业」字段自动识别录入，可补全联系电话等信息。'
+      : '委托方与物流账册主体可手工维护；流向企业由出库报关单字段自动识别录入。';
+  }
+  openModal('modalPartner');
+}
+
+function savePartner() {
+  const name = document.getElementById('ptName')?.value?.trim();
+  if (!name) {
+    toast('请填写企业名称', 'warn');
+    return;
+  }
+  const editCode = document.getElementById('ptEditCode')?.value || '';
+  const list = loadPartners();
+  const idx = list.findIndex((p) => p.code === editCode);
+  const existing = idx >= 0 ? list[idx] : null;
+  const role = existing?.role === '流向企业'
+    ? '流向企业'
+    : (document.getElementById('ptRole')?.value || '委托方');
+  const record = {
+    code: existing?.code || (role === '物流账册主体' ? `HZ-${String(list.filter((p) => p.role === '物流账册主体').length + 1).padStart(3, '0')}` : `WT-${String(list.filter((p) => p.role === '委托方').length + 1).padStart(3, '0')}`),
+    name,
+    role,
+    phone: document.getElementById('ptPhone')?.value?.trim() || '',
+    status: document.getElementById('ptStatus')?.value || '启用',
+    source: existing?.source || 'manual',
+  };
+  if (idx >= 0) list[idx] = { ...existing, ...record };
+  else list.push(record);
+  persistPartners(list);
+  renderPartnerTable();
+  closeModal('modalPartner');
+  toast('往来主体已保存', 'ok');
+}
+
+const BONDED_BOOKS_KEY = 'wms_bonded_books_v1';
+const BONDED_LOTS_KEY = 'wms_bonded_lots_v1';
+
+const DEFAULT_BONDED_BOOKS = [
+  {
+    code: 'T3700XXXX001', name: '保税物流账册A', owner: '广西丰联铜业', status: '有效',
+    value: 850000, customsNos: 'BGCK2026080102', predecessor: '', successor: 'T3700XXXX002',
+    oldAlertDate: '2026-08-01', inboundClosed: true,
+  },
+  {
+    code: 'T3700XXXX002', name: '保税物流账册B', owner: '广西丰联铜业', status: '有效',
+    value: 12800000, customsNos: '', predecessor: 'T3700XXXX001', successor: '',
+    oldAlertDate: '2026-08-01', inboundClosed: false,
+  },
+];
+
+const DEFAULT_BONDED_LOTS = [
+  { book: 'T3700XXXX001', direction: '入库', orderNo: 'RK-20260601-008', customs: 'BG20260601011', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', material: '成品物料-A', wet: 82, dry: 75, value: 850000, stack: '6#C1', at: '2026-06-01 9时', status: '已出库' },
+  { book: 'T3700XXXX001', direction: '出库', orderNo: 'CK-20260801-008', customs: 'BGCK2026080102', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', material: '成品物料-A', wet: 82, dry: 75, value: 850000, stack: '—', at: '2026-08-01 15时', status: '已出库' },
+  { book: 'T3700XXXX001', direction: '出库', orderNo: 'CK-20260803-012', customs: 'BGCK2026080301', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', material: '成品物料-A', wet: 110, dry: 100, value: 218000, stack: '—', at: '2026-08-03 10时', status: '待出库' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'RK-20260802-018', customs: 'BG20260728041', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '原料物料-A', wet: 520, dry: 468, value: 2100000, stack: '1#A1', at: '2026-08-02 10时', status: '在库', transferredFrom: 'T3700XXXX001' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'RK-20260728-009', customs: 'BG20260801022', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '原料物料-B', wet: 360, dry: 330, value: 980000, stack: '1#A2', at: '2026-07-28 9时', status: '在库', transferredFrom: 'T3700XXXX001' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'RK-20260715-033', customs: 'BG20260715033', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '原料物料-A', wet: 4375, dry: 3938, value: 6200000, stack: '2#A1', at: '2026-07-15 11时', status: '在库', transferredFrom: 'T3700XXXX001' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'RK-20260428-016', customs: 'BG20260428016', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', material: '原料物料-C', wet: 280, dry: 252, value: 540000, stack: '5#小A', at: '2026-04-28 8时', status: '在库', transferredFrom: 'T3700XXXX001' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'RK-20260725-088', customs: 'BG20260725088', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', material: '原料物料-D', wet: 2100, dry: 1920, value: 1800000, stack: '码头#A1', at: '2026-07-25 8时', status: '在库', transferredFrom: 'T3700XXXX001' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'PR-20260803', customs: 'FL-20260803', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '成品物料-A', wet: 0, dry: 180, value: 420000, stack: '4#A1', at: '2026-08-03 14时', status: '在库', transferredFrom: 'T3700XXXX001' },
+  { book: 'T3700XXXX002', direction: '入库', orderNo: 'PR-20260802', customs: 'FL-20260802', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', material: '成品物料-A', wet: 0, dry: 180, value: 410000, stack: '4#A2', at: '2026-08-02 11时', status: '在库' },
+  { book: 'T3700XXXX002', direction: '出库', orderNo: 'CK-20260804-003', customs: 'BGCK2026080401', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', material: '成品物料-A', wet: 88, dry: 80, value: 96000, stack: '—', at: '—', status: '待出库' },
+];
+
+let bondedLotsViewCode = '';
+
+function normalizeBondedBook(b) {
+  return {
+    code: b.code,
+    name: b.name || '',
+    owner: b.owner || '',
+    status: b.status || '有效',
+    value: Number(b.value) || 0,
+    customsNos: b.customsNos || '',
+    predecessor: b.predecessor || '',
+    successor: b.successor || '',
+    oldAlertDate: b.oldAlertDate || '',
+    inboundClosed: !!b.inboundClosed,
+  };
+}
+
+function loadBondedBooks() {
+  try {
+    const raw = localStorage.getItem(BONDED_BOOKS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length) return parsed.map(normalizeBondedBook);
+  } catch { /* empty */ }
+  return DEFAULT_BONDED_BOOKS.map((b) => ({ ...b }));
+}
+
+function persistBondedBooks(list) {
+  localStorage.setItem(BONDED_BOOKS_KEY, JSON.stringify(list));
+}
+
+function loadBondedLots() {
+  try {
+    const raw = localStorage.getItem(BONDED_LOTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch { /* empty */ }
+  return DEFAULT_BONDED_LOTS.map((l) => ({ ...l }));
+}
+
+function persistBondedLots(list) {
+  localStorage.setItem(BONDED_LOTS_KEY, JSON.stringify(list));
+}
+
+function wmsDemoToday() {
+  return typeof DEMO_TODAY === 'string' ? DEMO_TODAY : '2026-08-03';
+}
+
+function bondedAllowsInbound(code) {
+  const b = loadBondedBooks().find((x) => x.code === code);
+  if (!b) return false;
+  if (b.status === '冻结' || b.status === '注销') return false;
+  return !b.inboundClosed;
+}
+
+function bondedCustomsOf(book) {
+  const fromField = String(book.customsNos || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+  const fromLots = loadBondedLots().filter((l) => l.book === book.code && l.customs).map((l) => l.customs);
+  return [...new Set([...fromField, ...fromLots])];
+}
+
+function formatBondedValue(n) {
+  const v = Number(n) || 0;
+  return v ? `¥ ${v.toLocaleString('zh-CN')}` : '—';
+}
+
+function bondedStatusTag(b) {
+  if (b.status === '注销') return '<span class="tag tag-gray">注销</span>';
+  if (b.status === '冻结') return '<span class="tag tag-orange">冻结</span>';
+  if (b.inboundClosed) return '<span class="tag tag-orange">只出不进</span>';
+  return '<span class="tag tag-green">有效</span>';
+}
+
+function bondedLinkLabel(b) {
+  if (b.successor) return `新账 ${b.successor}`;
+  if (b.predecessor) return `旧账 ${b.predecessor}`;
+  return '—';
+}
+
+function fillBondedSelects() {
+  const books = loadBondedBooks();
+  const inbound = books.filter((b) => bondedAllowsInbound(b.code));
+  const active = books.filter((b) => b.status !== '注销');
+  const fill = (id, list, extra) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    const opts = extra ? extra.slice() : [];
+    list.forEach((b) => opts.push(`<option value="${b.code}">${b.code} ${b.name}</option>`));
+    el.innerHTML = opts.join('') || '<option value="">暂无可用账册</option>';
+    if (cur && Array.from(el.options).some((o) => o.value === cur)) el.value = cur;
+  };
+  fill('ibBonded', inbound);
+  fill('rcBonded', inbound);
+  fill('obBonded', active);
+  fill('matBonded', active);
+  fill('invBondedFilter', active, ['<option value="">全部</option>']);
+}
+
+function lotsOfBonded(code) {
+  return loadBondedLots().filter((l) => l.book === code);
+}
+
+function appendBondedLot(lot) {
+  const list = loadBondedLots();
+  const dup = list.find((x) => x.book === lot.book && x.direction === lot.direction && x.orderNo === lot.orderNo);
+  if (dup) Object.assign(dup, lot);
+  else list.push(lot);
+  persistBondedLots(list);
+}
+
+function migrateOverdueBondedLots() {
+  const today = wmsDemoToday();
+  const books = loadBondedBooks();
+  const lots = loadBondedLots();
+  let moved = 0;
+  books.forEach((old) => {
+    if (!old.inboundClosed || !old.successor || !old.oldAlertDate) return;
+    if (old.oldAlertDate > today) return;
+    lots.forEach((lot) => {
+      if (lot.book !== old.code || lot.direction !== '入库' || lot.status !== '在库') return;
+      lot.book = old.successor;
+      lot.transferredFrom = old.code;
+      lot.transferredAt = today;
+      moved += 1;
+    });
+  });
+  if (moved) {
+    persistBondedLots(lots);
+    toast(`已将 ${moved} 票未出库入库数据转入新账册`, 'ok');
+  }
+}
+
+function renderBondedTable() {
+  const tbody = document.getElementById('bondedTableBody');
+  if (!tbody) return;
+  const kw = (document.getElementById('bondedKeyword')?.value || '').trim().toLowerCase();
+  const rows = loadBondedBooks().filter((b) => {
+    if (!kw) return true;
+    const customs = bondedCustomsOf(b).join(' ');
+    return `${b.code}${b.name}${b.owner}${customs}`.toLowerCase().includes(kw);
+  });
+  tbody.innerHTML = rows.map((b) => {
+    const nos = bondedCustomsOf(b);
+    const nosText = !nos.length ? '—' : (nos.length <= 2 ? nos.join('、') : `${nos.slice(0, 2).join('、')} 等${nos.length}票`);
+    return `
+    <tr>
+      <td><button type="button" class="btn-text" onclick="openBondedLotsModal('${b.code}')" title="查看该账册票矿">${b.code}</button></td>
+      <td>${b.name}</td>
+      <td>${b.owner || '—'}</td>
+      <td>${formatBondedValue(b.value)}</td>
+      <td title="${nos.join('、')}">${nosText}</td>
+      <td>${bondedStatusTag(b)}</td>
+      <td>${bondedLinkLabel(b)}</td>
+      <td>${b.oldAlertDate || '—'}</td>
+      <td class="ops">
+        <button type="button" class="btn-text" onclick="openBondedModal('${b.code}')">编辑</button>
+        <button type="button" class="btn-text" onclick="openBondedLotsModal('${b.code}')">票矿</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="9" style="color:var(--text-2)">暂无账册</td></tr>';
+  const count = document.getElementById('bondedTableCount');
+  if (count) count.textContent = `共 ${rows.length} 条`;
+}
+
+function fillBondedPredecessorSelect(currentCode, selected) {
+  const sel = document.getElementById('bdPredecessor');
+  if (!sel) return;
+  const books = loadBondedBooks().filter((b) => b.code !== currentCode && b.status !== '注销');
+  sel.innerHTML = '<option value="">无（首本账册）</option>' + books.map((b) => `<option value="${b.code}">${b.code} ${b.name}</option>`).join('');
+  sel.value = selected || '';
+}
+
+function onBondedPredChange() {
+  const has = !!document.getElementById('bdPredecessor')?.value;
+  const req = document.getElementById('bdAlertReq');
+  if (req) req.hidden = !has;
+}
+
+function openBondedModal(code) {
+  const list = loadBondedBooks();
+  const b = code ? list.find((x) => x.code === code) : null;
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  };
+  set('bdEditCode', b?.code || '');
+  set('bdCode', b?.code || '');
+  set('bdName', b?.name || '');
+  set('bdOwner', b?.owner || '广西丰联铜业');
+  set('bdValue', b?.value ? String(b.value) : '');
+  set('bdCustoms', b?.customsNos || '');
+  set('bdStatus', b?.status || '有效');
+  fillBondedPredecessorSelect(b?.code || '', b?.predecessor || '');
+  const predSel = document.getElementById('bdPredecessor');
+  if (predSel) predSel.disabled = !!(b && (b.predecessor || b.successor));
+  const codeEl = document.getElementById('bdCode');
+  if (codeEl) codeEl.readOnly = !!b;
+  set('bdOldAlertDate', b?.oldAlertDate || '');
+  onBondedPredChange();
+  const anno = document.getElementById('bondedAnno');
+  if (anno) {
+    if (b?.inboundClosed) anno.innerHTML = '<strong>只出不进</strong>本账册已衔接新账，仅作出库核销，不可再匹配入库。';
+    else if (b?.predecessor) anno.innerHTML = `本账册衔接旧账 <strong>${b.predecessor}</strong>；旧账预警日 <strong>${b.oldAlertDate || '—'}</strong> 后未出库入库票转入本账。`;
+    else anno.innerHTML = '新建账册若衔接旧账册，须填写<strong>旧账册预警日期</strong>；保存后旧账只出不进，到期未出库票的入库数据转入新账。';
+  }
+  openModal('modalBonded');
+}
+
+function saveBonded() {
+  const code = document.getElementById('bdCode')?.value?.trim();
+  const name = document.getElementById('bdName')?.value?.trim();
+  if (!code || !name) {
+    toast('请填写账册编号与名称', 'warn');
+    return;
+  }
+  const editCode = document.getElementById('bdEditCode')?.value || '';
+  const list = loadBondedBooks();
+  if (!editCode && list.some((b) => b.code === code)) {
+    toast('账册编号已存在', 'warn');
+    return;
+  }
+  const predecessor = document.getElementById('bdPredecessor')?.value || '';
+  const oldAlertDate = document.getElementById('bdOldAlertDate')?.value || '';
+  if (predecessor && !oldAlertDate) {
+    toast('衔接旧账册时须填写旧账册预警日期', 'warn');
+    return;
+  }
+  const existing = editCode ? list.find((b) => b.code === editCode) : null;
+  const record = {
+    code: existing?.code || code,
+    name,
+    owner: document.getElementById('bdOwner')?.value?.trim() || '',
+    status: document.getElementById('bdStatus')?.value || '有效',
+    value: Number(document.getElementById('bdValue')?.value) || 0,
+    customsNos: document.getElementById('bdCustoms')?.value?.trim() || '',
+    predecessor: existing?.predecessor || predecessor,
+    successor: existing?.successor || '',
+    oldAlertDate: oldAlertDate || existing?.oldAlertDate || '',
+    inboundClosed: existing?.inboundClosed || false,
+  };
+  if (predecessor && !existing) {
+    const old = list.find((b) => b.code === predecessor);
+    if (old) {
+      old.inboundClosed = true;
+      old.successor = record.code;
+      old.oldAlertDate = oldAlertDate;
+    }
+  }
+  if (existing?.predecessor && oldAlertDate) {
+    const old = list.find((b) => b.code === existing.predecessor);
+    if (old) old.oldAlertDate = oldAlertDate;
+  }
+  const idx = list.findIndex((b) => b.code === record.code);
+  if (idx >= 0) list[idx] = { ...list[idx], ...record };
+  else list.push(record);
+  persistBondedBooks(list);
+  closeModal('modalBonded');
+  if (predecessor && !existing) toast(`新账册已备案，旧账 ${predecessor} 改为只出不进`, 'ok');
+  else toast('保税账册已保存', 'ok');
+  migrateOverdueBondedLots();
+  fillBondedSelects();
+  renderBondedTable();
+  renderAllAlerts();
+}
+
+function bondedLotStatusTag(status) {
+  if (status === '在库') return '<span class="tag tag-green">在库</span>';
+  if (status === '已出库') return '<span class="tag tag-gray">已出库</span>';
+  if (status === '待出库' || status === '待收货') return '<span class="tag tag-orange">' + status + '</span>';
+  return `<span class="tag tag-blue">${status || '—'}</span>`;
+}
+
+function openBondedLotsModal(code) {
+  bondedLotsViewCode = code;
+  const b = loadBondedBooks().find((x) => x.code === code);
+  const lots = lotsOfBonded(code);
+  const title = document.getElementById('bondedLotsTitle');
+  if (title) title.textContent = `账册票矿 · ${code}`;
+  const anno = document.getElementById('bondedLotsAnno');
+  if (anno) {
+    const extra = b?.inboundClosed ? ' · 只出不进' : '';
+    const warn = b?.oldAlertDate ? ` · 旧账预警 ${b.oldAlertDate}` : '';
+    anno.innerHTML = `<strong>${code}</strong>${b ? ` ${b.name}` : ''} 下共 <strong>${lots.length}</strong> 条出入库票矿${extra}${warn}。`;
+  }
+  const tbody = document.getElementById('bondedLotsBody');
+  if (tbody) {
+    tbody.innerHTML = lots.length
+      ? lots.map((lot) => `
+        <tr>
+          <td>${lot.direction === '出库' ? '<span class="tag tag-orange">出库</span>' : '<span class="tag tag-blue">入库</span>'}${lot.transferredFrom ? `<br><small>自 ${lot.transferredFrom}</small>` : ''}</td>
+          <td>${lot.orderNo || '—'}</td>
+          <td>${lot.customs || '—'}</td>
+          <td><span class="tag tag-purple" title="${lot.consignor || ''}">${lot.consignorShort || lot.consignor || '—'}</span></td>
+          <td>${lot.material || '—'}</td>
+          <td>${lot.wet ? Number(lot.wet).toLocaleString('zh-CN') : '—'}</td>
+          <td>${lot.dry ? Number(lot.dry).toLocaleString('zh-CN') : '—'}</td>
+          <td>${formatBondedValue(lot.value)}</td>
+          <td>${lot.stack || '—'}</td>
+          <td>${lot.at || '—'}</td>
+          <td>${bondedLotStatusTag(lot.status)}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="11" style="color:var(--text-2)">该账册下暂无票矿</td></tr>';
+  }
+  openModal('modalBondedLots');
+}
+
+function exportBondedLotsExcel() {
+  const code = bondedLotsViewCode;
+  const lots = lotsOfBonded(code);
+  if (!code) {
+    toast('请先打开一条保税账册', 'warn');
+    return;
+  }
+  if (!lots.length) {
+    toast('该账册下暂无票矿可导出', 'warn');
+    return;
+  }
+  downloadExcel(
+    `保税账册票矿_${code}.xls`,
+    '账册票矿',
+    ['账册编号', '方向', '单号', '报关单号', '委托方', '物料', '湿重', '干重', '货值', '堆位', '时间', '状态', '转入自'],
+    lots.map((lot) => [
+      code, lot.direction, lot.orderNo, lot.customs, lot.consignor, lot.material,
+      lot.wet, lot.dry, lot.value, lot.stack, lot.at, lot.status, lot.transferredFrom || '',
+    ]),
+  );
+  toast(`已导出 ${lots.length} 条票矿`, 'ok');
+}
+
+function buildBondedAlerts() {
+  const today = wmsDemoToday();
+  const out = [];
+  loadBondedBooks().forEach((b) => {
+    if (!b.inboundClosed || !b.successor || !b.oldAlertDate) return;
+    const pending = loadBondedLots().filter((l) => l.book === b.code && l.direction === '入库' && l.status === '在库');
+    if (b.oldAlertDate > today) {
+      out.push({
+        lvl: 'mid',
+        type: '保税账册',
+        target: b.code,
+        title: '旧账册只出不进',
+        desc: `${b.code} 已衔接 ${b.successor}，预警日 ${b.oldAlertDate} 后未出库票将转入新账`,
+        time: '08:00',
+        page: 'bonded',
+        action: '查看账册',
+        actionFn: 'go(\'bonded\')',
+      });
+    } else if (pending.length) {
+      out.push({
+        lvl: 'high',
+        type: '保税账册',
+        target: b.code,
+        title: '旧账未出库票待转入',
+        desc: `${b.code} 已过预警日，仍有 ${pending.length} 票在库入库数据待转入 ${b.successor}`,
+        time: '08:00',
+        page: 'bonded',
+        action: '查看账册',
+        actionFn: 'go(\'bonded\')',
+      });
+    }
+  });
+  return out;
+}
+
 const WAREHOUSE_DEFS = [
-  { no: 1, cap: 30000, slots: ['A1', 'A2', 'B1', 'B2'] },
-  { no: 2, cap: 25000, slots: ['A1', 'A2', 'B1', 'B2'] },
-  { no: 4, cap: 75000, slots: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'], slotCaps: {
+  { no: 1, cap: 30000, floorArea: 2400, slots: ['A1', 'A2', 'B1', 'B2'] },
+  { no: 2, cap: 25000, floorArea: 2200, slots: ['A1', 'A2', 'B1', 'B2'] },
+  { no: 4, cap: 75000, floorArea: 5100, slots: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'], slotCaps: {
     A1: 12000, A2: 8000, B1: 15000, B2: 5500, C1: 10000, C2: 4500, D1: 11000, D2: 9000,
   } },
-  { no: 5, cap: 80000, slots: ['小A', '大A前', '大A后', '小B', '大B前', '大B后', '小C', '大C前', '大C后', '小D', '大D前', '大D后'] },
-  { no: 6, cap: 60000, slots: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'] },
+  { no: 5, cap: 80000, floorArea: 4800, slots: ['小A', '大A前', '大A后', '小B', '大B前', '大B后', '小C', '大C前', '大C后', '小D', '大D前', '大D后'] },
+  { no: 6, cap: 60000, floorArea: 4600, slots: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'] },
+  { no: '码头', id: 'whDock', name: '码头仓库', kind: 'dock', cap: 8000, floorArea: 1600, slots: ['A1', 'A2'] },
 ];
 
 const STACK_DEMO = {
   '1#A1': { area: '原料区域', mat: '原料物料-A', used: 94, batch: 'BG20260728041', batchType: '报关单号', inspect: '—' },
   '1#A2': { area: '原料区域', mat: '原料物料-B', used: 66, batch: 'BG20260801022', batchType: '报关单号', inspect: '—' },
-  '1#B1': { area: '原料区域', mat: '空闲', used: 12, batch: '—', batchType: '', inspect: '—' },
+  '1#B1': { area: '原料区域', mat: '原料物料-A', used: 22, batch: 'BG20260612018', batchType: '报关单号', inspect: '—' },
   '2#A1': { area: '原料区域', mat: '原料物料-A', used: 70, batch: 'BG20260715033', batchType: '报关单号', inspect: '—' },
+  '2#A2': { area: '原料区域', mat: '原料物料-B', used: 28, batch: 'BG20260508007', batchType: '报关单号', inspect: '—' },
   '4#A1': { area: '待检区域', mat: 'FL-20260803·待查验', used: 36, batch: 'FL-20260803', batchType: '生产批次', inspect: '查验中' },
   '4#A2': { area: '混成品区域', mat: '成品物料-A', used: 36, batch: 'FL-20260802', batchType: '生产批次', inspect: '已放行' },
   '4#B1': { area: '混成品区域', mat: '成品物料-A', used: 60, batch: 'FL-20260728', batchType: '生产批次', inspect: '已放行' },
   '5#小A': { area: '待检区域', mat: '原料物料-C', used: 30, batch: 'BG20260428016', batchType: '报关单号', inspect: '查验中' },
-  '6#C2': { area: '混成品区域', mat: '成品物料-A', used: 62, batch: 'FL-20260801', batchType: '生产批次', inspect: '已放行' },
+  '5#大A前': { area: '原料区域', mat: '原料物料-C', used: 24, batch: 'BG20250120014', batchType: '报关单号', inspect: '—' },
+  '6#C2': { area: '混成品区域', mat: '空闲', used: 0, batch: '—', batchType: '', inspect: '—' },
+  '码头#A1': { area: '原料区域', mat: '原料物料-D', used: 48, batch: 'BG20260725088', batchType: '报关单号', inspect: '—', inAt: '2026-07-25' },
+  '码头#A2': { area: '原料区域', mat: '原料物料-D', used: 18, batch: 'BG20260801055', batchType: '报关单号', inspect: '—', inAt: '2026-08-01' },
 };
 
 const STACK_LOTS = {
   '1#A1': [
-    { consignor: '五矿', kind: '报备矿', origin: '毛里塔尼亚', weight: 4200 },
-    { consignor: '五矿', kind: '报备矿', origin: 'WO LONG SONG/卧龙松', weight: 2850 },
+    { consignor: '广西金川', kind: '达标矿', origin: '秘鲁', weight: 468, batch: 'BG20260728041' },
+    { consignor: '五矿有色', kind: '报备矿', origin: '毛里塔尼亚', weight: 200, batch: 'BG20260801088' },
   ],
   '1#A2': [
-    { consignor: '五矿', kind: '达标', origin: '刚果金', weight: 4950 },
+    { consignor: '广西金川', kind: '报备矿', origin: '智利', weight: 330, batch: 'BG20260801022' },
+  ],
+  '1#B1': [
+    { consignor: '南国铜业', kind: '达标矿', origin: '秘鲁', weight: 180, batch: 'BG20260612018' },
   ],
   '1#B2': [
-    { consignor: '南国', kind: '报备矿', origin: 'DA XIN', weight: 1400 },
-    { consignor: '五矿', kind: '报备矿', origin: '卧龙松', weight: 775 },
+    { consignor: '南国铜业', kind: '报备矿', origin: 'DA XIN', weight: 1400, batch: 'BG20250418031' },
+    { consignor: '五矿有色', kind: '报备矿', origin: '卧龙松', weight: 775, batch: 'BG20260801022' },
   ],
   '2#A1': [
-    { consignor: '五矿', kind: '报备矿', origin: '秘鲁', weight: 4375 },
+    { consignor: '广西金川', kind: '报备矿', origin: '秘鲁', weight: 3938, batch: 'BG20260715033' },
+  ],
+  '2#A2': [
+    { consignor: '南国铜业', kind: '达标矿', origin: '刚果金', weight: 620, batch: 'BG20260508007' },
   ],
   '4#A1': [
-    { consignor: '五矿', kind: '报备矿', origin: '待查验', weight: 4320 },
+    { consignor: '广西金川', kind: '混成品', origin: '待查验', weight: 180, batch: 'FL-20260803' },
   ],
   '4#A2': [
-    { consignor: '南国', kind: '达标', origin: '混成品', weight: 2880 },
+    { consignor: '广西金川', kind: '混成品', origin: '混成品', weight: 180, batch: 'FL-20260802' },
   ],
   '4#B1': [
-    { consignor: '金川', kind: '报备矿', origin: '智利', weight: 9000 },
+    { consignor: '广西金川', kind: '混成品', origin: '智利', weight: 220, batch: 'FL-20260728' },
   ],
   '5#小A': [
-    { consignor: '五矿', kind: '报备矿', origin: '澳洲', weight: 2000 },
+    { consignor: '五矿有色', kind: '报备矿', origin: '澳洲', weight: 252, batch: 'BG20260428016' },
   ],
-  '6#C2': [
-    { consignor: '南国', kind: '达标', origin: '混成品', weight: 4650 },
+  '5#大A前': [
+    { consignor: '五矿有色', kind: '达标矿', origin: '智利', weight: 410, batch: 'BG20250120014' },
+  ],
+  '6#C2': [],
+  '码头#A1': [
+    { consignor: '五矿有色', kind: '报备矿', origin: '智利', weight: 1920, batch: 'BG20260725088' },
+  ],
+  '码头#A2': [
+    { consignor: '南国铜业', kind: '达标矿', origin: '秘鲁', weight: 720, batch: 'BG20260801055' },
   ],
 };
 
-function whLabel(no) { return `${no}仓`; }
+function whLabel(no) { return no === '码头' ? '码头仓库' : `${no}仓`; }
 function stackCode(no, slot) { return `${no}#${slot}`; }
 
 function whNoFromLabel(label) {
+  const found = (typeof WAREHOUSES !== 'undefined')
+    ? WAREHOUSES.find((w) => w.filter === label || w.name === label)
+    : null;
+  if (found) return found.no;
+  if (String(label || '').includes('码头')) return '码头';
   const m = String(label || '').match(/^(\d+)/);
   return m ? Number(m[1]) : null;
 }
@@ -2888,18 +4777,12 @@ function openStackModal(code) {
   const slotInput = document.getElementById('stSlotName');
   if (whSel) whSel.value = whFilter;
   if (slotInput) slotInput.value = slot;
-  const customsEl = document.getElementById('stCustomsNo');
-  const prodEl = document.getElementById('stProdBatch');
-  if (code) {
-    const wh = WAREHOUSES.find((w) => w.stacks.some((s) => s.code === code));
-    const stack = wh?.stacks.find((s) => s.code === code);
-    if (customsEl) customsEl.value = stack ? customsNoCell(stack.batch, stack.batchType) : '—';
-    if (prodEl) prodEl.value = stack ? prodBatchCell(stack.batch, stack.batchType) : '—';
-  } else {
-    if (customsEl) customsEl.value = '—';
-    if (prodEl) prodEl.value = '—';
-  }
   updateStackCode();
+  const grid = getStackGrid(code || document.getElementById('stCode')?.value || '1#A1');
+  const gridHint = document.getElementById('stGridFromPlan');
+  if (gridHint) {
+    gridHint.value = grid.fromPlan ? `${grid.cols}×${grid.rows}（平面图）` : '未在平面图中绘制';
+  }
   openModal('modalStack');
 }
 
@@ -2915,10 +4798,13 @@ function saveStack() {
     return;
   }
   closeModal('modalStack');
-  toast(`堆位 ${code} 已保存（原型演示）`, 'ok');
+  toast(`堆位 ${code} 已保存`, 'ok');
+  renderStackTable();
+  if (typeof renderParkYard === 'function') renderParkYard();
 }
 
 function whCls(no) {
+  if (no === '码头') return 'raw';
   if (no === 1 || no === 2) return 'raw';
   if (no === 5) return 'mix';
   return 'fg';
@@ -2932,17 +4818,22 @@ function buildWarehouses() {
       const demo = STACK_DEMO[code] || { area: '空闲', mat: '空闲', used: 8 + ((i * 7) % 35), batch: '—', batchType: '', inspect: '—' };
       const stackCap = def.slotCaps?.[slot] ?? equalCap;
       const usedTon = Math.round(stackCap * demo.used / 100);
-      return { code, slot, area: demo.area, mat: demo.mat, used: demo.used, cap: stackCap, usedTon, batch: demo.batch, batchType: demo.batchType || '', inspect: demo.inspect };
+      return {
+        code, slot, area: demo.area, mat: demo.mat, used: demo.used, cap: stackCap, usedTon,
+        batch: demo.batch, batchType: demo.batchType || '', inspect: demo.inspect, inAt: demo.inAt || '',
+      };
     });
     const occ = Math.round(stacks.reduce((s, x) => s + x.used, 0) / stacks.length);
     const usedTotal = stacks.reduce((s, x) => s + x.usedTon, 0);
     const firstStack = stacks.find((s) => s.batch !== '—') || stacks[0];
     return {
-      id: `wh${def.no}`,
+      id: def.id || `wh${def.no}`,
       no: def.no,
-      name: whLabel(def.no),
-      filter: whLabel(def.no),
+      name: def.name || whLabel(def.no),
+      filter: def.name || whLabel(def.no),
+      kind: def.kind || 'yard',
       cap: def.cap,
+      floorArea: def.floorArea ?? null,
       stackCount: def.slots.length,
       usedTotal,
       occ,
@@ -2955,7 +4846,366 @@ function buildWarehouses() {
 }
 
 const WAREHOUSES = buildWarehouses();
+const WH_AREA_KEY = 'wms_warehouse_areas';
+
+function loadWarehouseAreas() {
+  try {
+    const raw = localStorage.getItem(WH_AREA_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistWarehouseAreas() {
+  const map = {};
+  WAREHOUSES.forEach((w) => {
+    map[w.id] = w.floorArea == null || w.floorArea === '' ? null : w.floorArea;
+  });
+  try { localStorage.setItem(WH_AREA_KEY, JSON.stringify(map)); } catch { /* ignore */ }
+}
+
+(function applyStoredWarehouseAreas() {
+  const stored = loadWarehouseAreas();
+  WAREHOUSES.forEach((w) => {
+    if (Object.prototype.hasOwnProperty.call(stored, w.id)) w.floorArea = stored[w.id];
+  });
+}());
+
+function formatFloorArea(val) {
+  if (val == null || val === '') return '—';
+  const n = Number(val);
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('zh-CN');
+}
+
+function openWarehouseModal(whId) {
+  const editId = document.getElementById('whEditId');
+  const noEl = document.getElementById('whNo');
+  const capEl = document.getElementById('whCap');
+  const areaEl = document.getElementById('whFloorArea');
+  const statusEl = document.getElementById('whStatus');
+  const wh = whId ? WAREHOUSES.find((w) => w.id === whId) : null;
+  if (editId) editId.value = wh ? wh.id : '';
+  if (wh) {
+    if (noEl) noEl.value = wh.no;
+    if (capEl) capEl.value = wh.cap;
+    if (areaEl) areaEl.value = wh.floorArea != null ? wh.floorArea : '';
+    if (statusEl) statusEl.value = wh.status || '启用';
+  } else {
+    if (noEl) noEl.value = '';
+    if (capEl) capEl.value = '';
+    if (areaEl) areaEl.value = '';
+    if (statusEl) statusEl.value = '启用';
+  }
+  openModal('modalWarehouse');
+}
+
+function saveWarehouse() {
+  const editId = document.getElementById('whEditId')?.value;
+  const areaRaw = document.getElementById('whFloorArea')?.value;
+  const areaVal = areaRaw === '' || areaRaw == null ? null : Number(areaRaw);
+  if (areaVal != null && (!Number.isFinite(areaVal) || areaVal < 0)) {
+    toast('请填写有效的面积', 'warn');
+    return;
+  }
+  if (editId) {
+    const wh = WAREHOUSES.find((w) => w.id === editId);
+    if (wh) {
+      wh.floorArea = areaVal;
+      persistWarehouseAreas();
+    }
+  }
+  closeModal('modalWarehouse');
+  renderWarehouseTable();
+  toast(editId ? '仓库面积已保存' : '已保存（原型演示）', 'ok');
+}
+
 const STACK_TOTAL = WAREHOUSES.reduce((s, w) => s + w.stacks.length, 0);
+
+const INBOUND_RESERVES_KEY = 'wms_inbound_reserves';
+
+function parkDerivedStackGrid(code) {
+  if (typeof parkStackGridOf !== 'function') return null;
+  return parkStackGridOf(code);
+}
+
+function dumpStackGrids() {
+  const out = {};
+  WAREHOUSES.forEach((w) => {
+    w.stacks.forEach((s) => {
+      const g = parkDerivedStackGrid(s.code);
+      if (g) out[s.code] = { rows: g.rows, cols: g.cols };
+    });
+  });
+  return out;
+}
+
+function applyStackGrids() {
+  /* 堆位网格以平面图占格为准，不再回写独立网格档案 */
+}
+
+function getStackGrid(code) {
+  const g = parkDerivedStackGrid(code);
+  if (g && g.rows >= 1 && g.cols >= 1) {
+    return {
+      rows: Math.max(1, Math.min(200, g.rows)),
+      cols: Math.max(1, Math.min(200, g.cols)),
+      fromPlan: true,
+    };
+  }
+  return { rows: 0, cols: 0, fromPlan: false };
+}
+
+function loadInboundReserves() {
+  try {
+    const raw = localStorage.getItem(INBOUND_RESERVES_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(list)) {
+      return list.filter((r) => r && r.id && r.id !== 'RK-20260803-001' && Array.isArray(r.cells) && r.cells.length);
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+let INBOUND_RESERVES = loadInboundReserves();
+
+function persistInboundReserves() {
+  try { localStorage.setItem(INBOUND_RESERVES_KEY, JSON.stringify(INBOUND_RESERVES)); } catch { /* ignore */ }
+}
+
+function getReservedCells(code) {
+  const cells = [];
+  INBOUND_RESERVES.forEach((r) => {
+    if (r.stackCode === code) (r.cells || []).forEach((c) => cells.push({ r: Number(c.r), c: Number(c.c) }));
+  });
+  return cells;
+}
+
+const inboundPick = { stackCode: '', cells: new Set(), drag: null, bound: false, stackOpts: [], listOpen: false };
+
+function allStackOptions() {
+  return WAREHOUSES.flatMap((w) => w.stacks.map((s) => ({
+    code: s.code,
+    label: `${s.code}（${w.name} / ${s.area}）`,
+    hay: `${s.code} ${w.name} ${s.area} ${s.slot || ''}`.toLowerCase(),
+  })));
+}
+
+function usedCellSet(code) {
+  const stack = WAREHOUSES.map((w) => w.stacks.find((s) => s.code === code)).find(Boolean);
+  const grid = getStackGrid(code);
+  const total = Math.max(0, grid.rows * grid.cols);
+  const usedCount = total ? Math.round(total * ((stack?.used || 0) / 100)) : 0;
+  const set = new Set();
+  for (let i = 0; i < usedCount; i += 1) {
+    const r = Math.floor(i / grid.cols);
+    const c = i % grid.cols;
+    set.add(`${r},${c}`);
+  }
+  return set;
+}
+
+function inboundCellKey(r, c) {
+  return `${Number(r)},${Number(c)}`;
+}
+
+function paintInboundCellEl(el, on) {
+  if (!el) return;
+  el.classList.toggle('is-picked', on);
+}
+
+function applyInboundCell(r, c, on) {
+  const key = inboundCellKey(r, c);
+  if (on) inboundPick.cells.add(key);
+  else inboundPick.cells.delete(key);
+  const host = document.getElementById('ibStackGrid');
+  const el = host?.querySelector(`.sg-cell[data-r="${Number(r)}"][data-c="${Number(c)}"]`);
+  paintInboundCellEl(el, on);
+}
+
+function inboundCellFromEvent(e) {
+  const el = (e.target && e.target.closest) ? e.target.closest('.sg-cell') : null;
+  if (el) return el;
+  const node = document.elementFromPoint(e.clientX, e.clientY);
+  return node?.closest?.('.sg-cell') || null;
+}
+
+function bindInboundStackGrid() {
+  const host = document.getElementById('ibStackGrid');
+  if (!host || host.dataset.bound) return;
+  host.dataset.bound = '1';
+  host.addEventListener('mousedown', (e) => {
+    const cell = inboundCellFromEvent(e);
+    if (!cell) return;
+    e.preventDefault();
+    const key = inboundCellKey(cell.dataset.r, cell.dataset.c);
+    const adding = !inboundPick.cells.has(key);
+    inboundPick.drag = { adding, seen: new Set([key]) };
+    applyInboundCell(cell.dataset.r, cell.dataset.c, adding);
+  });
+  host.addEventListener('mouseover', (e) => {
+    if (!inboundPick.drag) return;
+    const cell = inboundCellFromEvent(e);
+    if (!cell) return;
+    const key = inboundCellKey(cell.dataset.r, cell.dataset.c);
+    if (inboundPick.drag.seen.has(key)) return;
+    inboundPick.drag.seen.add(key);
+    applyInboundCell(cell.dataset.r, cell.dataset.c, inboundPick.drag.adding);
+  });
+  window.addEventListener('mouseup', () => { inboundPick.drag = null; });
+}
+
+function renderInboundStackGrid() {
+  const host = document.getElementById('ibStackGrid');
+  if (!host) return;
+  bindInboundStackGrid();
+  const code = inboundPick.stackCode;
+  if (!code) {
+    host.style.gridTemplateColumns = '1fr';
+    host.innerHTML = '<div class="sg-empty">请先选择预定堆位，再圈选存放位置</div>';
+    return;
+  }
+  const grid = getStackGrid(code);
+  if (!grid.fromPlan) {
+    host.style.gridTemplateColumns = '1fr';
+    host.innerHTML = '<div class="sg-empty">该堆位未在平面图中绘制，请到系统设置 · 平面图设置绘制后再选存放位置</div>';
+    return;
+  }
+  const used = usedCellSet(code);
+  host.style.gridTemplateColumns = `repeat(${grid.cols}, 16px)`;
+  let html = '';
+  for (let r = 0; r < grid.rows; r += 1) {
+    for (let c = 0; c < grid.cols; c += 1) {
+      const key = inboundCellKey(r, c);
+      const cls = [inboundPick.cells.has(key) ? 'is-picked' : '', used.has(key) ? 'is-used' : ''].filter(Boolean).join(' ');
+      html += `<button type="button" class="sg-cell ${cls}" data-r="${r}" data-c="${c}" title="${r + 1}行 ${c + 1}列"></button>`;
+    }
+  }
+  host.innerHTML = html;
+}
+
+function onInboundStackChange() {
+  const sel = document.getElementById('ibStack');
+  inboundPick.stackCode = sel?.value || '';
+  inboundPick.cells = new Set();
+  inboundPick.drag = null;
+  renderInboundStackGrid();
+}
+
+function inboundStackMatches(opt, kw) {
+  if (!kw) return true;
+  return opt.hay.includes(kw) || opt.code.toLowerCase().includes(kw) || opt.label.toLowerCase().includes(kw);
+}
+
+function filteredInboundStacks(q) {
+  const kw = String(q || '').trim().toLowerCase();
+  return (inboundPick.stackOpts || []).filter((o) => inboundStackMatches(o, kw));
+}
+
+function renderInboundStackList(q) {
+  const list = document.getElementById('ibStackList');
+  if (!list) return;
+  const matched = filteredInboundStacks(q);
+  if (!matched.length) {
+    list.innerHTML = '<li class="combo-empty">无匹配堆位</li>';
+    return;
+  }
+  list.innerHTML = matched.map((o) =>
+    `<li><button type="button" class="combo-item" data-code="${escapeHtml(o.code)}">${escapeHtml(o.label)}</button></li>`
+  ).join('');
+}
+
+function openInboundStackList() {
+  const list = document.getElementById('ibStackList');
+  if (!list) return;
+  renderInboundStackList(document.getElementById('ibStackSearch')?.value);
+  list.hidden = false;
+  inboundPick.listOpen = true;
+}
+
+function closeInboundStackList() {
+  const list = document.getElementById('ibStackList');
+  if (list) list.hidden = true;
+  inboundPick.listOpen = false;
+}
+
+function onInboundStackSearch() {
+  openInboundStackList();
+  const typed = document.getElementById('ibStackSearch')?.value.trim() || '';
+  const exact = (inboundPick.stackOpts || []).find((o) => o.code === typed);
+  const hidden = document.getElementById('ibStack');
+  if (exact) {
+    if (hidden) hidden.value = exact.code;
+    if (inboundPick.stackCode !== exact.code) onInboundStackChange();
+    return;
+  }
+  if (hidden) hidden.value = '';
+  if (inboundPick.stackCode) {
+    inboundPick.stackCode = '';
+    inboundPick.cells = new Set();
+    renderInboundStackGrid();
+  }
+}
+
+function pickInboundStack(code) {
+  const opt = (inboundPick.stackOpts || []).find((o) => o.code === code);
+  const hidden = document.getElementById('ibStack');
+  const input = document.getElementById('ibStackSearch');
+  if (hidden) hidden.value = code || '';
+  if (input) input.value = opt ? opt.code : (code || '');
+  closeInboundStackList();
+  onInboundStackChange();
+}
+
+function onInboundStackKey(e) {
+  if (e.key === 'Escape') {
+    closeInboundStackList();
+    return;
+  }
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const typed = document.getElementById('ibStackSearch')?.value.trim() || '';
+  const matched = filteredInboundStacks(typed);
+  const exact = matched.find((o) => o.code === typed) || (matched.length === 1 ? matched[0] : null);
+  if (exact) pickInboundStack(exact.code);
+}
+
+function bindInboundStackCombo() {
+  const combo = document.getElementById('ibStackCombo');
+  const list = document.getElementById('ibStackList');
+  if (list && !list.dataset.bound) {
+    list.dataset.bound = '1';
+    list.addEventListener('mousedown', (e) => {
+      const btn = e.target.closest?.('.combo-item');
+      if (!btn) return;
+      e.preventDefault();
+      pickInboundStack(btn.dataset.code);
+    });
+  }
+  if (!combo || combo.dataset.bound) return;
+  combo.dataset.bound = '1';
+  document.addEventListener('mousedown', (e) => {
+    if (!inboundPick.listOpen) return;
+    if (combo.contains(e.target)) return;
+    closeInboundStackList();
+  });
+}
+
+function populateInboundStacks() {
+  bindInboundStackCombo();
+  inboundPick.stackOpts = allStackOptions();
+  const hidden = document.getElementById('ibStack');
+  const input = document.getElementById('ibStackSearch');
+  if (hidden) hidden.value = '';
+  if (input) input.value = '';
+  inboundPick.stackCode = '';
+  inboundPick.cells = new Set();
+  inboundPick.drag = null;
+  renderInboundStackList('');
+  closeInboundStackList();
+  renderInboundStackGrid();
+}
 
 function areaTagHtml(area) {
   if (area.includes('待检')) return '<span class="tag tag-orange">待检区域</span>';
@@ -3005,14 +5255,14 @@ function renderStackTable() {
     return;
   }
   tbody.innerHTML = wh.stacks.map((s) => {
-    const usedPctHtml = s.used >= 70 ? `<span class="tag tag-orange">${s.used}%</span>` : `${s.used}%`;
-    const ops = [`<button class="btn-text" onclick="openStackModal('${s.code}')">编辑</button>`];
-    if (s.inspect === '查验中') ops.push('<button class="btn-text" onclick="openModal(\'modalInspect\')">查验完成</button>');
+    const g = getStackGrid(s.code);
+    const gridText = g.fromPlan ? `${g.cols}×${g.rows}` : '未绘制';
     return `<tr data-wh="${wh.filter}" data-code="${s.code}">
-      <td>${s.code}</td><td>${wh.name}</td><td>${areaTagHtml(s.area)}</td><td>${customsNoCell(s.batch, s.batchType)}</td><td>${prodBatchCell(s.batch, s.batchType)}</td>
-      <td>${s.cap.toLocaleString('zh-CN')}</td><td>${s.usedTon.toLocaleString('zh-CN')} / ${usedPctHtml}</td>
-      <td>${inspectTagHtml(s.inspect)}</td><td><span class="tag tag-green">启用</span></td>
-      <td class="ops">${ops.join('')}</td></tr>`;
+      <td>${s.code}</td><td>${wh.name}</td><td>${areaTagHtml(s.area)}</td>
+      <td>${gridText}</td>
+      <td>${s.cap.toLocaleString('zh-CN')}</td>
+      <td><span class="tag tag-green">启用</span></td>
+      <td class="ops"><button class="btn-text" onclick="openStackModal('${s.code}')">编辑</button></td></tr>`;
   }).join('');
   const pag = document.getElementById('stackPagination');
   if (pag) pag.textContent = `共 ${wh.stacks.length} 条堆位（${wh.name}）`;
@@ -3026,15 +5276,18 @@ function renderWarehouseTable() {
       <td>${wh.no}</td>
       <td>${wh.name}</td>
       <td>${wh.cap.toLocaleString('zh-CN')}</td>
+      <td>${formatFloorArea(wh.floorArea)}</td>
       <td>${wh.stackCount}</td>
       <td>${wh.usedTotal.toLocaleString('zh-CN')} / ${wh.occ}%</td>
       <td><span class="tag tag-green">${wh.status}</span></td>
       <td class="ops">
         <button class="btn-text" onclick="goWarehouse('${wh.id}')">查看堆位</button>
-        <button class="btn-text" onclick="openModal('modalWarehouse')">编辑</button>
+        <button class="btn-text" onclick="openWarehouseModal('${wh.id}')">编辑</button>
       </td>
     </tr>
   `).join('');
+  const pag = document.getElementById('warehouseCount');
+  if (pag) pag.textContent = `共 ${WAREHOUSES.length} 个仓库`;
 }
 
 function populateWarehouseSelects() {
@@ -3108,13 +5361,47 @@ const PROD_SCENE_POSTER = 'assets/scene-poster.jpg?v=clean1';
 
 const ALERTS_STATIC = [
   { lvl: 'high', type: '库容占用', target: '1#A1', title: '库容占用达阈值', desc: '1#A1 占用 94%，建议移库疏导', time: '08:00', page: 'transfer', action: '移库疏导', actionFn: 'go(\'transfer\')' },
-  { lvl: 'mid', type: '原料库龄', target: 'BG20260428016', title: '原料库龄超期', desc: '报关单号在库 98 天，超过库龄预警阈值', time: '08:00', page: 'alert', action: '追溯台账', actionFn: 'openModal(\'modalLedger\')' },
+  { lvl: 'mid', type: '原料库龄', target: 'BG20260428016', title: '原料库龄超期', desc: '报关单号在库 98 天，超过库龄预警阈值', time: '08:00', page: 'alert', action: '追溯台账', actionFn: 'openLedger(\'BG20260428016\')' },
   { lvl: 'high', type: '账实差异', target: 'YL-CU-001', title: '账实差异 2.5 吨', desc: '账册库存与实物差 2.5 吨', time: '07:30', page: 'customs', action: '对账', actionFn: 'go(\'customs\')' },
 ];
 
+const DEMO_TODAY = '2026-08-03';
+
+function daysBetween(fromDate, toDate) {
+  const a = new Date(`${fromDate}T00:00:00`);
+  const b = new Date(`${toDate}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 0;
+  return Math.floor((b - a) / 86400000);
+}
+
+function buildDockAlerts(params) {
+  const threshold = Number(params.dockAgingDays) || DEFAULT_SYS_PARAMS.dockAgingDays;
+  const out = [];
+  WAREHOUSES.filter((w) => w.kind === 'dock').forEach((wh) => {
+    wh.stacks.forEach((s) => {
+      if (!s.inAt || !s.batch || s.batch === '—') return;
+      const days = daysBetween(s.inAt, DEMO_TODAY);
+      if (days > threshold) {
+        out.push({
+          lvl: 'high',
+          type: '码头仓库',
+          target: s.batch,
+          title: '码头仓库货品超期',
+          desc: `${s.code} · ${s.batch} 在码头仓库 ${days} 天，超过 ${threshold} 天预警`,
+          time: '08:00',
+          page: 'inventory',
+          action: '查看库存',
+          actionFn: 'go(\'inventory\')',
+        });
+      }
+    });
+  });
+  return out;
+}
+
 function buildAlertList() {
   const params = loadSysParams();
-  const list = [...ALERTS_STATIC];
+  const list = [...ALERTS_STATIC, ...buildDockAlerts(params), ...buildBondedAlerts()];
   loadSourceFilings().forEach((f) => {
     const rem = filingRemaining(f);
     const pct = filingUsagePct(f);
@@ -3158,6 +5445,12 @@ function renderAlertPage() {
 function renderAllAlerts() {
   renderAlerts();
   renderAlertPage();
+  const n = buildAlertList().length;
+  const el = document.querySelector('.ck-kpi.danger .ck-kpi-val');
+  if (el) {
+    el.dataset.count = String(n);
+    el.textContent = String(n);
+  }
 }
 
 const WH_ISO_PALETTE = {
@@ -3196,8 +5489,7 @@ function initCockpit() {
   renderYard();
   renderFlow();
   renderProdData();
-  renderAlerts();
-  renderAlertPage();
+  renderAllAlerts();
   renderCapList();
   animateKpis();
   stopCockpit();
@@ -3214,1304 +5506,7 @@ function stopCockpit() {
   if (tip) tip.hidden = true;
 }
 
-/* ===== 仓库平面图（堆位管理编辑 + 驾驶舱展示） ===== */
-const FP_STORAGE_KEY = 'wms_floor_plans';
-const FP_API_BASE = ((typeof location !== 'undefined' && location.hostname === 'wms.skd.wang')
-  ? ''
-  : 'http://wms.skd.wang') + '/api';
-const FP_W = 1000;
-const FP_H = 560;
-const FP_PAD = 36;
-const FP_LABEL_W = 46;
-const FP_STACK_COLORS = ['#d4a84a', '#c9b07a', '#e8c4a0', '#c5d89a', '#d8b060', '#b7c98a'];
-const FP_GRID = 20;
-const FP_ANGLE_SNAP = 90;
-const FP_HISTORY_MAX = 100;
-const FP_DRAG_SLOP = 4;
-
-const fpEditor = {
-  whId: null,
-  rooms: 1,
-  doors: 3,
-  items: [],
-  selectedId: null,
-  drag: null,
-  snap: true,
-  history: { past: [], future: [] },
-  nameBefore: null,
-};
-
-const whPlanState = { whId: null, scale: 1, rotate: 0, tx: 0, ty: 0 };
-const whPlanDrag = { active: false, x: 0, y: 0 };
-
-const floorPlanCache = {};
-let floorPlansReady = false;
-
-function getFloorPlan(whId) {
-  return floorPlanCache[whId] || null;
-}
-
-function setFloorPlanCache(whId, plan) {
-  if (plan) floorPlanCache[whId] = plan;
-  else delete floorPlanCache[whId];
-}
-
-async function fetchJsonApi(url, opts) {
-  const res = await fetch(url, { ...opts, headers: { Accept: 'application/json', ...(opts && opts.headers) } });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    if (!res.ok || !text) throw new Error(`平面图接口失败 (${res.status || '网络错误'})`);
-    throw new Error(res.status === 404 ? '平面图接口 404，请更新并重启 api（server.py）后重载 Nginx' : '平面图接口返回了非 JSON');
-  }
-  if (!json || json.success === false) {
-    throw new Error((json && json.message) || `平面图接口失败 (${res.status})`);
-  }
-  return json;
-}
-
-async function fetchFloorPlansFromApi() {
-  const json = await fetchJsonApi(`${FP_API_BASE}/floor-plans`);
-  const plans = (json.data && json.data.plans) || {};
-  Object.keys(floorPlanCache).forEach((k) => { delete floorPlanCache[k]; });
-  Object.entries(plans).forEach(([id, plan]) => {
-    if (plan) floorPlanCache[id] = plan;
-  });
-}
-
-async function putFloorPlanToApi(whId, plan) {
-  const json = await fetchJsonApi(`${FP_API_BASE}/floor-plans`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: whId, ...plan }),
-  });
-  const saved = (json.data && Array.isArray(json.data.items)) ? json.data : plan;
-  setFloorPlanCache(whId, saved);
-  return saved;
-}
-
-async function migrateLocalFloorPlans() {
-  let local = {};
-  try {
-    const raw = localStorage.getItem(FP_STORAGE_KEY);
-    local = raw ? JSON.parse(raw) : {};
-  } catch {
-    local = {};
-  }
-  const ids = Object.keys(local || {});
-  if (!ids.length) return;
-  for (let i = 0; i < ids.length; i += 1) {
-    const id = ids[i];
-    if (floorPlanCache[id] || !local[id] || !Array.isArray(local[id].items) || !local[id].items.length) continue;
-    try {
-      await putFloorPlanToApi(id, local[id]);
-    } catch {
-      /* 后端不可用时保留本地，下次再迁 */
-      return;
-    }
-  }
-  try {
-    localStorage.removeItem(FP_STORAGE_KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
-async function ensureFloorPlansLoaded() {
-  if (floorPlansReady) return;
-  try {
-    await fetchFloorPlansFromApi();
-    await migrateLocalFloorPlans();
-  } catch {
-    try {
-      const raw = localStorage.getItem(FP_STORAGE_KEY);
-      const local = raw ? JSON.parse(raw) : {};
-      Object.entries(local || {}).forEach(([id, plan]) => {
-        if (!floorPlanCache[id] && plan) floorPlanCache[id] = plan;
-      });
-    } catch {
-      /* ignore */
-    }
-  }
-  floorPlansReady = true;
-}
-
-function clampFpCount(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return 0;
-  return Math.max(0, Math.min(12, Math.round(v)));
-}
-
-function fpInnerBox() {
-  return {
-    x: FP_PAD,
-    y: FP_PAD,
-    w: FP_W - FP_PAD * 2 - FP_LABEL_W,
-    h: FP_H - FP_PAD * 2,
-  };
-}
-
-function fpSnapOn(evt) {
-  if (evt?.shiftKey) return false;
-  return fpEditor.snap !== false;
-}
-
-function fpSnapCoord(v, origin) {
-  return origin + Math.round((v - origin) / FP_GRID) * FP_GRID;
-}
-
-function fpSnapAngle(deg) {
-  return Math.round(deg / FP_ANGLE_SNAP) * FP_ANGLE_SNAP;
-}
-
-function snapItemBBoxToGrid(it) {
-  ensureItemPts(it);
-  const box = fpInnerBox();
-  const bb = ptsToBBox(it.pts);
-  translatePts(it, fpSnapCoord(bb.x, box.x) - bb.x, fpSnapCoord(bb.y, box.y) - bb.y);
-}
-
-function cloneFpState() {
-  return {
-    rooms: fpEditor.rooms,
-    doors: fpEditor.doors,
-    selectedId: fpEditor.selectedId,
-    items: JSON.parse(JSON.stringify(fpEditor.items || [])),
-  };
-}
-
-function fpLayoutKey(state) {
-  return JSON.stringify({
-    rooms: state.rooms,
-    doors: state.doors,
-    items: state.items,
-  });
-}
-
-function applyFpState(state) {
-  fpEditor.rooms = state.rooms;
-  fpEditor.doors = state.doors;
-  fpEditor.items = JSON.parse(JSON.stringify(state.items || []));
-  fpEditor.selectedId = state.selectedId;
-  const roomEl = document.getElementById('fpRoomCount');
-  const doorEl = document.getElementById('fpDoorCount');
-  if (roomEl) roomEl.value = fpEditor.rooms;
-  if (doorEl) doorEl.value = fpEditor.doors;
-}
-
-function fpResetHistory() {
-  fpEditor.history = { past: [], future: [] };
-  syncFpHistoryButtons();
-}
-
-function fpCommit(before) {
-  if (!before || fpLayoutKey(before) === fpLayoutKey(cloneFpState())) return;
-  fpEditor.history.past.push(before);
-  if (fpEditor.history.past.length > FP_HISTORY_MAX) fpEditor.history.past.shift();
-  fpEditor.history.future = [];
-  syncFpHistoryButtons();
-}
-
-function fpUndo() {
-  if (!fpEditor.history.past.length) return;
-  fpEditor.history.future.push(cloneFpState());
-  applyFpState(fpEditor.history.past.pop());
-  syncFpHistoryButtons();
-  paintFloorPlanEditor();
-}
-
-function fpRedo() {
-  if (!fpEditor.history.future.length) return;
-  fpEditor.history.past.push(cloneFpState());
-  applyFpState(fpEditor.history.future.pop());
-  syncFpHistoryButtons();
-  paintFloorPlanEditor();
-}
-
-function fpToggleSnap(force) {
-  fpEditor.snap = typeof force === 'boolean' ? force : !fpEditor.snap;
-  const el = document.getElementById('fpSnapToggle');
-  if (el) el.checked = fpEditor.snap;
-  paintFloorPlanEditor();
-}
-
-function syncFpHistoryButtons() {
-  const undo = document.getElementById('fpUndoBtn');
-  const redo = document.getElementById('fpRedoBtn');
-  if (undo) undo.disabled = !fpEditor.history.past.length;
-  if (redo) redo.disabled = !fpEditor.history.future.length;
-}
-
-function isFpEditorOpen() {
-  return document.getElementById('modalFloorPlan')?.classList.contains('show');
-}
-
-function onFpKeydown(e) {
-  if (!isFpEditorOpen()) return;
-  const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-    if (typing) return;
-    e.preventDefault();
-    if (e.shiftKey) fpRedo();
-    else fpUndo();
-    return;
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
-    if (typing) return;
-    e.preventDefault();
-    fpRedo();
-    return;
-  }
-  if (!typing && e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault();
-    fpToggleSnap();
-  }
-}
-
-function fpRoomItems(items) {
-  return (items || []).filter((it) => it.type === 'room');
-}
-
-function fpSolidItems(items) {
-  return (items || []).filter((it) => it.type === 'stack' || it.type === 'room');
-}
-
-function rectToPts(x, y, w, h) {
-  return [
-    { x, y },
-    { x: x + w, y },
-    { x: x + w, y: y + h },
-    { x, y: y + h },
-  ];
-}
-
-function ensureItemPts(it) {
-  if (!it.pts || it.pts.length !== 4) {
-    it.pts = rectToPts(Number(it.x) || 0, Number(it.y) || 0, Number(it.w) || 40, Number(it.h) || 32);
-  }
-  it.pts = it.pts.map((p) => ({ x: Number(p.x), y: Number(p.y) }));
-  return it;
-}
-
-function normalizeRectItem(it) {
-  ensureItemPts(it);
-  const bb = ptsToBBox(it.pts);
-  const minW = it.type === 'door' ? 1 : 40;
-  const minH = it.type === 'door' ? 16 : 32;
-  const w = Math.max(bb.w || minW, minW);
-  const h = Math.max(bb.h || minH, minH);
-  it.pts = rectToPts(bb.x, bb.y, w, h);
-  it.x = bb.x;
-  it.y = bb.y;
-  it.w = w;
-  it.h = h;
-  it.rot = 0;
-  return it;
-}
-
-function ptsToBBox(pts) {
-  const xs = pts.map((p) => p.x);
-  const ys = pts.map((p) => p.y);
-  const x = Math.min(...xs);
-  const y = Math.min(...ys);
-  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
-}
-
-function polygonCentroid(pts) {
-  const n = pts.length || 1;
-  return {
-    x: pts.reduce((s, p) => s + p.x, 0) / n,
-    y: pts.reduce((s, p) => s + p.y, 0) / n,
-  };
-}
-
-function translatePts(it, dx, dy) {
-  ensureItemPts(it);
-  it.pts.forEach((p) => {
-    p.x += dx;
-    p.y += dy;
-  });
-  const bb = ptsToBBox(it.pts);
-  it.x = bb.x;
-  it.y = bb.y;
-  it.w = bb.w;
-  it.h = bb.h;
-}
-
-function rotatePtsAround(it, deg, cx, cy) {
-  ensureItemPts(it);
-  const rad = (deg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  it.pts.forEach((p) => {
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    p.x = cx + dx * cos - dy * sin;
-    p.y = cy + dx * sin + dy * cos;
-  });
-  it.rot = ((Number(it.rot) || 0) + deg) % 360;
-  const bb = ptsToBBox(it.pts);
-  it.x = bb.x;
-  it.y = bb.y;
-  it.w = bb.w;
-  it.h = bb.h;
-}
-
-function ptsAttr(pts) {
-  return pts.map((p) => `${p.x},${p.y}`).join(' ');
-}
-
-function clampPolygonToGrid(it) {
-  ensureItemPts(it);
-  const box = fpInnerBox();
-  const bb = ptsToBBox(it.pts);
-  let dx = 0;
-  let dy = 0;
-  if (bb.x < box.x) dx = box.x - bb.x;
-  if (bb.y < box.y) dy = box.y - bb.y;
-  if (bb.x + bb.w + dx > box.x + box.w) dx = box.x + box.w - (bb.x + bb.w);
-  if (bb.y + bb.h + dy > box.y + box.h) dy = box.y + box.h - (bb.y + bb.h);
-  if (dx || dy) translatePts(it, dx, dy);
-  const bb2 = ptsToBBox(it.pts);
-  if (bb2.w > box.w + 0.5 || bb2.h > box.h + 0.5) {
-    const c = polygonCentroid(it.pts);
-    const s = Math.min(box.w / Math.max(bb2.w, 1), box.h / Math.max(bb2.h, 1), 1);
-    it.pts.forEach((p) => {
-      p.x = c.x + (p.x - c.x) * s;
-      p.y = c.y + (p.y - c.y) * s;
-    });
-    translatePts(it, 0, 0);
-    const bb3 = ptsToBBox(it.pts);
-    let sx = 0;
-    let sy = 0;
-    if (bb3.x < box.x) sx = box.x - bb3.x;
-    if (bb3.y < box.y) sy = box.y - bb3.y;
-    if (bb3.x + bb3.w + sx > box.x + box.w) sx = box.x + box.w - (bb3.x + bb3.w);
-    if (bb3.y + bb3.h + sy > box.y + box.h) sy = box.y + box.h - (bb3.y + bb3.h);
-    if (sx || sy) translatePts(it, sx, sy);
-  }
-  return it;
-}
-
-function subtractIntervals(x0, x1, cuts) {
-  let segs = [{ x: x0, w: Math.max(0, x1 - x0) }];
-  (cuts || []).forEach((cut) => {
-    const next = [];
-    segs.forEach((seg) => {
-      const a = seg.x;
-      const b = seg.x + seg.w;
-      const c = Math.max(cut.x, a);
-      const d = Math.min(cut.x + cut.w, b);
-      if (d <= c + 0.5) {
-        next.push(seg);
-        return;
-      }
-      if (c - a > 3) next.push({ x: a, w: c - a });
-      if (b - d > 3) next.push({ x: d, w: b - d });
-    });
-    segs = next;
-  });
-  return segs.filter((s) => s.w > 6);
-}
-
-function roomsCuttingBand(rooms, band) {
-  const pad = 4;
-  return (rooms || []).map((r) => {
-    const y1 = Math.max(r.y, band.y);
-    const y2 = Math.min(r.y + r.h, band.y + band.h);
-    if (y2 - y1 < 6) return null;
-    const x1 = Math.max(r.x, band.x) - pad;
-    const x2 = Math.min(r.x + r.w, band.x + band.w) + pad;
-    if (x2 - x1 < 6) return null;
-    return { x: x1, w: x2 - x1 };
-  }).filter(Boolean);
-}
-
-function layoutStacksInBand(list, band, rooms) {
-  if (!list.length) return [];
-  const cuts = roomsCuttingBand(rooms, band);
-  let segs = subtractIntervals(band.x, band.x + band.w, cuts);
-  if (!segs.length) segs = [{ x: band.x, w: Math.max(24, band.w * 0.25) }];
-  const totalCap = list.reduce((s, x) => s + x.cap, 0) || 1;
-  const totalFree = segs.reduce((s, g) => s + g.w, 0) || 1;
-  const remain = segs.map((g) => ({ x: g.x, w: g.w, used: 0 }));
-  let segIdx = 0;
-  return list.map((s) => {
-    const need = (s.cap / totalCap) * totalFree;
-    while (segIdx < remain.length && remain[segIdx].w - remain[segIdx].used < 8) segIdx += 1;
-    if (segIdx >= remain.length) segIdx = remain.length - 1;
-    let g = remain[segIdx];
-    const leftover = g.w - g.used;
-    if (need > leftover + 1 && segIdx + 1 < remain.length) {
-      segIdx += 1;
-      g = remain[segIdx];
-    }
-    const take = Math.min(need, Math.max(8, g.w - g.used));
-    const rect = {
-      code: s.code,
-      slot: s.slot,
-      x: g.x + g.used,
-      y: band.y,
-      w: take,
-      h: band.h,
-      cap: s.cap,
-      usedTon: s.usedTon,
-      used: s.used,
-    };
-    g.used += take;
-    return rect;
-  });
-}
-
-function computeStackRects(wh, rooms) {
-  const box = fpInnerBox();
-  const stacks = wh.stacks || [];
-  const topN = Math.max(1, Math.ceil(stacks.length / 2));
-  const top = stacks.slice(0, topN);
-  const bot = stacks.slice(topN);
-  const bandH = box.h / 2;
-  const topBand = { x: box.x, y: box.y, w: box.w, h: bandH };
-  const botBand = { x: box.x, y: box.y + bandH, w: box.w, h: bandH };
-  return {
-    rects: [
-      ...layoutStacksInBand(top, topBand, rooms),
-      ...layoutStacksInBand(bot, botBand, rooms),
-    ],
-  };
-}
-
-function defaultDoorItems(count) {
-  const box = fpInnerBox();
-  const n = clampFpCount(count);
-  const topN = Math.ceil(n / 2);
-  const botN = n - topN;
-  const doorW = 72;
-  const doorH = 22;
-  const items = [];
-  function place(num, y, startNo, rtl) {
-    for (let i = 0; i < num; i++) {
-      const idx = rtl ? num - 1 - i : i;
-      const x = box.x + (box.w / (num + 1)) * (idx + 1) - doorW / 2;
-      const no = startNo + i;
-      items.push({
-        id: `door-${no}`,
-        type: 'door',
-        x,
-        y,
-        w: doorW,
-        h: doorH,
-        rot: 0,
-        label: `${no}号门`,
-        pts: rectToPts(x, y, doorW, doorH),
-      });
-    }
-  }
-  place(botN, box.y + box.h - doorH, 1, false);
-  place(topN, box.y, botN + 1, true);
-  return items;
-}
-
-function defaultRoomItems(count, wh) {
-  const box = fpInnerBox();
-  const n = clampFpCount(count);
-  if (!n) return [];
-  const stacks = wh?.stacks || [];
-  const totalCap = stacks.reduce((s, x) => s + x.cap, 0) || 1;
-  const avgCap = totalCap / Math.max(stacks.length, 1);
-  const roomWeight = avgCap * n;
-  const stripW = Math.max(72, Math.min(box.w * 0.42, box.w * (roomWeight / (totalCap + roomWeight))));
-  const roomH = box.h / n;
-  const x = box.x + box.w - stripW;
-  return Array.from({ length: n }, (_, i) => {
-    const y = box.y + i * roomH;
-    return {
-      id: `room-${i + 1}`,
-      type: 'room',
-      x,
-      y,
-      w: stripW,
-      h: roomH,
-      rot: 0,
-      label: `功能区${i + 1}`,
-      pts: rectToPts(x, y, stripW, roomH),
-    };
-  });
-}
-
-function defaultStackItems(wh, rooms) {
-  const layout = computeStackRects(wh, rooms || []);
-  return layout.rects.map((r, i) => ({
-    id: `stack-${r.code}`,
-    type: 'stack',
-    code: r.code,
-    slot: r.slot,
-    label: r.code,
-    cap: r.cap,
-    usedTon: r.usedTon,
-    used: r.used,
-    color: i,
-    rot: 0,
-    x: r.x,
-    y: r.y,
-    w: r.w,
-    h: r.h,
-    pts: rectToPts(r.x, r.y, r.w, r.h),
-  }));
-}
-
-function polyNormals(pts) {
-  return pts.map((p, i) => {
-    const q = pts[(i + 1) % pts.length];
-    const ex = q.x - p.x;
-    const ey = q.y - p.y;
-    const len = Math.hypot(ex, ey) || 1;
-    return { x: -ey / len, y: ex / len };
-  });
-}
-
-function projectPoly(pts, n) {
-  let min = Infinity;
-  let max = -Infinity;
-  pts.forEach((p) => {
-    const d = p.x * n.x + p.y * n.y;
-    if (d < min) min = d;
-    if (d > max) max = d;
-  });
-  return { min, max };
-}
-
-function overlapMTV(aPts, bPts) {
-  let minOverlap = Infinity;
-  let nx = 0;
-  let ny = 0;
-  const axes = polyNormals(aPts).concat(polyNormals(bPts));
-  const ca = polygonCentroid(aPts);
-  const cb = polygonCentroid(bPts);
-  for (let i = 0; i < axes.length; i += 1) {
-    const n = axes[i];
-    const pa = projectPoly(aPts, n);
-    const pb = projectPoly(bPts, n);
-    const o = Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min);
-    if (o <= 0) return null;
-    if (o < minOverlap) {
-      minOverlap = o;
-      const sign = (cb.x - ca.x) * n.x + (cb.y - ca.y) * n.y >= 0 ? 1 : -1;
-      nx = n.x * sign;
-      ny = n.y * sign;
-    }
-  }
-  return { dx: nx * minOverlap, dy: ny * minOverlap };
-}
-
-function pointSegDelta(px, py, ax, ay, bx, by) {
-  const abx = bx - ax;
-  const aby = by - ay;
-  const den = abx * abx + aby * aby || 1;
-  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / den));
-  const qx = ax + t * abx;
-  const qy = ay + t * aby;
-  return { d: Math.hypot(px - qx, py - qy), dx: qx - px, dy: qy - py };
-}
-
-function snapItemEdges(it, others) {
-  const SNAP = 14;
-  ensureItemPts(it);
-  const box = ptsToBBox(it.pts);
-  const grid = fpInnerBox();
-  let dx = 0;
-  let dy = 0;
-  const l = box.x;
-  const r = box.x + box.w;
-  const t = box.y;
-  const b = box.y + box.h;
-  if (Math.abs(l - grid.x) < SNAP) dx = grid.x - l;
-  else if (Math.abs(r - (grid.x + grid.w)) < SNAP) dx = grid.x + grid.w - r;
-  if (Math.abs(t - grid.y) < SNAP) dy = grid.y - t;
-  else if (Math.abs(b - (grid.y + grid.h)) < SNAP) dy = grid.y + grid.h - b;
-  others.forEach((o) => {
-    if (!o.pts) return;
-    const ob = ptsToBBox(o.pts);
-    const ol = ob.x;
-    const orr = ob.x + ob.w;
-    const ot = ob.y;
-    const obb = ob.y + ob.h;
-    [[l, ol], [l, orr], [r, ol], [r, orr]].forEach(([a, c]) => {
-      if (Math.abs(a + dx - c) < SNAP) dx = c - a;
-    });
-    [[t, ot], [t, obb], [b, ot], [b, obb]].forEach(([a, c]) => {
-      if (Math.abs(a + dy - c) < SNAP) dy = c - a;
-    });
-  });
-  if (dx || dy) translatePts(it, dx, dy);
-
-  let best = SNAP;
-  let sdx = 0;
-  let sdy = 0;
-  const consider = (px, py, ax, ay, bx, by, sign) => {
-    const r = pointSegDelta(px, py, ax, ay, bx, by);
-    if (r.d < best) {
-      best = r.d;
-      sdx = r.dx * sign;
-      sdy = r.dy * sign;
-    }
-  };
-  others.forEach((o) => {
-    if (!o.pts) return;
-    it.pts.forEach((p) => {
-      o.pts.forEach((a, i) => {
-        const b = o.pts[(i + 1) % o.pts.length];
-        consider(p.x, p.y, a.x, a.y, b.x, b.y, 1);
-      });
-    });
-    o.pts.forEach((p) => {
-      it.pts.forEach((a, i) => {
-        const b = it.pts[(i + 1) % it.pts.length];
-        consider(p.x, p.y, a.x, a.y, b.x, b.y, -1);
-      });
-    });
-  });
-  if (sdx || sdy) translatePts(it, sdx, sdy);
-}
-
-function resolveItemOverlaps(it, others) {
-  ensureItemPts(it);
-  for (let k = 0; k < 10; k += 1) {
-    let moved = false;
-    others.forEach((o) => {
-      ensureItemPts(o);
-      const mtv = overlapMTV(it.pts, o.pts);
-      if (!mtv) return;
-      translatePts(it, -mtv.dx, -mtv.dy);
-      moved = true;
-    });
-    clampPolygonToGrid(it);
-    if (!moved) break;
-  }
-}
-
-function settleFpItem(it) {
-  if (!it) return;
-  normalizeRectItem(it);
-  if (it.type === 'door') {
-    if (fpEditor.snap) snapItemBBoxToGrid(it);
-    clampPolygonToGrid(it);
-    normalizeRectItem(it);
-    return;
-  }
-  if (fpEditor.snap) snapItemBBoxToGrid(it);
-  const others = fpSolidItems(fpEditor.items).filter((x) => x.id !== it.id);
-  snapItemEdges(it, others);
-  resolveItemOverlaps(it, others);
-  clampPolygonToGrid(it);
-  normalizeRectItem(it);
-}
-
-function assemblePlanItems(wh, existing, roomCount, doorCount, opts = {}) {
-  const prev = existing || [];
-  const keptStacks = prev.filter((it) => it.type === 'stack').map((it) => ensureItemPts({ ...it }));
-  const decor = syncDecorItems({ items: prev }, roomCount, doorCount, wh, opts);
-  const rooms = decor.filter((it) => it.type === 'room');
-  const doors = decor.filter((it) => it.type === 'door');
-  const stacks = keptStacks.length === (wh.stacks || []).length
-    ? keptStacks
-    : defaultStackItems(wh, rooms);
-  return [...stacks, ...rooms, ...doors].map((it) => normalizeRectItem(clampPolygonToGrid(ensureItemPts(it))));
-}
-
-function clampItemToGrid(it) {
-  ensureItemPts(it);
-  return clampPolygonToGrid(it);
-}
-
-function syncDecorItems(plan, roomCount, doorCount, wh, opts = {}) {
-  const oldRooms = (plan.items || [])
-    .filter((it) => it.type === 'room')
-    .map((r) => normalizeRectItem(ensureItemPts({
-      ...r,
-      pts: (r.pts || []).map((p) => ({ x: p.x, y: p.y })),
-    })));
-  const doors = (plan.items || []).filter((it) => it.type === 'door');
-  const roomN = clampFpCount(roomCount);
-  const doorN = clampFpCount(doorCount);
-  const keepRooms = !opts.resetRooms && oldRooms.length === roomN;
-  const nextRooms = keepRooms
-    ? oldRooms.map((r, i) => ({
-      ...r,
-      id: `room-${i + 1}`,
-      type: 'room',
-      label: (!r.label || /^设备间\d+$/.test(r.label)) ? `功能区${i + 1}` : r.label,
-    }))
-    : defaultRoomItems(roomN, wh);
-  const nextDoors = defaultDoorItems(doorN).map((d, i) => {
-    const prev = doors[i];
-    return prev
-      ? { ...d, ...prev, id: d.id, type: 'door', label: prev.label || d.label }
-      : d;
-  });
-  return [...nextRooms, ...nextDoors].map((it) => clampItemToGrid(it));
-}
-
-function lotsForStack(stack) {
-  if (STACK_LOTS[stack.code]) return STACK_LOTS[stack.code].map((x) => ({ ...x }));
-  if (stack.mat && stack.mat !== '空闲' && stack.usedTon > 0) {
-    return [{ consignor: '', kind: '', origin: stack.mat, weight: stack.usedTon }];
-  }
-  return [];
-}
-
-function formatPlanWeight(t) {
-  const n = Number(t) || 0;
-  if (n >= 5000) {
-    const w = n / 10000;
-    return `${Number.isInteger(w) ? w : w.toFixed(1)}w`;
-  }
-  return `${Math.round(n)}吨`;
-}
-
-function escapeXml(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function fpFitLabel(text, bb, fill, opts = {}) {
-  const raw = String(text || '').trim();
-  if (!raw || !bb) return '';
-  const pad = opts.pad ?? 6;
-  const innerW = Math.max(8, bb.w - pad * 2);
-  const innerH = Math.max(8, bb.h - pad * 2);
-  const chars = [...raw];
-  const n = chars.length || 1;
-  const cx = bb.x + bb.w / 2;
-  const cy = bb.y + bb.h / 2;
-  const maxFs = opts.maxFs ?? 13;
-  const minFs = opts.minFs ?? 8;
-  const vertical = innerH > innerW * 1.15 && innerW < n * 11;
-  if (vertical) {
-    const fs = Math.max(minFs, Math.min(maxFs, innerH / (n * 1.05), innerW * 0.78));
-    return `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${fill}" font-size="${fs}" font-weight="700" transform="rotate(-90 ${cx} ${cy})">${escapeXml(raw)}</text>`;
-  }
-  const fs = Math.max(minFs, Math.min(maxFs, innerW / Math.max(n * 0.92, 1), innerH * 0.72));
-  if (n > 4 && innerW < n * fs * 0.85 && innerH > fs * 2.2) {
-    const mid = Math.ceil(n / 2);
-    const l1 = chars.slice(0, mid).join('');
-    const l2 = chars.slice(mid).join('');
-    return `<text x="${cx}" y="${cy - fs * 0.55}" text-anchor="middle" fill="${fill}" font-size="${fs}" font-weight="700"><tspan x="${cx}" dy="0">${escapeXml(l1)}</tspan><tspan x="${cx}" dy="${fs * 1.15}">${escapeXml(l2)}</tspan></text>`;
-  }
-  return `<text x="${cx}" y="${cy + fs * 0.35}" text-anchor="middle" fill="${fill}" font-size="${fs}" font-weight="700">${escapeXml(raw)}</text>`;
-}
-
-function splitLotsInRect(rect, lots, usedTon, cap) {
-  const pieces = [];
-  const occupied = Math.min(usedTon || 0, cap || usedTon || 0);
-  const empty = Math.max(0, (cap || 0) - occupied);
-  const totalW = lots.reduce((s, l) => s + (l.weight || 0), 0);
-  const vertical = rect.h >= rect.w;
-  let cursor = vertical ? rect.y : rect.x;
-  const span = vertical ? rect.h : rect.w;
-  const denom = (occupied + empty) || 1;
-
-  lots.forEach((lot) => {
-    const share = occupied ? (lot.weight / (totalW || occupied)) * occupied : 0;
-    const len = (share / denom) * span;
-    pieces.push({
-      ...lot,
-      x: vertical ? rect.x : cursor,
-      y: vertical ? cursor : rect.y,
-      w: vertical ? rect.w : len,
-      h: vertical ? len : rect.h,
-    });
-    cursor += len;
-  });
-  if (empty > 0) {
-    const len = (empty / denom) * span;
-    pieces.push({
-      empty: true,
-      x: vertical ? rect.x : cursor,
-      y: vertical ? cursor : rect.y,
-      w: vertical ? rect.w : len,
-      h: vertical ? len : rect.h,
-    });
-  }
-  return pieces;
-}
-
-function renderFloorPlanMarkup(wh, plan, opts = {}) {
-  const overlay = !!opts.overlayMaterials;
-  const interactive = !!opts.interactive;
-  const selectedId = opts.selectedId || null;
-  const raw = (plan.items || []).map((it) => normalizeRectItem(ensureItemPts({
-    ...it,
-    pts: (it.pts || []).map((p) => ({ x: p.x, y: p.y })),
-  })));
-  const items = raw.some((it) => it.type === 'stack')
-    ? raw.map((it) => clampPolygonToGrid(it))
-    : assemblePlanItems(wh, raw, plan.rooms ?? fpEditor.rooms, plan.doors ?? fpEditor.doors);
-  const box = fpInnerBox();
-  const uid = opts.svgId || 'fp';
-
-  const bodySvg = items.map((it, i) => {
-    const selected = interactive && it.id === selectedId;
-    const isStack = it.type === 'stack';
-    const fill = it.type === 'door' ? '#6b5344' : (isStack ? FP_STACK_COLORS[(it.color ?? i) % FP_STACK_COLORS.length] : '#9aa3ad');
-    const stroke = selected ? '#2F80C4' : (isStack ? '#8a6a28' : '#4a5560');
-    const sw = selected ? 2.5 : 1.2;
-    const c = polygonCentroid(it.pts);
-    const bb = ptsToBBox(it.pts);
-    const stack = isStack ? wh.stacks.find((s) => s.code === it.code) : null;
-    let extra = '';
-    if (overlay && stack) {
-      const lots = lotsForStack(stack);
-      const pieces = splitLotsInRect(bb, lots, stack.usedTon, stack.cap);
-      extra = pieces.map((p) => {
-        if (p.empty || p.w < 10 || p.h < 10) return '';
-        const lines = [p.consignor && p.kind ? `${p.consignor} ${p.kind}` : (p.consignor || p.kind || ''), p.origin, formatPlanWeight(p.weight)].filter(Boolean);
-        return fpFitLabel(lines.join(' '), p, '#b42318', { maxFs: 12, minFs: 8, pad: 4 });
-      }).join('');
-    }
-    const labelFill = isStack ? '#7a1f1f' : '#fff';
-    const clipId = `${uid}-clip-${escapeXml(it.id)}`;
-    let handles = '';
-    if (interactive && selected) {
-      handles += `<rect class="fp-select-box" x="${bb.x - 4}" y="${bb.y - 4}" width="${bb.w + 8}" height="${bb.h + 8}" fill="none" stroke="#2F80C4" stroke-width="1.2" stroke-dasharray="5 3"/>`;
-    }
-    if (interactive && selected && it.type !== 'door') {
-      const hx = bb.x + bb.w / 2;
-      const hy = bb.y - 28;
-      handles += `<line class="fp-rotate-arm" x1="${hx}" y1="${bb.y - 4}" x2="${hx}" y2="${hy}" stroke="#2F80C4" stroke-width="1.5"/>
-        <circle class="fp-rotate" data-id="${escapeXml(it.id)}" cx="${hx}" cy="${hy}" r="8" fill="#fff" stroke="#2F80C4" stroke-width="2"/>`;
-    }
-    if (interactive && selected) {
-      handles += [[0, 0, 'nw'], [it.w, 0, 'ne'], [0, it.h, 'sw'], [it.w, it.h, 'se']].map(([hx2, hy2, dir]) =>
-        `<rect class="fp-handle" data-id="${escapeXml(it.id)}" data-dir="${dir}" x="${it.x + hx2 - 5}" y="${it.y + hy2 - 5}" width="10" height="10" fill="#fff" stroke="#2F80C4" stroke-width="1.5"/>`
-      ).join('');
-    }
-    const dash = isStack ? 'stroke-dasharray="4 3"' : '';
-    return `<g class="fp-item${selected ? ' is-selected' : ''}" data-id="${escapeXml(it.id)}" data-type="${it.type}">
-      <defs><clipPath id="${clipId}"><polygon points="${ptsAttr(it.pts)}"/></clipPath></defs>
-      <polygon points="${ptsAttr(it.pts)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${dash}/>
-      <g clip-path="url(#${clipId})">${extra}</g>
-      ${fpFitLabel(it.label || it.code || '', bb, labelFill, { maxFs: it.type === 'door' ? 12 : 13 })}
-      ${handles}
-    </g>`;
-  }).join('');
-
-  return `<svg id="${uid}" viewBox="0 0 ${FP_W} ${FP_H}" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <pattern id="${uid}Grid" width="${FP_GRID}" height="${FP_GRID}" patternUnits="userSpaceOnUse" x="${box.x}" y="${box.y}">
-        <path d="M ${FP_GRID} 0 L 0 0 0 ${FP_GRID}" fill="none" stroke="#c5ccd4" stroke-width="0.7"/>
-      </pattern>
-    </defs>
-    <rect width="${FP_W}" height="${FP_H}" fill="#eef1f4"/>
-    <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="url(#${uid}Grid)" stroke="#9aa3ad"/>
-    ${bodySvg}
-    <text x="${FP_W - 22}" y="${FP_H / 2}" text-anchor="middle" fill="#1A2332" font-size="28" font-weight="800" transform="rotate(90 ${FP_W - 22} ${FP_H / 2})">${escapeXml(wh.no)}#</text>
-  </svg>`;
-}
-
-function fpSvgPoint(evt, svg) {
-  const pt = svg.createSVGPoint();
-  pt.x = evt.clientX;
-  pt.y = evt.clientY;
-  const ctm = svg.getScreenCTM();
-  if (!ctm) return { x: 0, y: 0 };
-  return pt.matrixTransform(ctm.inverse());
-}
-
-function selectedFpItem() {
-  return fpEditor.items.find((x) => x.id === fpEditor.selectedId) || null;
-}
-
-function syncFpNameField() {
-  const input = document.getElementById('fpItemName');
-  if (!input) return;
-  const it = selectedFpItem();
-  input.disabled = !it;
-  if (document.activeElement === input && it) return;
-  input.value = it ? (it.label || '') : '';
-  input.placeholder = it
-    ? (it.type === 'door' ? '如 1号门' : it.type === 'stack' ? '堆位名称' : '如 主通道')
-    : '点选堆位、门或功能区后改名';
-}
-
-function onFloorPlanNameFocus() {
-  fpEditor.nameBefore = cloneFpState();
-}
-
-function onFloorPlanNameInput() {
-  const it = selectedFpItem();
-  const input = document.getElementById('fpItemName');
-  if (!it || !input) return;
-  it.label = String(input.value || '').slice(0, 16);
-  paintFloorPlanEditor();
-}
-
-function onFloorPlanNameBlur() {
-  const it = selectedFpItem();
-  const input = document.getElementById('fpItemName');
-  if (!it || !input) return;
-  const name = input.value.replace(/\s+/g, ' ').trim();
-  it.label = (name || (it.type === 'door' ? '门' : it.type === 'stack' ? (it.code || '堆位') : '功能区')).slice(0, 16);
-  input.value = it.label;
-  if (fpEditor.nameBefore) fpCommit(fpEditor.nameBefore);
-  fpEditor.nameBefore = null;
-  paintFloorPlanEditor();
-}
-
-function paintFloorPlanEditor() {
-  const host = document.getElementById('fpCanvas');
-  const wh = WAREHOUSES.find((w) => w.id === fpEditor.whId);
-  if (!host || !wh) return;
-  host.innerHTML = renderFloorPlanMarkup(wh, { items: fpEditor.items }, {
-    interactive: true,
-    selectedId: fpEditor.selectedId,
-    svgId: 'fpSvg',
-  });
-  syncFpNameField();
-  syncFpHistoryButtons();
-}
-
-function initFloorPlanEditor() {
-  const wrap = document.getElementById('fpCanvasWrap');
-  if (!wrap || wrap.dataset.bound) return;
-  wrap.dataset.bound = '1';
-  wrap.addEventListener('mousedown', onFpPointerDown);
-  window.addEventListener('mousemove', (e) => {
-    if (fpEditor.drag) onFpPointerMove(e);
-  });
-  window.addEventListener('mouseup', () => {
-    if (fpEditor.drag) onFpPointerUp();
-  });
-  document.addEventListener('keydown', onFpKeydown);
-  wrap.addEventListener('dblclick', (e) => {
-    const item = e.target.closest?.('.fp-item');
-    if (!item) return;
-    fpEditor.selectedId = item.getAttribute('data-id');
-    paintFloorPlanEditor();
-    const input = document.getElementById('fpItemName');
-    if (!input || input.disabled) return;
-    input.focus();
-    input.select();
-  });
-}
-
-function onFloorPlanCountChange() {
-  const wh = WAREHOUSES.find((w) => w.id === fpEditor.whId);
-  const before = cloneFpState();
-  const nextRooms = clampFpCount(document.getElementById('fpRoomCount')?.value);
-  const nextDoors = clampFpCount(document.getElementById('fpDoorCount')?.value);
-  const resetRooms = nextRooms !== fpEditor.rooms;
-  fpEditor.rooms = nextRooms;
-  fpEditor.doors = nextDoors;
-  const roomEl = document.getElementById('fpRoomCount');
-  const doorEl = document.getElementById('fpDoorCount');
-  if (roomEl) roomEl.value = fpEditor.rooms;
-  if (doorEl) doorEl.value = fpEditor.doors;
-  fpEditor.items = assemblePlanItems(wh, fpEditor.items, fpEditor.rooms, fpEditor.doors, { resetRooms });
-  fpEditor.selectedId = null;
-  fpCommit(before);
-  paintFloorPlanEditor();
-}
-
-async function openFloorPlanEditor() {
-  const wh = currentWarehouse();
-  if (!wh) {
-    toast('请先选择仓库', 'warn');
-    return;
-  }
-  await ensureFloorPlansLoaded();
-  const saved = getFloorPlan(wh.id);
-  fpEditor.whId = wh.id;
-  fpEditor.rooms = saved ? clampFpCount(saved.rooms) : 1;
-  fpEditor.doors = saved ? clampFpCount(saved.doors) : 3;
-  fpEditor.items = assemblePlanItems(wh, saved?.items || [], fpEditor.rooms, fpEditor.doors);
-  fpEditor.selectedId = null;
-  fpEditor.drag = null;
-  fpResetHistory();
-  const snapEl = document.getElementById('fpSnapToggle');
-  if (snapEl) snapEl.checked = fpEditor.snap;
-  const title = document.getElementById('fpTitle');
-  if (title) title.textContent = `平面图管理 · ${wh.name}`;
-  const roomEl = document.getElementById('fpRoomCount');
-  const doorEl = document.getElementById('fpDoorCount');
-  if (roomEl) roomEl.value = fpEditor.rooms;
-  if (doorEl) doorEl.value = fpEditor.doors;
-  openModal('modalFloorPlan');
-  requestAnimationFrame(() => paintFloorPlanEditor());
-}
-
-async function saveFloorPlan() {
-  if (!fpEditor.whId) return;
-  const plan = {
-    rooms: fpEditor.rooms,
-    doors: fpEditor.doors,
-    items: fpEditor.items,
-    savedAt: new Date().toISOString(),
-  };
-  try {
-    await putFloorPlanToApi(fpEditor.whId, plan);
-    closeModal('modalFloorPlan');
-    toast('平面图已保存，驾驶舱点击该仓模型可查看', 'ok');
-  } catch (err) {
-    toast(err.message || '平面图保存失败，请检查后端接口', 'warn');
-  }
-}
-
-function fpRotateSelected(deg) {
-  const it = selectedFpItem();
-  if (!it || it.type === 'door') return;
-  const before = cloneFpState();
-  const c = polygonCentroid(it.pts);
-  rotatePtsAround(it, deg, c.x, c.y);
-  settleFpItem(it);
-  fpCommit(before);
-  paintFloorPlanEditor();
-}
-
-function onFpPointerDown(e) {
-  const svg = document.getElementById('fpSvg');
-  if (!svg) return;
-  const rotate = e.target.closest?.('.fp-rotate');
-  const handle = e.target.closest?.('.fp-handle');
-  const item = e.target.closest?.('.fp-item');
-  const pt = fpSvgPoint(e, svg);
-  const before = cloneFpState();
-  if (rotate) {
-    const id = rotate.getAttribute('data-id');
-    const it = fpEditor.items.find((x) => x.id === id);
-    if (!it) return;
-    ensureItemPts(it);
-    const c = polygonCentroid(it.pts);
-    fpEditor.selectedId = id;
-    fpEditor.drag = {
-      mode: 'rotate',
-      id,
-      cx: c.x,
-      cy: c.y,
-      startAng: Math.atan2(pt.y - c.y, pt.x - c.x),
-      pts: it.pts.map((p) => ({ x: p.x, y: p.y })),
-      rot: Number(it.rot) || 0,
-      moved: false,
-      before,
-    };
-    e.preventDefault();
-    e.stopPropagation();
-    paintFloorPlanEditor();
-    return;
-  }
-  if (handle) {
-    const id = handle.getAttribute('data-id');
-    const dir = handle.getAttribute('data-dir');
-    const it = fpEditor.items.find((x) => x.id === id);
-    if (!it) return;
-    fpEditor.selectedId = id;
-    fpEditor.drag = {
-      mode: 'resize', id, dir, x: pt.x, y: pt.y, ox: it.x, oy: it.y, ow: it.w, oh: it.h, moved: false, before,
-    };
-    e.preventDefault();
-    e.stopPropagation();
-    paintFloorPlanEditor();
-    return;
-  }
-  if (item) {
-    const id = item.getAttribute('data-id');
-    const it = fpEditor.items.find((x) => x.id === id);
-    if (!it) return;
-    ensureItemPts(it);
-    fpEditor.selectedId = id;
-    fpEditor.drag = {
-      mode: 'move',
-      id,
-      x: pt.x,
-      y: pt.y,
-      pts: it.pts.map((p) => ({ x: p.x, y: p.y })),
-      moved: false,
-      before,
-    };
-    e.preventDefault();
-    e.stopPropagation();
-    paintFloorPlanEditor();
-    return;
-  }
-  fpEditor.selectedId = null;
-  fpEditor.drag = null;
-  paintFloorPlanEditor();
-}
-
-function onFpPointerMove(e) {
-  if (!fpEditor.drag) return;
-  const svg = document.getElementById('fpSvg');
-  if (!svg) return;
-  const it = fpEditor.items.find((x) => x.id === fpEditor.drag.id);
-  if (!it) return;
-  const pt = fpSvgPoint(e, svg);
-  const box = fpInnerBox();
-  const useSnap = fpSnapOn(e);
-  if (fpEditor.drag.mode === 'move') {
-    const dx = pt.x - fpEditor.drag.x;
-    const dy = pt.y - fpEditor.drag.y;
-    if (!fpEditor.drag.moved && Math.hypot(dx, dy) < FP_DRAG_SLOP) return;
-    fpEditor.drag.moved = true;
-    it.pts = fpEditor.drag.pts.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-    translatePts(it, 0, 0);
-    if (useSnap) snapItemBBoxToGrid(it);
-    clampPolygonToGrid(it);
-  } else if (fpEditor.drag.mode === 'rotate') {
-    const ang = Math.atan2(pt.y - fpEditor.drag.cy, pt.x - fpEditor.drag.cx);
-    let deg = ((ang - fpEditor.drag.startAng) * 180) / Math.PI;
-    if (!fpEditor.drag.moved && Math.abs(deg) < 2) return;
-    fpEditor.drag.moved = true;
-    if (useSnap) deg = fpSnapAngle(deg);
-    it.pts = fpEditor.drag.pts.map((p) => ({ x: p.x, y: p.y }));
-    it.rot = fpEditor.drag.rot;
-    rotatePtsAround(it, deg, fpEditor.drag.cx, fpEditor.drag.cy);
-    clampPolygonToGrid(it);
-  } else if (fpEditor.drag.mode === 'resize') {
-    const dx = pt.x - fpEditor.drag.x;
-    const dy = pt.y - fpEditor.drag.y;
-    if (!fpEditor.drag.moved && Math.hypot(dx, dy) < FP_DRAG_SLOP) return;
-    fpEditor.drag.moved = true;
-    const minW = it.type === 'door' ? 1 : 40;
-    const minH = it.type === 'door' ? 16 : 32;
-    const dir = fpEditor.drag.dir;
-    let x = fpEditor.drag.ox;
-    let y = fpEditor.drag.oy;
-    let w = fpEditor.drag.ow;
-    let h = fpEditor.drag.oh;
-    if (dir.includes('e')) w = Math.max(minW, fpEditor.drag.ow + dx);
-    if (dir.includes('s')) h = Math.max(minH, fpEditor.drag.oh + dy);
-    if (dir.includes('w')) {
-      w = Math.max(minW, fpEditor.drag.ow - dx);
-      x = fpEditor.drag.ox + (fpEditor.drag.ow - w);
-    }
-    if (dir.includes('n')) {
-      h = Math.max(minH, fpEditor.drag.oh - dy);
-      y = fpEditor.drag.oy + (fpEditor.drag.oh - h);
-    }
-    if (useSnap) {
-      x = fpSnapCoord(x, box.x);
-      y = fpSnapCoord(y, box.y);
-      w = Math.max(minW, fpSnapCoord(x + w, box.x) - x);
-      h = Math.max(minH, fpSnapCoord(y + h, box.y) - y);
-    }
-    it.x = x;
-    it.y = y;
-    it.w = w;
-    it.h = h;
-    it.pts = rectToPts(x, y, w, h);
-    clampPolygonToGrid(it);
-  }
-  paintFloorPlanEditor();
-}
-
-function onFpPointerUp() {
-  const drag = fpEditor.drag;
-  fpEditor.drag = null;
-  if (!drag) return;
-  const it = fpEditor.items.find((x) => x.id === drag.id);
-  if (it && drag.moved) {
-    settleFpItem(it);
-    fpCommit(drag.before);
-  } else if (it && !drag.moved && drag.mode === 'move') {
-    it.pts = drag.pts.map((p) => ({ x: p.x, y: p.y }));
-    translatePts(it, 0, 0);
-  }
-  paintFloorPlanEditor();
-}
-
-function applyWhPlanTransform() {
-  const stage = document.getElementById('whPlanStage');
-  const meta = document.getElementById('whPlanMeta');
-  if (!stage) return;
-  const { scale, rotate, tx, ty } = whPlanState;
-  stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale}) rotate(${rotate}deg)`;
-  if (meta) meta.textContent = `${Math.round(scale * 100)}% · ${rotate}°`;
-}
-
-function whPlanReset() {
-  whPlanState.scale = 1;
-  whPlanState.rotate = 0;
-  whPlanState.tx = 0;
-  whPlanState.ty = 0;
-  applyWhPlanTransform();
-}
-
-function whPlanZoom(delta) {
-  whPlanState.scale = Math.min(4, Math.max(0.25, whPlanState.scale + delta));
-  applyWhPlanTransform();
-}
-
-function whPlanRotate(delta) {
-  whPlanState.rotate = ((whPlanState.rotate + delta) % 360 + 360) % 360;
-  applyWhPlanTransform();
-}
-
-async function openWhPlanModal(whId) {
-  const wh = WAREHOUSES.find((w) => w.id === whId);
-  await ensureFloorPlansLoaded();
-  const plan = getFloorPlan(whId);
-  if (!plan) {
-    toast('该仓库尚未设置平面图', 'warn');
-    return;
-  }
-  whPlanState.whId = whId;
-  const title = document.getElementById('whPlanTitle');
-  if (title) title.textContent = `${wh?.name || whId} 平面图`;
-  const host = document.getElementById('whPlanSvgHost');
-  if (host && wh) {
-    host.innerHTML = renderFloorPlanMarkup(wh, plan, { overlayMaterials: true, svgId: 'whPlanSvg' });
-  }
-  whPlanReset();
-  openModal('modalWhPlan');
-}
-
-function whPlanGoStacks() {
-  const whId = whPlanState.whId;
-  closeModal('modalWhPlan');
-  if (whId) goWarehouse(whId);
-}
-
-function initWhPlanViewer() {
-  const viewport = document.getElementById('whPlanViewport');
-  const stage = document.getElementById('whPlanStage');
-  if (!viewport || !stage || viewport.dataset.bound) return;
-  viewport.dataset.bound = '1';
-
-  viewport.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    whPlanZoom(e.deltaY < 0 ? 0.1 : -0.1);
-  }, { passive: false });
-
-  viewport.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    whPlanDrag.active = true;
-    whPlanDrag.x = e.clientX;
-    whPlanDrag.y = e.clientY;
-    viewport.classList.add('is-dragging');
-    stage.classList.add('no-transition');
-    e.preventDefault();
-  });
-
-  window.addEventListener('mousemove', (e) => {
-    if (!whPlanDrag.active) return;
-    whPlanState.tx += e.clientX - whPlanDrag.x;
-    whPlanState.ty += e.clientY - whPlanDrag.y;
-    whPlanDrag.x = e.clientX;
-    whPlanDrag.y = e.clientY;
-    applyWhPlanTransform();
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (!whPlanDrag.active) return;
-    whPlanDrag.active = false;
-    viewport.classList.remove('is-dragging');
-    stage.classList.remove('no-transition');
-  });
-}
+/* 园区平面图编辑与驾驶舱渲染见 yard-plan.js */
 
 function tickCockpitClock() {
   const now = new Date();
@@ -4539,46 +5534,10 @@ function animateKpis() {
 }
 
 function renderYard() {
-  const root = document.getElementById('yardMap');
-  if (!root) return;
-  root.innerHTML = WAREHOUSES.map((wh) => `
-    <article class="wh-card ${wh.cls}" data-wh="${wh.id}">
-      <div class="wh-card-scene" role="button" tabindex="0" title="点击查看已设置的仓库平面图" onclick="openWhPlanModal('${wh.id}')" onkeydown="if(event.key==='Enter')openWhPlanModal('${wh.id}')">${renderWhIsoSvg(wh.cls, wh.occ, wh.id)}</div>
-      <button type="button" class="wh-card-enter" onclick="goWarehouse('${wh.id}')" title="进入仓库查看">
-        <span class="wh-card-name">${wh.name}</span>
-        <span class="wh-card-zone">${wh.zone}</span>
-        <span class="wh-card-occ">${wh.occ}%</span>
-      </button>
-      <div class="wh-card-strip">
-        <div class="wh-strip-label">堆位 · 片区标识 · 点击查看</div>
-        <div class="yard-grid wh-strip-grid wh-strip-grid--${wh.stacks.length}">
-          ${wh.stacks.map((s) => {
-            const lv = stackLevel(s.used);
-            const ac = stackAreaClass(s.area);
-            return `<div class="stack-cell ${lv} area-${ac}" data-wh="${wh.id}" data-code="${s.code}" data-area="${s.area}" data-mat="${s.mat}" data-used="${s.used}" data-cap="${s.cap}" data-batch="${s.batch}" data-batch-type="${s.batchType || ''}" title="${s.code} · ${s.area}">${renderStackIsoSvg(lv)}</div>`;
-          }).join('')}
-        </div>
-      </div>
-    </article>
-  `).join('');
-  const tip = document.getElementById('ckTip');
-  root.querySelectorAll('.stack-cell').forEach((cell) => {
-    cell.addEventListener('mouseenter', (e) => {
-      const d = e.currentTarget.dataset;
-      tip.hidden = false;
-      tip.innerHTML = `<b>${d.code}</b> · ${d.area}<br/>${d.mat}${d.batch && d.batch !== '—' ? `<br/>${isCustomsBatchType(d.batchType) ? '报关单号 ' + d.batch : isProdBatchType(d.batchType) ? '生产批次 ' + d.batch : d.batch}` : ''}<br/>占用 ${d.used}% · 库容 ${d.cap} 吨<br/><em>点击进入堆位</em>`;
-    });
-    cell.addEventListener('mousemove', (e) => {
-      tip.style.left = e.clientX + 14 + 'px';
-      tip.style.top = e.clientY + 12 + 'px';
-    });
-    cell.addEventListener('mouseleave', () => { tip.hidden = true; });
-    cell.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const d = e.currentTarget.dataset;
-      goWarehouse(d.wh, d.code);
-    });
-  });
+  if (typeof renderParkYard === 'function') {
+    renderParkYard();
+    return;
+  }
 }
 
 function flowLogItemHtml(s) {
@@ -4673,13 +5632,21 @@ function tickProdData() {
 function renderAlerts() {
   const el = document.getElementById('alertFeed');
   if (!el) return;
-  el.innerHTML = buildAlertList().map((a) => `
-    <li onclick="go('${a.page}')">
+  const list = buildAlertList().map((a) => `
+    <li class="alert-feed-item" onclick="go('${a.page}')">
       <i class="lvl ${a.lvl}"></i>
       <div class="ttl">${a.title}<span>${a.desc}</span></div>
       <time>${a.time}</time>
     </li>
   `).join('');
+  el.innerHTML = `
+    <div class="alert-feed-viewport">
+      <ul class="alert-feed-track">
+        ${list}
+        ${list}
+      </ul>
+    </div>
+  `;
 }
 
 function renderCapList() {
@@ -4712,7 +5679,6 @@ function fitCanvas(canvas) {
 
 function drawCockpitCharts() {
   drawTrendChart();
-  drawCapChart();
 }
 
 function drawTrendChart() {
@@ -4768,44 +5734,7 @@ function drawTrendChart() {
 }
 
 function drawCapChart() {
-  const canvas = document.getElementById('chartCap');
-  if (!canvas) return;
-  const { ctx, w, h } = fitCanvas(canvas);
-  const slices = [
-    { v: 12680, c: '#3D8BFF' },
-    { v: 3240, c: '#22E6A2' },
-    { v: 720, c: '#FFB020' },
-  ];
-  const total = slices.reduce((s, x) => s + x.v, 0);
-  const cx = w / 2, cy = h / 2 - 4, r = Math.min(w, h) / 2 - 10;
-  ctx.clearRect(0, 0, w, h);
-  let a = -Math.PI / 2;
-  slices.forEach((s) => {
-    const da = (s.v / total) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, r, a, a + da);
-    ctx.closePath();
-    ctx.fillStyle = s.c;
-    ctx.globalAlpha = 0.9;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = '#050C16';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    a += da;
-  });
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.58, 0, Math.PI * 2);
-  ctx.fillStyle = '#071422';
-  ctx.fill();
-  ctx.fillStyle = '#D6EEFF';
-  ctx.font = 'bold 16px Bahnschrift, Consolas, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('68%', cx, cy + 2);
-  ctx.fillStyle = '#6A8EAA';
-  ctx.font = '10px sans-serif';
-  ctx.fillText('综合占用', cx, cy + 16);
+  /* 驾驶舱已改为进度条，保留空实现以免旧缓存脚本报错 */
 }
 
 function drawReconcileChart() {

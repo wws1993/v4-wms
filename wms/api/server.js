@@ -124,14 +124,27 @@ function normalizeFloorPlan(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const items = Array.isArray(raw.items) ? raw.items : [];
   if (!items.length) return null;
-  const rooms = Number.isFinite(Number(raw.rooms)) ? Math.max(0, Math.min(12, Math.round(Number(raw.rooms)))) : items.filter((it) => it && it.type === 'room').length;
-  const doors = Number.isFinite(Number(raw.doors)) ? Math.max(0, Math.min(12, Math.round(Number(raw.doors)))) : items.filter((it) => it && it.type === 'door').length;
-  return {
+  const rooms = Number.isFinite(Number(raw.rooms)) ? Math.max(0, Math.min(200, Math.round(Number(raw.rooms)))) : items.filter((it) => it && (it.type === 'room' || it.type === 'zone')).length;
+  const doors = Number.isFinite(Number(raw.doors)) ? Math.max(0, Math.min(200, Math.round(Number(raw.doors)))) : items.filter((it) => it && it.type === 'door').length;
+  const plan = {
     rooms,
     doors,
     items,
     savedAt: String(raw.savedAt || new Date().toISOString()),
   };
+  if (raw.kind) plan.kind = String(raw.kind);
+  const grid = Number(raw.grid);
+  if (Number.isFinite(grid)) plan.grid = Math.max(8, Math.min(80, Math.round(grid)));
+  const gridCols = Number(raw.gridCols);
+  const gridRows = Number(raw.gridRows);
+  if (Number.isFinite(gridCols)) plan.gridCols = Math.max(2, Math.min(200, Math.round(gridCols)));
+  if (Number.isFinite(gridRows)) plan.gridRows = Math.max(2, Math.min(200, Math.round(gridRows)));
+  const canvasW = Number(raw.canvasW);
+  const canvasH = Number(raw.canvasH);
+  if (Number.isFinite(canvasW)) plan.canvasW = Math.max(400, Math.min(8000, Math.round(canvasW)));
+  if (Number.isFinite(canvasH)) plan.canvasH = Math.max(300, Math.min(8000, Math.round(canvasH)));
+  if (raw.stackGrids && typeof raw.stackGrids === 'object') plan.stackGrids = raw.stackGrids;
+  return plan;
 }
 
 function normalizeItem(raw, idx) {
@@ -261,7 +274,7 @@ app.delete('/api/annotations', (_req, res) => {
 function saveFloorPlanBody(req, res) {
   const id = String((req.body && (req.body.id || req.body.whId)) || '').trim();
   if (!id) {
-    return res.status(400).json({ success: false, data: null, message: '仓库编号无效' });
+    return res.status(400).json({ success: false, data: null, message: '平面图编号无效' });
   }
   const plan = normalizeFloorPlan(req.body);
   if (!plan) {
@@ -307,7 +320,7 @@ app.get('/api/warehouses/:id/floor-plan', (req, res) => {
 app.put('/api/warehouses/:id/floor-plan', (req, res) => {
   const id = String(req.params.id || '').trim();
   if (!id) {
-    return res.status(400).json({ success: false, data: null, message: '仓库编号无效' });
+    return res.status(400).json({ success: false, data: null, message: '平面图编号无效' });
   }
   const plan = normalizeFloorPlan(req.body);
   if (!plan) {
