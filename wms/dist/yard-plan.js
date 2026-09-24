@@ -61,7 +61,9 @@ const parkCache = { plan: null, loaded: false };
 let parkLoadPromise = null;
 let parkYardRevealPromise = null;
 let parkYardHoldDone = false;
-const parkYardView = { scale: 1, tx: 0, ty: 0, drag: null };
+const PARK_YARD_SAT_SRC = 'assets/yard-satellite.jpg';
+const PARK_YARD_FLY_MS = 560;
+const parkYardView = { scale: 1, tx: 0, ty: 0, drag: null, focusId: null, sat: false, isolate: false, cam: null, fly: null };
 const parkEditorView = { scale: 1, vx: 0, vy: 0, pan: null, space: false };
 
 function parkApiBase() {
@@ -810,7 +812,7 @@ function parkStackMapLabel(it) {
   return String((it && (it.label || it.code)) || '').replace(/^\d+#/, '').trim();
 }
 
-function parkOutsideWhMark(text, bb, fill, canvasH) {
+function parkOutsideWhMark(text, bb, fill, canvasH, opts = {}) {
   const raw = String(text || '').trim();
   if (!raw || !bb) return '';
   const fs = Math.max(13, Math.min(20, bb.h * 0.11));
@@ -823,7 +825,8 @@ function parkOutsideWhMark(text, bb, fill, canvasH) {
     y = bb.y - gap;
     baseline = 'alphabetic';
   }
-  return `<text class="park-wh-mark" x="${x}" y="${y}" fill="${fill}" font-size="${fs}" font-weight="800" text-anchor="middle" dominant-baseline="${baseline}">${parkEscape(raw)}</text>`;
+  const halo = opts.halo ? `stroke="${opts.halo}" stroke-width="3.2" paint-order="stroke fill"` : '';
+  return `<text class="park-wh-mark" x="${x}" y="${y}" fill="${fill}" font-size="${fs}" font-weight="800" text-anchor="middle" dominant-baseline="${baseline}" ${halo}>${parkEscape(raw)}</text>`;
 }
 
 function parkCharWidth(ch, fs) {
@@ -926,7 +929,7 @@ function parkStampTiles(it, uid, dims, canvas) {
   return `<g class="park-stamp" data-id="${parkEscape(it.id)}" data-type="stamp" data-kind="${parkEscape(kind)}">${tiles}</g>`;
 }
 
-function parkCargoCells(stackItem, theme) {
+function parkCargoCells(stackItem, theme, satellite) {
   const found = parkFindStack(stackItem.code);
   if (!found) return '';
   const stack = found.stack;
@@ -964,46 +967,97 @@ function parkCargoCells(stackItem, theme) {
       const key = `${r},${c}`;
       const occupied = i < usedCount;
       const isRes = reservedSet.has(key);
-      let fill = 'transparent';
-      let stroke = theme === 'cockpit' ? 'rgba(26, 35, 50, 0.22)' : 'rgba(0,0,0,0.08)';
-      let sw = 0.4;
+      let fill = satellite ? 'rgba(48, 40, 28, 0.18)' : 'transparent';
+      let stroke = satellite
+        ? 'rgba(42, 34, 24, 0.38)'
+        : (theme === 'cockpit' ? 'rgba(26, 35, 50, 0.22)' : 'rgba(0,0,0,0.08)');
+      let sw = satellite ? 0.7 : 0.4;
       const lot = occupied
         ? (lots.length ? lots[lotCells[i]] : { consignor: '', kind: stack.batchType === '生产批次' ? '混成品' : '达标矿', batch: stack.batch })
         : null;
       if (occupied) {
         fill = parkCargoFill(lot);
-        stroke = parkCargoStroke(fill);
+        stroke = satellite ? parkCargoStrokeSat(fill) : parkCargoStroke(fill);
+        if (satellite) sw = 0.9;
       }
       if (isRes) {
         stroke = theme === 'cockpit' ? '#00E5FF' : '#1B4F8A';
-        sw = 1.2;
+        sw = satellite ? 1.6 : 1.2;
         if (!occupied) fill = theme === 'cockpit' ? 'rgba(0,229,255,0.22)' : 'rgba(47,128,196,0.28)';
       }
       const ticket = (lot && lot.batch) || (occupied && stack.batch && stack.batch !== '—' ? stack.batch : '');
       const lotAttr = ticket ? `data-lot="${parkEscape(ticket)}"` : '';
       const ownerAttr = lot && lot.consignor ? `data-consignor="${parkEscape(lot.consignor)}"` : '';
       const kindAttr = lot && lot.kind ? `data-kind="${parkEscape(lot.kind)}"` : '';
-      svg += `<rect class="park-cell${occupied ? ' is-cargo' : ''}" data-code="${parkEscape(stack.code)}" data-wh="${parkEscape(found.wh.id)}" data-area="${parkEscape(stack.area)}" data-mat="${parkEscape(stack.mat)}" data-used="${stack.used}" data-cap="${stack.cap}" data-batch="${parkEscape(stack.batch || '')}" data-r="${r}" data-c="${c}" ${lotAttr} ${ownerAttr} ${kindAttr} x="${x}" y="${y}" width="${Math.max(0.5, cw - 0.4)}" height="${Math.max(0.5, ch - 0.4)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      svg += `<rect class="park-cell${occupied ? ' is-cargo' : ''}" data-code="${parkEscape(stack.code)}" data-wh="${parkEscape(found.wh.id)}" data-area="${parkEscape(stack.area)}" data-mat="${parkEscape(stack.mat)}" data-used="${stack.used}" data-cap="${stack.cap}" data-batch="${parkEscape(stack.batch || '')}" data-r="${r}" data-c="${c}" ${lotAttr} ${ownerAttr} ${kindAttr} x="${x}" y="${y}" width="${Math.max(0.5, cw - 0.4)}" height="${Math.max(0.5, ch - 0.4)}" rx="${satellite ? 2 : 0}" ry="${satellite ? 2 : 0}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
     }
   }
   if (theme === 'cockpit' && lots.length && usedCount > 0) {
     const first = lots[0];
     const label = [first.consignor, first.kind, parkFormatWeight(stack.usedTon)].filter(Boolean).join(' ');
-    svg += parkCornerLabel(label, { x: stackItem.x, y: stackItem.y, w: stackItem.w, h: Math.min(stackItem.h, 28) }, '#1A2332', { maxFs: 10, pad: 3 });
+    svg += parkCornerLabel(label, { x: stackItem.x, y: stackItem.y, w: stackItem.w, h: Math.min(stackItem.h, 28) }, satellite ? '#24180c' : '#1A2332', { maxFs: 10, pad: 3 });
   }
   return svg;
 }
 
-function parkThemeColors(theme, it) {
+function parkCargoStrokeSat(fill) {
+  const luma = parkHexLuma(fill);
+  return luma > 0.55 ? 'rgba(32, 24, 12, 0.55)' : 'rgba(255, 248, 230, 0.35)';
+}
+
+function parkSatDefs(uid) {
+  return `<defs>
+    <pattern id="${uid}-sat-roof" patternUnits="userSpaceOnUse" width="20" height="10">
+      <rect width="20" height="10" fill="#7c7870"/>
+      <rect width="20" height="5" fill="#8d897f"/>
+      <path d="M0 5h20" stroke="#5c594f" stroke-width="0.9"/>
+      <path d="M0 0h20" stroke="#a39e92" stroke-width="0.45"/>
+    </pattern>
+    <pattern id="${uid}-sat-roof-idle" patternUnits="userSpaceOnUse" width="20" height="10">
+      <rect width="20" height="10" fill="#6a6864"/>
+      <rect width="20" height="5" fill="#787671"/>
+      <path d="M0 5h20" stroke="#4e4c48" stroke-width="0.9"/>
+    </pattern>
+    <pattern id="${uid}-sat-stack" patternUnits="userSpaceOnUse" width="16" height="16">
+      <rect width="16" height="16" fill="#cbb89a"/>
+      <circle cx="4" cy="5" r="1.1" fill="#b9a584" opacity="0.7"/>
+      <circle cx="11" cy="10" r="1.3" fill="#d8c8aa" opacity="0.8"/>
+      <circle cx="8" cy="3" r="0.8" fill="#a89472" opacity="0.5"/>
+    </pattern>
+  </defs>`;
+}
+
+function parkThemeColors(theme, it, satellite, uid) {
   const fill = parkItemColor(it);
   const darkLabel = it.type === 'stack' ? '#5a1f12' : '#1A2332';
   const lightLabel = parkContrastLabel(fill);
+  if (theme === 'cockpit' && satellite) {
+    if (it.type === 'warehouse') {
+      return { fill: `url(#${uid}-sat-roof)`, stroke: '#e8f0e4', label: '#f5fff6', text: '#f5fff6', fillOp: 0.9, sw: 2.4, dash: false };
+    }
+    if (it.type === 'idle') {
+      return { fill: `url(#${uid}-sat-roof-idle)`, stroke: '#d0d6cc', label: '#eef3ea', text: '#eef3ea', fillOp: 0.88, sw: 2.1, dash: false };
+    }
+    if (it.type === 'stack') {
+      return { fill: `url(#${uid}-sat-stack)`, stroke: '#5a4c38', label: '#2a1e12', text: '#2a1e12', fillOp: 0.94, sw: 1.5, dash: false };
+    }
+    if (it.type === 'door') {
+      return { fill: '#6d8eae', stroke: '#dce8f2', label: '#f4f8fc', text: '#f4f8fc', fillOp: 0.92, sw: 1.3, dash: false };
+    }
+    if (it.type === 'line') {
+      return { fill: '#6a7066', stroke: '#c5cdc0', label: '#f2f5ef', text: '#f2f5ef', fillOp: 0.88, sw: 1.3, dash: false };
+    }
+    return { fill, stroke: '#c8d2c6', label: '#f3f7f0', text: '#f3f7f0', fillOp: 0.84, sw: 1.3, dash: false };
+  }
   if (theme !== 'cockpit') {
     return {
       fill,
       stroke: it.type === 'stack' ? '#8a6a28' : '#4a5560',
       label: darkLabel,
       text: '#1A2332',
+      fillOp: it.type === 'warehouse' || it.type === 'idle' ? 0.92 : 0.98,
+      sw: it.type === 'warehouse' || it.type === 'idle' || it.type === 'office' ? 1.8 : 1.1,
+      dash: it.type === 'stack',
     };
   }
   return {
@@ -1011,22 +1065,117 @@ function parkThemeColors(theme, it) {
     stroke: it.type === 'stack' ? '#8a6a28' : '#3a4a58',
     label: lightLabel,
     text: '#D6EEFF',
+    fillOp: it.type === 'warehouse' || it.type === 'idle' ? 0.92 : 0.98,
+    sw: it.type === 'warehouse' || it.type === 'idle' || it.type === 'office' ? 1.8 : 1.1,
+    dash: it.type === 'stack',
   };
+}
+
+function parkYardItemsForFocus(items, focusId) {
+  if (!focusId) return items;
+  const host = items.find((it) => it.id === focusId);
+  if (!host) return items;
+  return items.filter((it) => {
+    if (it.id === host.id || it.parentId === host.id) return true;
+    if (it.type === 'stamp' || it.type === 'warehouse' || it.type === 'idle' || it.type === 'office') return false;
+    const cx = (Number(it.x) || 0) + (Number(it.w) || 0) / 2;
+    const cy = (Number(it.y) || 0) + (Number(it.h) || 0) / 2;
+    return cx >= host.x && cx <= host.x + host.w && cy >= host.y && cy <= host.y + host.h;
+  });
+}
+
+function parkYardFrame(plan, host) {
+  const W = Number(plan.canvasW) || PARK_W;
+  const H = Number(plan.canvasH) || PARK_H;
+  if (!host) return { x: 0, y: 0, w: W, h: H };
+  const padX = Math.max(16, host.w * 0.08);
+  const padY = Math.max(30, host.h * 0.12);
+  return {
+    x: host.x - padX,
+    y: host.y - padY,
+    w: host.w + padX * 2,
+    h: host.h + padY * 2,
+  };
+}
+
+function parkYardFullFrame(plan) {
+  return { x: 0, y: 0, w: Number(plan.canvasW) || PARK_W, h: Number(plan.canvasH) || PARK_H };
+}
+
+function parkYardFrameAttr(frame) {
+  return `${frame.x} ${frame.y} ${frame.w} ${frame.h}`;
+}
+
+function parkYardEaseOut(t) {
+  return 1 - ((1 - t) ** 3);
+}
+
+function parkYardLerpFrame(a, b, t) {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    w: a.w + (b.w - a.w) * t,
+    h: a.h + (b.h - a.h) * t,
+  };
+}
+
+function parkYardApplyCam(frame) {
+  if (!frame) return;
+  parkYardView.cam = frame;
+  const svg = document.getElementById('yardParkSvg');
+  if (svg) svg.setAttribute('viewBox', parkYardFrameAttr(frame));
+}
+
+function parkYardCancelFly() {
+  if (!parkYardView.fly) return;
+  cancelAnimationFrame(parkYardView.fly.raf);
+  parkYardView.fly = null;
+  document.getElementById('yardMap')?.classList.remove('is-flying');
+}
+
+function parkYardFlyTo(toFrame, onDone) {
+  const from = parkYardView.cam || toFrame;
+  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  parkYardCancelFly();
+  if (reduced) {
+    parkYardApplyCam(toFrame);
+    onDone?.();
+    return;
+  }
+  const start = performance.now();
+  const root = document.getElementById('yardMap');
+  root?.classList.add('is-flying');
+  const tick = (now) => {
+    const t = Math.min(1, (now - start) / PARK_YARD_FLY_MS);
+    parkYardApplyCam(parkYardLerpFrame(from, toFrame, parkYardEaseOut(t)));
+    if (t < 1) {
+      parkYardView.fly = { raf: requestAnimationFrame(tick), to: toFrame };
+      return;
+    }
+    parkYardView.fly = null;
+    root?.classList.remove('is-flying');
+    onDone?.();
+  };
+  parkYardView.fly = { raf: requestAnimationFrame(tick), to: toFrame };
 }
 
 function renderParkMarkup(plan, opts = {}) {
   const theme = opts.theme || 'editor';
   const interactive = !!opts.interactive;
   const overlay = opts.overlayCargo !== false && theme === 'cockpit';
+  const satellite = !!opts.satellite && theme === 'cockpit';
   const selectedId = opts.selectedId || null;
+  const isolateId = opts.isolateId || null;
   const uid = opts.svgId || 'park';
   const dims = resolveParkGrid(plan);
   const W = Number(plan.canvasW) || PARK_W;
   const H = Number(plan.canvasH) || PARK_H;
-  const items = (plan.items || []).map((it) => parkEnsureTypeFill(parkNormalize({
+  const items = parkYardItemsForFocus((plan.items || []).map((it) => parkEnsureTypeFill(parkNormalize({
     ...it,
     pts: (it.pts || []).map((p) => ({ x: p.x, y: p.y })),
-  })));
+  }))), isolateId);
+  const focusHost = isolateId ? items.find((it) => it.id === isolateId) : null;
+  const frame = opts.viewBox || parkYardFrame(plan, focusHost);
   const order = { stamp: 0, office: 1, idle: 1, warehouse: 1, zone: 1, line: 2, stack: 3, door: 4 };
   const sorted = items.slice().sort((a, b) => (order[a.type] ?? 1) - (order[b.type] ?? 1));
   const bg = theme === 'cockpit' ? '#071422' : '#eef1f4';
@@ -1035,14 +1184,14 @@ function renderParkMarkup(plan, opts = {}) {
   const body = sorted.map((it) => {
     if (it.type === 'stamp') return parkStampTiles(it, uid, dims, { w: W, h: H });
     const selected = interactive && it.id === selectedId;
-    const pal = parkThemeColors(theme, it);
+    const pal = parkThemeColors(theme, it, satellite, uid);
     const fill = pal.fill;
     const stroke = selected ? '#2F80C4' : pal.stroke;
-    const sw = selected ? 2.4 : (it.type === 'warehouse' || it.type === 'idle' || it.type === 'office' ? 1.8 : 1.1);
+    const sw = selected ? 2.4 : pal.sw;
     const bb = { x: it.x, y: it.y, w: it.w, h: it.h };
     const clipId = `${uid}-clip-${parkEscape(it.id)}`;
     let extra = '';
-    if (it.type === 'stack' && overlay) extra = parkCargoCells(it, theme);
+    if (it.type === 'stack' && overlay) extra = parkCargoCells(it, theme, satellite);
     let handles = '';
     if (interactive && selected) {
       handles += `<rect class="fp-select-box" x="${bb.x - 3}" y="${bb.y - 3}" width="${bb.w + 6}" height="${bb.h + 6}" fill="none" stroke="#2F80C4" stroke-width="1.2" stroke-dasharray="5 3"/>`;
@@ -1056,7 +1205,7 @@ function renderParkMarkup(plan, opts = {}) {
         `<rect class="fp-handle" data-id="${parkEscape(it.id)}" data-dir="${dir}" x="${it.x + hx2 - 5}" y="${it.y + hy2 - 5}" width="10" height="10" fill="#fff" stroke="#2F80C4" stroke-width="1.5"/>`
       ).join('');
     }
-    const dash = it.type === 'stack' ? 'stroke-dasharray="3 2"' : '';
+    const dash = pal.dash ? 'stroke-dasharray="3 2"' : '';
     const labelFill = pal.label;
     const found = it.type === 'stack' ? parkFindStack(it.code) : null;
     let label = it.label || it.code || '';
@@ -1064,22 +1213,41 @@ function renderParkMarkup(plan, opts = {}) {
     else if (it.type === 'warehouse' || it.type === 'idle') label = parkWhInnerLabel(it);
     const hover = it.type === 'stack' && found
       ? `data-wh="${parkEscape(found.wh.id)}" data-code="${parkEscape(it.code)}" data-area="${parkEscape(found.stack.area)}" data-mat="${parkEscape(found.stack.mat)}" data-used="${found.stack.used}" data-cap="${found.stack.cap}" data-batch="${parkEscape(found.stack.batch)}" data-batch-type="${parkEscape(found.stack.batchType || '')}"`
-      : '';
+      : (it.type === 'warehouse' || it.type === 'idle'
+        ? `data-host="1" data-wh="${parkEscape(it.whId || '')}"`
+        : '');
     const whMark = (it.type === 'warehouse' || it.type === 'idle')
-      ? parkOutsideWhMark(parkWhOutsideText(it), bb, theme === 'cockpit' ? '#9ad8ff' : labelFill, H)
+      ? parkOutsideWhMark(
+        parkWhOutsideText(it),
+        bb,
+        satellite ? '#f4fff6' : (theme === 'cockpit' ? '#9ad8ff' : labelFill),
+        H,
+        satellite ? { halo: '#1a2418' } : {}
+      )
       : '';
     return `<g class="fp-item park-item" data-id="${parkEscape(it.id)}" data-type="${it.type}" ${hover}>
       <defs><clipPath id="${clipId}"><polygon points="${parkPtsAttr(it.pts)}"/></clipPath></defs>
-      <polygon points="${parkPtsAttr(it.pts)}" fill="${fill}" fill-opacity="${it.type === 'warehouse' || it.type === 'idle' ? 0.92 : 0.98}" stroke="${stroke}" stroke-width="${sw}" ${dash}/>
+      <polygon points="${parkPtsAttr(it.pts)}" fill="${fill}" fill-opacity="${pal.fillOp}" stroke="${stroke}" stroke-width="${sw}" ${dash}/>
       <g clip-path="url(#${clipId})">${extra}${parkItemLabel(label, bb, labelFill, { align: parkLabelAlign(it.type) })}</g>
       ${whMark}
       ${handles}
     </g>`;
   }).join('');
 
-  return `<svg id="${uid}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${W}" height="${H}" fill="${bg}"/>
-    ${parkGridLinesMarkup(W, H, dims, gridStroke)}
+  const satClip = (satellite && isolateId && focusHost)
+    ? `<clipPath id="${uid}-sat-host"><polygon points="${parkPtsAttr(focusHost.pts)}"/></clipPath>`
+    : '';
+  const satImg = satellite
+    ? `<image href="${PARK_YARD_SAT_SRC}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid slice" pointer-events="none"${isolateId && focusHost ? ` clip-path="url(#${uid}-sat-host)"` : ''}/>`
+    : '';
+  const ground = satellite
+    ? `<rect width="${W}" height="${H}" fill="#1a2420"/>${satImg}`
+    : `<rect width="${W}" height="${H}" fill="${bg}"/>`;
+  return `<svg id="${uid}" viewBox="${parkYardFrameAttr(frame)}" xmlns="http://www.w3.org/2000/svg">
+    ${satellite ? parkSatDefs(uid) : ''}
+    ${satClip ? `<defs>${satClip}</defs>` : ''}
+    ${ground}
+    ${satellite || isolateId ? '' : parkGridLinesMarkup(W, H, dims, gridStroke)}
     ${body}
   </svg>`;
 }
@@ -1868,8 +2036,98 @@ function initParkEditor() {
   });
 }
 
+function parkYardIsOverview() {
+  return !parkYardView.focusId;
+}
+
+function parkYardHostOf(el, plan) {
+  const items = (plan && plan.items) || [];
+  const itemEl = el.closest?.('.fp-item');
+  const type = itemEl?.getAttribute('data-type');
+  const itemId = itemEl?.getAttribute('data-id');
+  if (type === 'warehouse' || type === 'idle') {
+    return items.find((it) => it.id === itemId) || null;
+  }
+  if (itemId) {
+    const it = items.find((x) => x.id === itemId);
+    if (it && it.parentId) return items.find((x) => x.id === it.parentId) || null;
+  }
+  const wh = el.getAttribute?.('data-wh')
+    || itemEl?.getAttribute('data-wh')
+    || el.closest?.('[data-wh]')?.getAttribute('data-wh');
+  if (wh) return items.find((it) => parkIsHost(it) && it.whId === wh) || null;
+  return null;
+}
+
+function parkYardResetView() {
+  parkYardCancelFly();
+  parkYardView.scale = 1;
+  parkYardView.tx = 0;
+  parkYardView.ty = 0;
+  parkYardView.focusId = null;
+  parkYardView.isolate = false;
+  parkYardView.cam = null;
+}
+
+function parkYardFocusHost(host) {
+  if (!host) return;
+  if (parkYardView.focusId === host.id && parkYardView.isolate && !parkYardView.fly) return;
+  const plan = getActiveParkPlan();
+  const to = parkYardFrame(plan, host);
+  parkYardCancelFly();
+  parkYardView.focusId = host.id;
+  parkYardView.isolate = false;
+  parkYardView.scale = 1;
+  parkYardView.tx = 0;
+  parkYardView.ty = 0;
+  if (!parkYardView.cam) parkYardView.cam = parkYardFullFrame(plan);
+  renderParkYard();
+  parkYardFlyTo(to, () => {
+    if (parkYardView.focusId !== host.id) return;
+    parkYardView.isolate = true;
+    parkYardView.cam = to;
+    renderParkYard();
+  });
+}
+
+function parkYardGoBack() {
+  if (!parkYardView.focusId && !parkYardView.isolate) return;
+  const plan = getActiveParkPlan();
+  const to = parkYardFullFrame(plan);
+  parkYardCancelFly();
+  parkYardView.isolate = false;
+  parkYardView.scale = 1;
+  parkYardView.tx = 0;
+  parkYardView.ty = 0;
+  if (!parkYardView.cam) {
+    const host = (plan.items || []).find((it) => it.id === parkYardView.focusId);
+    parkYardView.cam = host ? parkYardFrame(plan, host) : to;
+  }
+  renderParkYard();
+  parkYardFlyTo(to, () => {
+    parkYardView.focusId = null;
+    parkYardView.isolate = false;
+    parkYardView.cam = to;
+    renderParkYard();
+  });
+}
+
+function toggleYardSatellite(on) {
+  parkYardView.sat = !!on;
+  const tog = document.getElementById('yardSatToggle');
+  if (tog) tog.checked = parkYardView.sat;
+  if (parkYardView.fly?.to) {
+    const dest = parkYardView.fly.to;
+    parkYardCancelFly();
+    parkYardView.cam = dest;
+    if (parkYardView.focusId) parkYardView.isolate = true;
+  }
+  if (document.getElementById('yardMap')) renderParkYard();
+}
+
 function parkBindYardEvents(root) {
   const tip = document.getElementById('ckTip');
+  const plan = getActiveParkPlan();
   const showTip = (html, e) => {
     if (!tip) return;
     tip.hidden = false;
@@ -1883,16 +2141,35 @@ function parkBindYardEvents(root) {
     tip.style.top = e.clientY + 12 + 'px';
   };
   const hideTip = () => { if (tip) tip.hidden = true; };
+  const zoomIfOverview = (el) => {
+    if (!parkYardIsOverview()) return false;
+    const host = parkYardHostOf(el, plan);
+    if (!host) return false;
+    parkYardFocusHost(host);
+    return true;
+  };
+
+  root.querySelector('.yard-plan-back')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    parkYardGoBack();
+  });
+  root.querySelector('#yardSatToggle')?.addEventListener('change', (e) => {
+    e.stopPropagation();
+    toggleYardSatellite(e.currentTarget.checked);
+  });
+  root.querySelector('.yard-sat-toggle')?.addEventListener('mousedown', (e) => e.stopPropagation());
 
   root.querySelectorAll('.park-cell[data-lot]').forEach((el) => {
     el.addEventListener('mouseenter', (e) => {
       const d = e.currentTarget.dataset;
-      showTip(`<b>${parkEscape(d.lot)}</b> · ${d.code || ''}<br/>${parkEscape(d.consignor || '')}${d.consignor && d.kind ? ' · ' : ''}${parkEscape(d.kind || '')}<br/><em>点击查询该票库存</em>`, e);
+      const hint = parkYardIsOverview() ? '点击放大至本仓库' : '点击查询该票库存';
+      showTip(`<b>${parkEscape(d.lot)}</b> · ${d.code || ''}<br/>${parkEscape(d.consignor || '')}${d.consignor && d.kind ? ' · ' : ''}${parkEscape(d.kind || '')}<br/><em>${hint}</em>`, e);
     });
     el.addEventListener('mousemove', moveTip);
     el.addEventListener('mouseleave', hideTip);
     el.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (zoomIfOverview(e.currentTarget)) return;
       const lot = e.currentTarget.getAttribute('data-lot');
       if (lot && typeof goInventoryLot === 'function') goInventoryLot(lot);
       else if (typeof go === 'function') go('inventory');
@@ -1906,14 +2183,32 @@ function parkBindYardEvents(root) {
       if (!tip || !d.code) return;
       const reserved = (typeof getReservedCells === 'function') ? getReservedCells(d.code) : [];
       const resHint = reserved.length ? `<br/>预约占用 ${reserved.length} 格` : '';
-      showTip(`<b>${d.code}</b> · ${d.area || ''}<br/>${d.mat || ''}${d.batch && d.batch !== '—' ? `<br/>${d.batch}` : ''}${resHint}<br/>占用 ${d.used || ''}% · 库容 ${d.cap || ''} 吨<br/><em>点击进入堆位管理</em>`, e);
+      const hint = parkYardIsOverview() ? '点击放大至本仓库' : '点击进入堆位管理';
+      showTip(`<b>${d.code}</b> · ${d.area || ''}<br/>${d.mat || ''}${d.batch && d.batch !== '—' ? `<br/>${d.batch}` : ''}${resHint}<br/>占用 ${d.used || ''}% · 库容 ${d.cap || ''} 吨<br/><em>${hint}</em>`, e);
     });
     el.addEventListener('mousemove', moveTip);
     el.addEventListener('mouseleave', hideTip);
     el.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (zoomIfOverview(e.currentTarget)) return;
       const d = e.currentTarget.dataset;
       if (d.wh && typeof goWarehouse === 'function') goWarehouse(d.wh, d.code);
+    });
+  });
+
+  root.querySelectorAll('.fp-item[data-host]').forEach((el) => {
+    el.addEventListener('mouseenter', (e) => {
+      if (!parkYardIsOverview()) return;
+      const host = parkYardHostOf(e.currentTarget, plan);
+      const name = host ? (host.label || parkWhOutsideText(host) || '仓库') : '仓库';
+      showTip(`<b>${parkEscape(name)}</b><br/><em>点击放大查看本仓库</em>`, e);
+    });
+    el.addEventListener('mousemove', moveTip);
+    el.addEventListener('mouseleave', hideTip);
+    el.addEventListener('click', (e) => {
+      if (e.target.closest?.('[data-code], .park-cell')) return;
+      e.stopPropagation();
+      zoomIfOverview(e.currentTarget);
     });
   });
 }
@@ -1973,20 +2268,48 @@ function renderParkYard() {
     return;
   }
   const plan = getActiveParkPlan();
-  root.className = 'yard-plan-wrap';
-  root.innerHTML = `<div class="yard-plan-stage" id="yardPlanStage">${renderParkMarkup(plan, {
-    theme: 'cockpit',
-    overlayCargo: true,
-    svgId: 'yardParkSvg',
-  })}</div>`;
+  if (parkYardView.focusId && !(plan.items || []).some((it) => it.id === parkYardView.focusId)) {
+    parkYardResetView();
+  }
+  const sat = !!parkYardView.sat;
+  const focused = !!parkYardView.focusId;
+  const isolate = !!parkYardView.isolate;
+  const planFrame = isolate
+    ? parkYardFrame(plan, (plan.items || []).find((it) => it.id === parkYardView.focusId))
+    : parkYardFullFrame(plan);
+  if (!parkYardView.cam) parkYardView.cam = planFrame;
+  root.className = `yard-plan-wrap${sat ? ' is-sat' : ''}${focused ? ' is-zoomed' : ' is-overview'}${parkYardView.fly ? ' is-flying' : ''}`;
+  root.innerHTML = `<button type="button" class="yard-plan-back" ${focused ? '' : 'hidden'}>回退</button>
+    <label class="ck-sat-toggle yard-sat-toggle" title="叠加卫星影像">
+      <input type="checkbox" id="yardSatToggle" ${sat ? 'checked' : ''} />
+      卫星图
+    </label>
+    <div class="yard-plan-stage" id="yardPlanStage">${renderParkMarkup(plan, {
+      theme: 'cockpit',
+      overlayCargo: true,
+      satellite: sat,
+      isolateId: isolate ? parkYardView.focusId : null,
+      viewBox: parkYardView.cam,
+      svgId: 'yardParkSvg',
+    })}</div>`;
+  const tog = document.getElementById('yardSatToggle');
+  if (tog) tog.checked = sat;
+  applyParkYardTransform(false);
   parkBindYardEvents(root);
   initParkYardViewer();
 }
 
-function applyParkYardTransform() {
+function applyParkYardTransform(animate) {
   const stage = document.getElementById('yardPlanStage');
+  const root = document.getElementById('yardMap');
   if (!stage) return;
+  stage.classList.toggle('is-animating', !!animate);
   stage.style.transform = `translate(${parkYardView.tx}px, ${parkYardView.ty}px) scale(${parkYardView.scale})`;
+  if (root) {
+    root.classList.toggle('is-zoomed', !!parkYardView.focusId);
+    root.classList.toggle('is-overview', !parkYardView.focusId);
+    root.classList.toggle('is-sat', !!parkYardView.sat);
+  }
 }
 
 function initParkYardViewer() {
@@ -1995,13 +2318,19 @@ function initParkYardViewer() {
   root.dataset.panBound = '1';
   root.addEventListener('wheel', (e) => {
     e.preventDefault();
-    parkYardView.scale = Math.min(2.8, Math.max(0.6, parkYardView.scale + (e.deltaY < 0 ? 0.08 : -0.08)));
-    applyParkYardTransform();
+    if (parkYardView.fly) return;
+    const stage = document.getElementById('yardPlanStage');
+    stage?.classList.remove('is-animating');
+    parkYardView.scale = Math.min(6, Math.max(0.6, parkYardView.scale + (e.deltaY < 0 ? 0.08 : -0.08)));
+    applyParkYardTransform(false);
   }, { passive: false });
   root.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
-    if (e.target.closest?.('[data-code], .park-cell')) return;
+    if (e.target.closest?.('.yard-plan-back, .ck-sat-toggle')) return;
+    if (parkYardIsOverview() && e.target.closest?.('[data-host], [data-code], .park-cell')) return;
+    if (!parkYardIsOverview() && e.target.closest?.('[data-code], .park-cell')) return;
     parkYardView.drag = { x: e.clientX, y: e.clientY };
+    document.getElementById('yardPlanStage')?.classList.remove('is-animating');
     root.classList.add('is-dragging');
   });
   window.addEventListener('mousemove', (e) => {
@@ -2010,7 +2339,7 @@ function initParkYardViewer() {
     parkYardView.ty += e.clientY - parkYardView.drag.y;
     parkYardView.drag.x = e.clientX;
     parkYardView.drag.y = e.clientY;
-    applyParkYardTransform();
+    applyParkYardTransform(false);
   });
   window.addEventListener('mouseup', () => {
     parkYardView.drag = null;
@@ -2019,6 +2348,8 @@ function initParkYardViewer() {
 }
 
 window.renderParkYard = renderParkYard;
+window.toggleYardSatellite = toggleYardSatellite;
+window.parkYardGoBack = parkYardGoBack;
 window.ensureParkPlanLoaded = ensureParkPlanLoaded;
 window.openParkEditor = openParkEditor;
 window.initParkEditor = initParkEditor;

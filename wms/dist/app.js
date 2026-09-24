@@ -28,6 +28,7 @@ const NAV = [
   { group: '系统', items: [
     { id: 'integration', label: '对外对接', icon: '⛓' },
     { id: 'audit', label: '操作日志', icon: '≡' },
+    { id: 'progress', label: '开发进度跟踪', icon: '▤' },
   ]},
 ];
 
@@ -51,6 +52,7 @@ const PAGE_TITLE = {
   ocr: 'OCR 单据识别',
   integration: '系统对外对接',
   audit: '操作日志',
+  progress: '系统 / 开发进度跟踪',
 };
 
 const ROLE_MAP = {
@@ -354,6 +356,7 @@ function go(pageId) {
   if (pageId === 'bonded') renderBondedTable();
   if (pageId === 'inbound') renderInboundTable();
   if (pageId === 'transfer') renderTransferTable();
+  if (pageId === 'stocktake') renderStocktakeTable();
   if (pageId === 'materials') {
     renderMaterialTable();
     renderSourceFilingTable();
@@ -367,6 +370,8 @@ function go(pageId) {
   }
   if (pageId === 'alert') renderAlertPage();
   if (pageId === 'inventory') applyPendingInventoryTicket();
+  if (pageId === 'production') renderProdOpsTable();
+  if (pageId === 'progress' && typeof renderProgressPage === 'function') renderProgressPage();
   renderAnnoPins();
   highlightActiveAnnoPin();
 }
@@ -614,9 +619,15 @@ const TRANSFER_LOTS = [
   { stack: '1#A1', customs: 'BG20260728041', prod: '', material: '原料物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 120, ship: '远航号', containers: '8' },
   { stack: '1#A1', customs: 'BG20260801088', prod: '', material: '原料物料-A', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', weight: 200, ship: '海洋之星', containers: '12' },
   { stack: '1#A2', customs: 'BG20260801022', prod: '', material: '原料物料-B', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 330, ship: '海豚号', containers: '' },
+  { stack: '1#B1', customs: 'BG20260612018', prod: '', material: '原料物料-A', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', weight: 180, ship: '南航号', containers: '' },
   { stack: '2#A1', customs: 'BG20260715033', prod: '', material: '原料物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 40, ship: '金海轮', containers: '' },
+  { stack: '2#A2', customs: 'BG20260508007', prod: '', material: '原料物料-B', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', weight: 620, ship: '刚果航', containers: '' },
   { stack: '4#A1', customs: '', prod: 'FL-20260803', material: '成品物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 180, ship: '—', containers: '' },
+  { stack: '5#小A', customs: 'BG20260428016', prod: '', material: '原料物料-C', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', weight: 252, ship: '澳洲轮', containers: '' },
+  { stack: '5#大A前', customs: 'BG20250120014', prod: '', material: '原料物料-C', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', weight: 410, ship: '智利轮', containers: '' },
+  { stack: '6#A1', customs: 'BG20260301009', prod: '', material: '原料物料-A', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', weight: 88, ship: '金川轮', containers: '4' },
   { stack: '码头#A1', customs: 'BG20260725088', prod: '', material: '原料物料-D', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', weight: 1920, ship: '远洋号', containers: '' },
+  { stack: '码头#A2', customs: 'BG20260801055', prod: '', material: '原料物料-D', consignor: '广西南国铜业有限责任公司', consignorShort: '南国铜业', weight: 720, ship: '秘鲁轮', containers: '' },
 ];
 
 let TRANSFER_LIST = [
@@ -664,6 +675,10 @@ function fillHourSelect(id, def) {
   if (def != null) el.value = String(def);
 }
 
+function transferWarehouseNo(code) {
+  return String(code || '').split('#')[0] || '';
+}
+
 function fillTransferStackSelects() {
   const opts = (typeof allStackOptions === 'function'
     ? allStackOptions()
@@ -680,10 +695,8 @@ function fillTransferStackSelects() {
   const fromHtml = fromStacks.map((c) => `<option value="${c}">${c}</option>`).join('');
   const tfFrom = document.getElementById('tfFromStack');
   const tfTo = document.getElementById('tfToStack');
-  const batchFrom = document.getElementById('batchFromStack');
   if (tfFrom) tfFrom.innerHTML = '<option value="">请选择原堆位</option>' + fromHtml;
   if (tfTo) tfTo.innerHTML = html || fromHtml;
-  if (batchFrom) batchFrom.innerHTML = fromHtml;
 }
 
 function onTransferFromStackChange() {
@@ -702,17 +715,30 @@ function onTransferFromStackChange() {
 
 function onTransferBatchChange() {
   const lot = findTransferLot(document.getElementById('tfBatch')?.value || '');
-  const set = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = val ?? '';
-  };
-  set('tfConsignor', lot?.consignor || '');
-  set('tfCustoms', lot?.customs || '—');
-  set('tfProd', lot?.prod || '—');
-  set('tfMaterial', lot?.material || '');
-  set('tfShip', lot?.ship === '—' ? '' : (lot?.ship || ''));
-  set('tfContainers', lot?.containers || '');
-  set('tfWeight', lot?.weight != null ? String(lot.weight) : '');
+  const body = document.getElementById('tfLotTableBody');
+  const dash = (v) => (v && v !== '—' ? v : '—');
+  if (body) {
+    if (!lot) {
+      body.innerHTML = '<tr><td colspan="6" style="color:var(--text-2);text-align:center">请先选择矿批次</td></tr>';
+    } else {
+      body.innerHTML = `<tr>
+        <td>${xmlEscape(lot.consignor || '—')}</td>
+        <td>${xmlEscape(dash(lot.customs))}</td>
+        <td>${xmlEscape(dash(lot.prod))}</td>
+        <td>${xmlEscape(lot.material || '—')}</td>
+        <td>${xmlEscape(dash(lot.ship))}</td>
+        <td>${xmlEscape(dash(lot.containers))}</td>
+      </tr>`;
+    }
+  }
+  const weightEl = document.getElementById('tfWeight');
+  if (weightEl) weightEl.value = lot?.weight != null ? String(lot.weight) : '';
+}
+
+function transferRecordDates(r) {
+  const start = String(r.timeFrom || '').slice(0, 10);
+  const end = String(r.timeTo || '').slice(0, 10) || start;
+  return { start, end };
 }
 
 function renderTransferTable() {
@@ -720,9 +746,14 @@ function renderTransferTable() {
   if (!tbody) return;
   const consignor = document.getElementById('transferConsignorFilter')?.value || '';
   const scene = document.getElementById('transferSceneFilter')?.value || '';
+  const from = document.getElementById('transferTimeFrom')?.value || '';
+  const to = document.getElementById('transferTimeTo')?.value || '';
   const rows = TRANSFER_LIST.filter((r) => {
     if (consignor && r.consignor !== consignor) return false;
     if (scene && r.scene !== scene) return false;
+    const { start, end } = transferRecordDates(r);
+    if (from && end && end < from) return false;
+    if (to && start && start > to) return false;
     return true;
   });
   tbody.innerHTML = rows.map((r) => `
@@ -744,6 +775,18 @@ function renderTransferTable() {
   `).join('') || '<tr><td colspan="13" style="color:var(--text-2)">暂无移库单</td></tr>';
   const count = document.getElementById('transferTableCount');
   if (count) count.textContent = `共 ${rows.length} 条`;
+  return rows.length;
+}
+
+function applyTransferFilter() {
+  const from = document.getElementById('transferTimeFrom')?.value || '';
+  const to = document.getElementById('transferTimeTo')?.value || '';
+  if (from && to && from > to) {
+    toast('开始日期不能晚于结束日期', 'warn');
+    return;
+  }
+  const n = renderTransferTable();
+  toast(n ? `已查询，共 ${n} 条` : '该条件下暂无移库单', n ? 'ok' : 'warn');
 }
 
 function nextTransferId() {
@@ -794,14 +837,14 @@ function saveTransfer() {
   const lot = findTransferLot(lotKey);
   TRANSFER_LIST.unshift({
     id: nextTransferId(),
-    consignor: lot?.consignor || document.getElementById('tfConsignor')?.value || '',
+    consignor: lot?.consignor || '',
     consignorShort: lot?.consignorShort || '',
     scene: document.getElementById('transferScene')?.value || '整票移位',
     customs: lot?.customs || '—',
     prod: lot?.prod || '—',
     material: lot?.material || '',
-    ship: document.getElementById('tfShip')?.value?.trim() || '—',
-    containers: document.getElementById('tfContainers')?.value?.trim() || '—',
+    ship: lot?.ship && lot.ship !== '—' ? lot.ship : '—',
+    containers: lot?.containers || '—',
     weight: Number(weight) || 0,
     from,
     to,
@@ -816,38 +859,126 @@ function saveTransfer() {
 
 function openBatchTransferModal() {
   fillTransferStackSelects();
-  const sel = document.getElementById('batchFromStack');
-  if (sel && !sel.value) sel.value = '1#A1';
+  fillBatchTransferFilters();
   renderBatchTransferLots();
   openModal('modalBatchTransfer');
 }
 
+function fillBatchTransferFilters() {
+  const whSel = document.getElementById('batchWhFilter');
+  if (whSel) {
+    const defs = typeof WAREHOUSE_DEFS !== 'undefined'
+      ? WAREHOUSE_DEFS
+      : [...new Set(TRANSFER_LOTS.map((l) => transferWarehouseNo(l.stack)))].map((no) => ({ no }));
+    const prev = whSel.value;
+    whSel.innerHTML = '<option value="">全部仓库</option>' + defs.map((d) => {
+      const no = String(d.no);
+      const label = typeof whLabel === 'function' ? whLabel(d.no) : (no === '码头' ? '码头仓库' : `${no}仓`);
+      return `<option value="${no}">${label}</option>`;
+    }).join('');
+    if (prev && [...whSel.options].some((o) => o.value === prev)) whSel.value = prev;
+  }
+  const consSel = document.getElementById('batchConsignorFilter');
+  if (consSel) {
+    const prev = consSel.value;
+    const names = [...new Set(TRANSFER_LOTS.map((l) => l.consignor).filter(Boolean))];
+    consSel.innerHTML = '<option value="">全部委托方</option>' + names.map((n) => {
+      const short = TRANSFER_LOTS.find((l) => l.consignor === n)?.consignorShort || n;
+      return `<option value="${n}">${short}</option>`;
+    }).join('');
+    if (prev && [...consSel.options].some((o) => o.value === prev)) consSel.value = prev;
+  }
+  const kw = document.getElementById('batchKwFilter');
+  if (kw && !kw.dataset.bound) {
+    kw.dataset.bound = '1';
+    kw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        renderBatchTransferLots();
+      }
+    });
+  }
+  fillBatchStackFilter();
+}
+
+function fillBatchStackFilter() {
+  const sel = document.getElementById('batchStackFilter');
+  if (!sel) return;
+  const wh = document.getElementById('batchWhFilter')?.value || '';
+  const prev = sel.value;
+  const stacks = [...new Set(TRANSFER_LOTS
+    .filter((l) => !wh || transferWarehouseNo(l.stack) === wh)
+    .map((l) => l.stack))];
+  sel.innerHTML = '<option value="">全部堆位</option>' + stacks.map((c) => `<option value="${c}">${c}</option>`).join('');
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  else sel.value = '';
+}
+
+function onBatchWhFilterChange() {
+  fillBatchStackFilter();
+}
+
+function resetBatchTransferFilters() {
+  const wh = document.getElementById('batchWhFilter');
+  const cons = document.getElementById('batchConsignorFilter');
+  const kw = document.getElementById('batchKwFilter');
+  if (wh) wh.value = '';
+  if (cons) cons.value = '';
+  if (kw) kw.value = '';
+  fillBatchStackFilter();
+  renderBatchTransferLots();
+}
+
+function filterBatchTransferLots() {
+  const wh = document.getElementById('batchWhFilter')?.value || '';
+  const stack = document.getElementById('batchStackFilter')?.value || '';
+  const consignor = document.getElementById('batchConsignorFilter')?.value || '';
+  const kw = (document.getElementById('batchKwFilter')?.value || '').trim().toLowerCase();
+  return TRANSFER_LOTS.filter((l) => {
+    if (wh && transferWarehouseNo(l.stack) !== wh) return false;
+    if (stack && l.stack !== stack) return false;
+    if (consignor && l.consignor !== consignor) return false;
+    if (kw) {
+      const hay = `${l.stack} ${l.customs || ''} ${l.prod || ''} ${l.material || ''} ${l.ship || ''} ${l.consignor || ''} ${l.consignorShort || ''}`.toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+}
+
+function batchTargetOptions(fromStack) {
+  const opts = (typeof allStackOptions === 'function' ? allStackOptions() : TRANSFER_LOTS.map((l) => ({ code: l.stack })));
+  const seen = new Set();
+  return opts.map((s) => s.code || s.stack || s).filter((c) => {
+    if (!c || c === fromStack || seen.has(c)) return false;
+    seen.add(c);
+    return true;
+  }).map((c) => `<option>${c}</option>`).join('');
+}
+
 function renderBatchTransferLots() {
-  const stack = document.getElementById('batchFromStack')?.value || '';
   const tbody = document.getElementById('batchTransferBody');
   if (!tbody) return;
-  const lots = lotsOnTransferStack(stack);
-  const toOpts = (typeof allStackOptions === 'function' ? allStackOptions() : TRANSFER_LOTS)
-    .map((s) => s.code || s.stack)
-    .filter((c, i, arr) => c && c !== stack && arr.indexOf(c) === i)
-    .slice(0, 8)
-    .map((c) => `<option>${c}</option>`)
-    .join('');
+  const lots = filterBatchTransferLots();
   tbody.innerHTML = lots.length
-    ? lots.map((l, i) => `
+    ? lots.map((l) => `
       <tr data-lot-key="${transferLotKey(l)}">
-        <td><input type="checkbox" class="batch-transfer-check" ${i < 2 ? 'checked' : ''} onchange="updateBatchTransferCount()" /></td>
-        <td>${l.customs || '—'}</td>
-        <td>${l.prod || '—'}</td>
-        <td>${l.material}</td>
-        <td>${l.ship || '—'}</td>
-        <td>${l.containers || '—'}</td>
+        <td><input type="checkbox" class="batch-transfer-check" onchange="updateBatchTransferCount()" /></td>
+        <td>${xmlEscape(l.stack)}</td>
+        <td>${xmlEscape(l.customs || '—')}</td>
+        <td>${xmlEscape(l.prod || '—')}</td>
+        <td>${xmlEscape(l.material || '—')}</td>
+        <td>${xmlEscape(l.consignorShort || l.consignor || '—')}</td>
+        <td>${xmlEscape(l.ship && l.ship !== '—' ? l.ship : '—')}</td>
+        <td>${xmlEscape(l.containers || '—')}</td>
         <td>${l.weight} 吨</td>
-        <td><select class="select batch-to">${toOpts}</select></td>
+        <td><select class="select batch-to">${batchTargetOptions(l.stack)}</select></td>
         <td><select class="select batch-scene"><option>整票移位</option><option>拆票移位</option></select></td>
       </tr>`)
       .join('')
-    : '<tr><td colspan="9" style="color:var(--text-2)">该堆位暂无可移批次</td></tr>';
+    : '<tr><td colspan="11" style="color:var(--text-2);text-align:center">无匹配可移批次</td></tr>';
+  const hint = document.getElementById('batchTransferResultHint');
+  if (hint) hint.textContent = `共 ${lots.length} 票可移`;
   updateBatchTransferCount();
 }
 
@@ -876,7 +1007,6 @@ function saveBatchTransfer() {
     toast('请至少勾选一票矿批次', 'warn');
     return;
   }
-  const from = document.getElementById('batchFromStack')?.value || '';
   const today = typeof wmsDemoToday === 'function' ? wmsDemoToday() : '2026-08-03';
   selected.forEach((cb) => {
     const tr = cb.closest('tr');
@@ -886,14 +1016,14 @@ function saveBatchTransfer() {
       id: nextTransferId(),
       consignor: lot.consignor,
       consignorShort: lot.consignorShort,
-      scene: '批量移库',
+      scene: tr.querySelector('.batch-scene')?.value || '批量移库',
       customs: lot.customs || '—',
       prod: lot.prod || '—',
       material: lot.material,
       ship: lot.ship || '—',
       containers: lot.containers || '—',
       weight: lot.weight,
-      from,
+      from: lot.stack,
       to: tr.querySelector('.batch-to')?.value || '',
       timeFrom: `${today}T15`,
       timeTo: `${today}T16`,
@@ -905,7 +1035,78 @@ function saveBatchTransfer() {
   toast(`批量移库已提交，生成 ${selected.length} 条记录`, 'ok');
 }
 
-/* ===== 原料投料出库 · 列表筛选 ===== */
+/* ===== 投料出库 / 加工过程 · 合并列表 ===== */
+const PROD_OPS_LIST = [
+  { type: '加工过程', no: 'JG-20260803-02', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', batch: 'FL-20260803', customs: 'BG20260728041 等 3 票', outCustoms: '—', kind: '混矿筛分', qty: '08:00–12:00', stack: '1#A1 / 1#A2 / 2#A1', wo: 'WO-20260803-01', at: '2026-08-03 12:00' },
+  { type: '投料出库', no: 'TL-20260803-004', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', batch: 'FL-20260803', customs: 'BG20260728041', outCustoms: 'BGCKTL2026080301', kind: '达标矿', qty: '2,800 / 80 干吨', stack: '1#A1', wo: 'WO-20260803-01', at: '2026-08-03 07:30' },
+  { type: '投料出库', no: 'TL-20260803-004', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', batch: 'FL-20260803', customs: 'BG20260801022', outCustoms: 'BGCKTL2026080301', kind: '报备矿', qty: '1,695 / 70 干吨', stack: '1#A2', wo: 'WO-20260803-01', at: '2026-08-03 07:30' },
+  { type: '投料出库', no: 'TL-20260803-004', consignor: '广西金川有色金属有限公司', consignorShort: '广西金川', batch: 'FL-20260803', customs: 'BG20260715033', outCustoms: 'BGCKTL2026080301', kind: '达标矿', qty: '1,000 / 50 干吨', stack: '2#A1', wo: 'WO-20260803-01', at: '2026-08-03 07:30' },
+  { type: '加工过程', no: 'JG-20260802-01', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', batch: 'FL-20260802', customs: 'BG20260801088', outCustoms: '—', kind: '破碎筛分', qty: '09:00–16:00', stack: '5#小A', wo: 'WO-20260802-01', at: '2026-08-02 16:00' },
+  { type: '投料出库', no: 'TL-20260802-001', consignor: '五矿有色金属股份有限公司', consignorShort: '五矿有色', batch: 'FL-20260802', customs: 'BG20260801088', outCustoms: 'BGCKTL2026080201', kind: '达标矿', qty: '1,200 / 90 干吨', stack: '5#小A', wo: 'WO-20260802-01', at: '2026-08-02 08:20' },
+];
+
+function prodOpsKindHtml(r) {
+  if (r.type === '投料出库') return cargoTypeTagHtml(r.kind);
+  return `<span class="tag tag-gray">${xmlEscape(r.kind)}</span>`;
+}
+
+function renderProdOpsTable() {
+  const tbody = document.getElementById('prodOpsTableBody');
+  if (!tbody) return 0;
+  const consignor = document.getElementById('prodOpsConsignorFilter')?.value || '';
+  const from = document.getElementById('prodOpsTimeFrom')?.value || '';
+  const to = document.getElementById('prodOpsTimeTo')?.value || '';
+  const rows = PROD_OPS_LIST.filter((r) => {
+    if (consignor && r.consignor !== consignor) return false;
+    const day = String(r.at || '').slice(0, 10);
+    if (from && day && day < from) return false;
+    if (to && day && day > to) return false;
+    return true;
+  });
+  tbody.innerHTML = rows.map((r) => {
+    const typeCls = r.type === '加工过程' ? 'tag-blue' : 'tag-green';
+    return `<tr>
+      <td><span class="tag ${typeCls}">${xmlEscape(r.type)}</span></td>
+      <td>${xmlEscape(r.no)}</td>
+      <td><span class="tag tag-purple" title="${xmlEscape(r.consignor)}">${xmlEscape(r.consignorShort)}</span></td>
+      <td>${xmlEscape(r.batch)}</td>
+      <td>${xmlEscape(r.customs)}</td>
+      <td>${xmlEscape(r.outCustoms)}</td>
+      <td>${prodOpsKindHtml(r)}</td>
+      <td>${xmlEscape(r.qty)}</td>
+      <td><strong>${xmlEscape(r.stack)}</strong></td>
+      <td>${xmlEscape(r.wo)}</td>
+      <td>${xmlEscape(r.at)}</td>
+      <td class="ops"><button class="btn-text" onclick="openModal('modalProdDetail')">详情</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="12" style="color:var(--text-2)">暂无投料或加工记录</td></tr>';
+  const count = document.getElementById('prodOpsTableCount');
+  if (count) count.textContent = `共 ${rows.length} 条`;
+  return rows.length;
+}
+
+function applyProdOpsFilter() {
+  const from = document.getElementById('prodOpsTimeFrom')?.value || '';
+  const to = document.getElementById('prodOpsTimeTo')?.value || '';
+  if (from && to && from > to) {
+    toast('开始日期不能晚于结束日期', 'warn');
+    return;
+  }
+  const n = renderProdOpsTable();
+  toast(n ? `已查询，共 ${n} 条` : '该条件下暂无投料或加工记录', n ? 'ok' : 'warn');
+}
+
+function openProcessModal() {
+  populateConsignorSelects();
+  openModal('modalProcess');
+}
+
+function saveProcessModal() {
+  saveAndClose('modalProcess');
+  toast('加工过程已登记，留痕见操作日志', 'ok');
+}
+
+/* ===== 原料投料出库 · 弹窗筛选 ===== */
 function cargoTypeTagHtml(type) {
   const cls = type === '报备矿' ? 'tag-orange' : 'tag-green';
   return `<span class="tag ${cls}">${type}</span>`;
@@ -1358,7 +1559,6 @@ function openInboundModal() {
     const containers = document.getElementById('ibContainers');
     if (containers) containers.value = '';
     onIbShipModeChange();
-    renderHarmfulFields('ibHarmfulFields', 'ib', {});
   };
   if (typeof ensureParkPlanLoaded === 'function') {
     Promise.resolve(ensureParkPlanLoaded()).then(afterPlan).catch(afterPlan);
@@ -1795,7 +1995,7 @@ function saveInbound() {
     stack: inboundPick.stackCode,
     shipMode,
     containers: shipMode === '集装箱' ? (document.getElementById('ibContainers')?.value || '') : '',
-    harmful: collectHarmfulFrom('ibHarmfulFields'),
+    harmful: {},
     status: docked ? '暂存码头' : '待收货',
   });
   renderInboundTable();
@@ -1864,6 +2064,121 @@ const FILING_LOTS = [
 
 let filingLotsViewCode = '';
 
+const FINISHED_PRODUCTS = {
+  'FL-20260803': {
+    prodBatch: 'FL-20260803',
+    finishNo: 'WG-20260803-01',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    consignorShort: '广西金川',
+    yieldDry: 180,
+    stack: '4#A1',
+    area: '待检区',
+    at: '2026-08-03 14时',
+    inventory: [{ stack: '4#A1', area: '待检区', dry: 180, status: '在库·查验中' }],
+    outbound: [],
+  },
+  'FL-20260802': {
+    prodBatch: 'FL-20260802',
+    finishNo: 'WG-20260802-01',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    consignorShort: '广西金川',
+    yieldDry: 180,
+    stack: '4#A2',
+    area: '成品区',
+    at: '2026-08-02 11时',
+    inventory: [{ stack: '4#A2', area: '成品区', dry: 180, status: '在库' }],
+    outbound: [],
+  },
+  'FL-20260728': {
+    prodBatch: 'FL-20260728',
+    finishNo: 'WG-20260728-01',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    consignorShort: '广西金川',
+    yieldDry: 220,
+    stack: '4#B1',
+    area: '成品区',
+    at: '2026-07-28 16时',
+    inventory: [{ stack: '4#B1', area: '成品区', dry: 220, status: '在库' }],
+    outbound: [],
+  },
+  'FL-20260801': {
+    prodBatch: 'FL-20260801',
+    finishNo: 'WG-20260801-01',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    consignorShort: '广西金川',
+    yieldDry: 240,
+    stack: '—',
+    area: '—',
+    at: '2026-08-01 09时',
+    inventory: [],
+    outbound: [
+      { no: 'CK-20260801-008', customs: 'BGCK2026080102', flowTo: '滨海贸易有限公司', dry: 240, at: '2026-08-01 15时', status: '已出库' },
+    ],
+  },
+  'FL-20250418': {
+    prodBatch: 'FL-20250418',
+    finishNo: 'WG-20250418-01',
+    material: '成品物料-A',
+    cargoType: '混成品',
+    consignorShort: '南国铜业',
+    yieldDry: 9800,
+    stack: '—',
+    area: '—',
+    at: '2025-04-22 16时',
+    inventory: [],
+    outbound: [
+      { no: 'CK-20250520-001', customs: 'BGCK2025052001', flowTo: '华东冶炼股份公司', dry: 9800, at: '2025-05-20 10时', status: '已出库' },
+    ],
+  },
+};
+
+const RAW_TO_FINISHED = {
+  BG20260728041: ['FL-20260803'],
+  'RK-20260802-018': ['FL-20260803'],
+  BG20260801022: ['FL-20260803'],
+  BG20260715033: ['FL-20260803'],
+  BG20260512009: ['FL-20260801'],
+  BG20250418031: ['FL-20250418'],
+};
+
+function finishedBatchNosForRaw(customsOrKey) {
+  return RAW_TO_FINISHED[customsOrKey] || [];
+}
+
+function prodBatchesOfFiling(code) {
+  const set = new Set();
+  lotsOfFiling(code).forEach((lot) => {
+    finishedBatchNosForRaw(lot.customs).forEach((b) => set.add(b));
+  });
+  return [...set];
+}
+
+function formatProdBatchNos(list) {
+  return list.length ? list.join('、') : '—';
+}
+
+function finishedProductsForLot(lot, key) {
+  if (lot.category === '成品') {
+    const self = FINISHED_PRODUCTS[lot.prodBatch];
+    return self ? [self] : [];
+  }
+  const batches = new Set([
+    ...finishedBatchNosForRaw(key),
+    ...finishedBatchNosForRaw(lot.customs),
+  ]);
+  return [...batches].map((b) => FINISHED_PRODUCTS[b]).filter(Boolean);
+}
+
+function productInvStatusTag(status) {
+  if (status === '已出库') return '<span class="tag tag-gray">已出库</span>';
+  if (String(status).includes('查验')) return `<span class="tag tag-orange">${status}</span>`;
+  return `<span class="tag tag-green">${status || '在库'}</span>`;
+}
+
 const HARMFUL5 = [
   { code: 'As', name: '砷' },
   { code: 'Pb', name: '铅' },
@@ -1876,23 +2191,6 @@ function formatHarmful5(h) {
   if (!h) return '—';
   const parts = HARMFUL5.map((p) => (h[p.code] ? `${p.code}${h[p.code]}` : '')).filter(Boolean);
   return parts.length ? parts.join('；') : '—';
-}
-
-function renderHarmfulFields(containerId, prefix, values = {}) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  el.innerHTML = HARMFUL5.map((p) => `
-    <div class="form-group"><label>${p.name}(${p.code})</label>
-      <input class="input" id="${prefix}H_${p.code}" data-h-code="${p.code}" value="${values[p.code] || ''}" placeholder="如 0.12%" />
-    </div>`).join('');
-}
-
-function collectHarmfulFrom(containerId) {
-  const values = {};
-  document.querySelectorAll(`#${containerId} [data-h-code]`).forEach((input) => {
-    if (input.dataset.hCode && input.value.trim()) values[input.dataset.hCode] = input.value.trim();
-  });
-  return values;
 }
 
 function inboundStatusTag(status) {
@@ -2350,11 +2648,39 @@ function saveSysParams() {
   toast('系统参数已保存', 'ok');
 }
 
+function fillSourceFilingSourceFilter() {
+  const sel = document.getElementById('sfFilterSource');
+  if (!sel) return;
+  const prev = sel.value;
+  const sources = [...new Set(loadSourceFilings().map((f) => f.source))];
+  sel.innerHTML = '<option value="">全部矿源</option>' + sources.map((s) => `<option value="${s}">${s}</option>`).join('');
+  if (prev && sources.includes(prev)) sel.value = prev;
+}
+
+function filteredSourceFilings() {
+  fillSourceFilingSourceFilter();
+  const source = document.getElementById('sfFilterSource')?.value || '';
+  const code = document.getElementById('sfFilterCode')?.value?.trim().toLowerCase() || '';
+  const status = document.getElementById('sfFilterStatus')?.value || '';
+  const from = document.getElementById('sfFilterTimeFrom')?.value || '';
+  const to = document.getElementById('sfFilterTimeTo')?.value || '';
+  return loadSourceFilings().filter((f) => {
+    if (source && f.source !== source) return false;
+    if (code && !String(f.code).toLowerCase().includes(code)) return false;
+    if (status && filingStatusMeta(f).label !== status) return false;
+    const day = String(f.date || '').slice(0, 10);
+    if (from && day && day < from) return false;
+    if (to && day && day > to) return false;
+    return true;
+  });
+}
+
 function renderSourceFilingTable() {
   const tbody = document.getElementById('sourceFilingTableBody');
-  if (!tbody) return;
+  if (!tbody) return 0;
   const threshold = loadSysParams().filingUsageAlertPct;
-  tbody.innerHTML = loadSourceFilings().map((f) => {
+  const list = filteredSourceFilings();
+  tbody.innerHTML = list.map((f) => {
     const rem = filingRemaining(f);
     const pct = filingUsagePct(f);
     const st = filingStatusMeta(f);
@@ -2377,7 +2703,26 @@ function renderSourceFilingTable() {
         <button class="btn-text" onclick="openMaterialAttachmentsModal('${f.code}')">查看附件</button>
       </td>
     </tr>`;
-  }).join('');
+  }).join('') || '<tr><td colspan="11" style="color:var(--text-2)">暂无矿源备案</td></tr>';
+  const count = document.getElementById('sourceFilingTableCount');
+  if (count) {
+    const sources = new Set(list.map((f) => f.source)).size;
+    count.textContent = list.length
+      ? `共 ${list.length} 条备案（${sources} 个矿源）`
+      : '共 0 条备案';
+  }
+  return list.length;
+}
+
+function applySourceFilingFilter() {
+  const from = document.getElementById('sfFilterTimeFrom')?.value || '';
+  const to = document.getElementById('sfFilterTimeTo')?.value || '';
+  if (from && to && from > to) {
+    toast('开始日期不能晚于结束日期', 'warn');
+    return;
+  }
+  const n = renderSourceFilingTable();
+  toast(n ? `已查询，共 ${n} 条` : '该条件下暂无矿源备案', n ? 'ok' : 'warn');
 }
 
 function lotsOfFiling(code) {
@@ -2407,6 +2752,7 @@ function openFilingLotsModal(code) {
       ? lots.map((lot) => `
         <tr>
           <td><button type="button" class="btn-text" onclick="closeModal('modalFilingLots');openLotDocs('${lot.customs}')">${lot.customs}</button></td>
+          <td>${formatProdBatchNos(finishedBatchNosForRaw(lot.customs))}</td>
           <td><span class="tag tag-purple" title="${lot.consignor}">${lot.consignorShort}</span></td>
           <td>${lot.material}</td>
           <td><span class="tag tag-orange">${lot.cargoType}</span></td>
@@ -2417,13 +2763,13 @@ function openFilingLotsModal(code) {
           <td>${lotStatusTag(lot.status)}</td>
           <td class="ops"><button type="button" class="btn-text" onclick="closeModal('modalFilingLots');openLotDocs('${lot.customs}')">详情</button></td>
         </tr>`).join('')
-      : '<tr><td colspan="10" style="color:var(--text-2)">该备案下暂无票货</td></tr>';
+      : '<tr><td colspan="11" style="color:var(--text-2)">该备案下暂无票货</td></tr>';
   }
   openModal('modalFilingLots');
 }
 
 function exportSourceFilingsExcel() {
-  const list = loadSourceFilings();
+  const list = filteredSourceFilings();
   if (!list.length) {
     toast('暂无矿源备案可导出', 'warn');
     return;
@@ -2432,7 +2778,7 @@ function exportSourceFilingsExcel() {
   downloadExcel(
     `矿源备案_${new Date().toISOString().slice(0, 10)}.xls`,
     '矿源备案',
-    ['矿源', '备案原产国', '矿源备案编号', '备案日期', '状态', '备案数量(DMT)', '核销吨数', '剩余吨数', '用量%'],
+    ['矿源', '备案原产国', '矿源备案编号', '备案日期', '状态', '备案数量(DMT)', '核销吨数', '剩余吨数', '用量%', '生产批次号'],
     list.map((f) => {
       const rem = filingRemaining(f);
       const pct = filingUsagePct(f);
@@ -2440,6 +2786,7 @@ function exportSourceFilingsExcel() {
       return [
         f.source, f.country, f.code, f.date, st.label,
         f.quotaDmt, f.usedDmt, rem, `${pct.toFixed(2)}%${pct >= threshold ? '（预警）' : ''}`,
+        formatProdBatchNos(prodBatchesOfFiling(f.code)),
       ];
     }),
   );
@@ -2460,9 +2807,9 @@ function exportFilingLotsExcel() {
   downloadExcel(
     `矿源备案票货_${code}.xls`,
     '备案票货',
-    ['矿源备案编号', '报关单号', '委托方', '物料', '货物类型', '堆位', '湿重', '干重(DMT)', '入库时间', '状态'],
+    ['矿源备案编号', '报关单号', '生产批次号', '委托方', '物料', '货物类型', '堆位', '湿重', '干重(DMT)', '入库时间', '状态'],
     lots.map((lot) => [
-      lot.filing, lot.customs, lot.consignor, lot.material, lot.cargoType,
+      lot.filing, lot.customs, formatProdBatchNos(finishedBatchNosForRaw(lot.customs)), lot.consignor, lot.material, lot.cargoType,
       lot.stack, lot.wet, lot.dry, lot.inAt, lot.status,
     ]),
   );
@@ -2471,20 +2818,21 @@ function exportFilingLotsExcel() {
 
 function openSourceFilingModal(code) {
   const f = getSourceFiling(code);
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
   if (!f) {
     const draftCode = document.getElementById('sfCode')?.value?.trim() || '';
     matAttachState.code = draftCode;
     renderMatAttachmentLists(draftCode);
+    set('sfProdBatches', '—');
     openModal('modalSourceFiling');
     return;
   }
   const st = filingStatusMeta(f);
   const rem = filingRemaining(f);
   const pct = filingUsagePct(f);
-  const set = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = val;
-  };
   set('sfCountry', f.country);
   set('sfCode', f.code);
   set('sfDate', f.date);
@@ -2493,6 +2841,7 @@ function openSourceFilingModal(code) {
   set('sfUsed', f.usedDmt.toFixed(2));
   set('sfRemaining', rem.toFixed(2));
   set('sfUsage', `${pct.toFixed(2)}%`);
+  set('sfProdBatches', formatProdBatchNos(prodBatchesOfFiling(f.code)));
   const srcSel = document.getElementById('sfSource');
   if (srcSel) {
     const opt = Array.from(srcSel.options).find((o) => o.text === f.source);
@@ -2520,7 +2869,6 @@ function openReceiveModal(orderId) {
   set('rcShipMode', listRow?.shipMode || '散货');
   set('rcContainers', listRow?.containers || '');
   onRcShipModeChange();
-  renderHarmfulFields('rcHarmfulFields', 'rc', listRow?.harmful || {});
   set('rcWet', '');
   set('rcDry', order.defaultDry || '');
   set('rcQualityNo', '');
@@ -3022,37 +3370,194 @@ function resetLotDocsTabs(finished) {
   if (!root) return;
   const weightTab = root.querySelector('[data-tab="weight"]');
   const customsTab = root.querySelector('[data-tab="customs"]');
+  const productTab = root.querySelector('[data-tab="product"]');
   if (weightTab) weightTab.style.display = finished ? 'none' : '';
   if (customsTab) customsTab.textContent = finished ? '出库报关单' : '报关单';
+  if (productTab) productTab.style.display = '';
   root.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === 'customs'));
-  ['customs', 'weight', 'quality'].forEach((k) => {
+  ['customs', 'weight', 'quality', 'product'].forEach((k) => {
     const panel = document.getElementById(`lot-docs-${k}`);
     if (panel) panel.style.display = k === 'customs' ? '' : 'none';
   });
 }
 
+function syntheticFilingLotDocs(fl) {
+  return {
+    title: `本票详情 · ${fl.customs}`,
+    inboundNo: '—',
+    customs: fl.customs,
+    prodBatch: formatProdBatchNos(finishedBatchNosForRaw(fl.customs)),
+    consignor: fl.consignor,
+    consignorShort: fl.consignorShort,
+    material: fl.material,
+    cargoType: fl.cargoType,
+    category: '原料',
+    stack: fl.stack,
+    wet: String(fl.wet),
+    dry: String(fl.dry),
+    customsDoc: {
+      name: `进口货物报关单 ${fl.customs}.pdf`,
+      fields: [
+        ['报关单号', fl.customs],
+        ['矿源备案号', fl.filing],
+        ['境内收货人', fl.consignor],
+      ],
+    },
+    weightDoc: {
+      name: `重量证书 ${fl.customs}.pdf`,
+      no: fl.customs,
+      fields: [
+        ['湿重', `${fl.wet} 吨`],
+        ['干重', `${fl.dry} 吨`],
+      ],
+    },
+    qualityDoc: {
+      name: `品质检验证书 ${fl.customs}.pdf`,
+      no: fl.customs,
+      fields: [['物料', fl.material]],
+      elements: {},
+    },
+  };
+}
+
+function resolveLotDocs(key) {
+  if (!key) return null;
+  if (LOT_DOCS[key]) return { key, lot: LOT_DOCS[key] };
+  const found = Object.entries(LOT_DOCS).find(([, lot]) => lot.customs === key && lot.customs !== '—');
+  if (found) return { key: found[0], lot: found[1] };
+  const fl = FILING_LOTS.find((l) => l.customs === key);
+  if (fl) return { key, lot: syntheticFilingLotDocs(fl) };
+  const fp = FINISHED_PRODUCTS[key];
+  if (fp) {
+    const out = fp.outbound?.[0];
+    return {
+      key,
+      lot: {
+        title: `本票详情 · 生产批次 ${fp.prodBatch}`,
+        inboundNo: fp.finishNo,
+        customs: out?.customs || '—',
+        prodBatch: fp.prodBatch,
+        consignor: fp.consignorShort,
+        consignorShort: fp.consignorShort,
+        material: fp.material,
+        cargoType: fp.cargoType,
+        category: '成品',
+        stack: fp.stack,
+        wet: '—',
+        dry: String(fp.yieldDry),
+        outbound: !!out,
+        flowTo: out?.flowTo || '',
+        customsDoc: {
+          name: out ? `出口货物报关单 ${out.customs}.pdf` : '—',
+          pending: !out,
+          fields: [
+            ['出库报关单号', out?.customs || '—'],
+            ['流向企业', out?.flowTo || '—'],
+            ['生产批次', fp.prodBatch],
+          ],
+        },
+        weightDoc: {
+          name: `完工计量单 ${fp.finishNo}.pdf`,
+          no: fp.finishNo,
+          fields: [['产量干重', `${fp.yieldDry} 吨`], ['完工日期', fp.at]],
+        },
+        qualityDoc: {
+          name: `成品品质报告 QA-${fp.prodBatch}.pdf`,
+          no: `QA-${fp.prodBatch}`,
+          fields: [['物料', fp.material]],
+          elements: {},
+        },
+      },
+    };
+  }
+  return null;
+}
+
+function renderLotDocsProduct(lot, key) {
+  const products = finishedProductsForLot(lot, key);
+  const anno = document.getElementById('lotDocsProductAnno');
+  if (anno) {
+    anno.innerHTML = lot.category === '成品'
+      ? '<strong>成品</strong>本生产批次的产量、在库与出库。'
+      : products.length
+        ? '<strong>成品</strong>由本票原料投入生产得到；同一生产批次可能还混入其它报关单原料。'
+        : '<strong>成品</strong>该票原料尚未投入生产，暂无成品、库存与出库记录。';
+  }
+  const prodBody = document.getElementById('lotDocsProductBody');
+  const invBody = document.getElementById('lotDocsProductInvBody');
+  const outBody = document.getElementById('lotDocsProductOutBody');
+  if (prodBody) {
+    prodBody.innerHTML = products.length
+      ? products.map((p) => `
+        <tr>
+          <td><button type="button" class="btn-text" onclick="openLotDocs('${p.prodBatch}')">${p.prodBatch}</button></td>
+          <td>${p.finishNo}</td>
+          <td>${p.material}</td>
+          <td><span class="tag tag-purple">${p.cargoType}</span></td>
+          <td>${Number(p.yieldDry).toLocaleString('zh-CN')}</td>
+          <td>${p.stack}</td>
+          <td>${p.area}</td>
+          <td>${p.at}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="8" style="color:var(--text-2)">暂无成品信息</td></tr>';
+  }
+  const invRows = products.flatMap((p) => (p.inventory || []).map((row) => ({ ...row, prodBatch: p.prodBatch })));
+  if (invBody) {
+    invBody.innerHTML = invRows.length
+      ? invRows.map((row) => `
+        <tr>
+          <td>${row.prodBatch}</td>
+          <td>${row.stack}</td>
+          <td>${row.area}</td>
+          <td>${Number(row.dry).toLocaleString('zh-CN')}</td>
+          <td>${productInvStatusTag(row.status)}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="5" style="color:var(--text-2)">${products.length ? '无在库（已全部出库）' : '暂无库存信息'}</td></tr>`;
+  }
+  const outRows = products.flatMap((p) => (p.outbound || []).map((row) => ({ ...row, prodBatch: p.prodBatch })));
+  if (outBody) {
+    outBody.innerHTML = outRows.length
+      ? outRows.map((row) => `
+        <tr>
+          <td>${row.no}</td>
+          <td>${row.customs}</td>
+          <td>${row.prodBatch}</td>
+          <td>${row.flowTo}</td>
+          <td>${Number(row.dry).toLocaleString('zh-CN')}</td>
+          <td>${row.at}</td>
+          <td>${productInvStatusTag(row.status)}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="7" style="color:var(--text-2)">${products.length ? '尚未出库' : '暂无出库信息'}</td></tr>`;
+  }
+}
+
 function openLotDocs(key) {
-  const lot = LOT_DOCS[key];
-  if (!lot) {
+  const resolved = resolveLotDocs(key);
+  if (!resolved) {
     toast('未找到本票单证', 'warn');
     return;
   }
-  lotDocsCurrentKey = key;
+  const lot = resolved.lot;
+  lotDocsCurrentKey = resolved.key;
   const finished = lot.category === '成品';
   const titleEl = document.getElementById('lotDocsTitle');
   if (titleEl) titleEl.textContent = lot.title;
+  const linkedBatches = formatProdBatchNos(finished ? [lot.prodBatch].filter((b) => b && b !== '—') : [
+    ...finishedBatchNosForRaw(resolved.key),
+    ...finishedBatchNosForRaw(lot.customs),
+  ].filter((v, i, arr) => arr.indexOf(v) === i));
   const anno = document.getElementById('lotDocsAnno');
   if (anno) {
     anno.innerHTML = finished
-      ? '<strong>成品</strong>详情仅展示<strong>出库报关单</strong>与<strong>品质证书</strong>；尚未出库时出库报关单为 —。'
-      : '上架后本票归档报关单、重量证书、品质证书；品质参数仅属于这一票货。';
+      ? '<strong>成品</strong>详情展示<strong>出库报关单</strong>与<strong>品质证书</strong>；「成品」页可查看本批次库存与出库。尚未出库时出库报关单为 —。'
+      : '上架后本票归档报关单、重量证书、品质证书；「成品」页展示本票原料投入后的成品、库存与出库。';
   }
   const stats = document.getElementById('lotDocsStats');
   if (stats) {
     const flow = lot.flowTo ? `<div class="sub">流向 ${lot.flowTo}</div>` : `<div class="sub">${lot.category}</div>`;
     stats.innerHTML = `
       <div class="stat-card"><div class="label">委托方</div><div class="value" style="font-size:14px">${lot.consignorShort}</div><div class="sub">${lot.material}</div></div>
-      <div class="stat-card"><div class="label">${finished ? '出库报关单 / 生产批次' : '报关单号 / 生产批次'}</div><div class="value" style="font-size:14px">${lot.customs}</div><div class="sub">${lot.prodBatch}</div></div>
+      <div class="stat-card"><div class="label">${finished ? '出库报关单 / 生产批次' : '报关单号 / 生产批次'}</div><div class="value" style="font-size:14px">${lot.customs}</div><div class="sub">${linkedBatches}</div></div>
       <div class="stat-card"><div class="label">湿重 / 干重</div><div class="value" style="font-size:14px">${lot.wet} / ${lot.dry}</div><div class="sub">吨 · ${lot.stack}</div></div>
       <div class="stat-card ok"><div class="label">货物类型</div><div class="value" style="font-size:14px">${lot.cargoType}</div>${flow}</div>`;
   }
@@ -3095,6 +3600,7 @@ function openLotDocs(key) {
       return `<div class="form-group"><label>${p.name}(${p.code})</label><input class="input" value="${val}" readonly /></div>`;
     }).join('');
   }
+  renderLotDocsProduct(lot, resolved.key);
   resetLotDocsTabs(finished);
   openModal('modalLotDocs');
 }
@@ -3169,8 +3675,10 @@ const LOT_LEDGERS = {
 };
 
 function openLedger(key) {
-  const resolved = key || lotDocsCurrentKey;
-  const lot = resolved ? LOT_DOCS[resolved] : null;
+  const resolvedKey = key || lotDocsCurrentKey;
+  const resolved = resolveLotDocs(resolvedKey);
+  const lot = resolved?.lot || null;
+  const ledgerKey = resolved?.key || resolvedKey;
   const titleEl = document.getElementById('ledgerTitle');
   const anno = document.getElementById('ledgerAnno');
   const stats = document.getElementById('ledgerStats');
@@ -3184,7 +3692,9 @@ function openLedger(key) {
       ? '<strong>成品台账</strong>出库流水记录<strong>流向企业</strong>；已出库后堆位为 —。'
       : '<strong>原料台账</strong>按报关单号记录入库、移库干湿重；出库时记录流向企业。';
   }
-  const rows = (resolved && LOT_LEDGERS[resolved]) || (lot ? defaultLedgerForLot(resolved, lot) : []);
+  const rows = LOT_LEDGERS[ledgerKey]
+    || (lot && LOT_LEDGERS[lot.customs])
+    || (lot ? defaultLedgerForLot(ledgerKey, lot) : []);
   if (stats && lot) {
     const last = rows[rows.length - 1];
     stats.innerHTML = `
@@ -3260,13 +3770,11 @@ function saveReceive() {
     return;
   }
   const inbound = typeof INBOUND_LIST !== 'undefined' ? INBOUND_LIST.find((r) => r.id === orderId) : null;
-  const harmful = collectHarmfulFrom('rcHarmfulFields');
   if (inbound) {
     inbound.status = '已入库';
     inbound.mineral = document.getElementById('rcMineral')?.value || inbound.mineral;
     inbound.shipMode = document.getElementById('rcShipMode')?.value || inbound.shipMode;
     inbound.containers = inbound.shipMode === '集装箱' ? (document.getElementById('rcContainers')?.value || '') : '';
-    inbound.harmful = Object.keys(harmful).length ? harmful : inbound.harmful;
     inbound.wetDry = `${wet} / ${dry}`;
     renderInboundTable();
   }
@@ -3326,7 +3834,7 @@ function bindTabs(containerSel, prefix) {
         if (id === 'floorplan' && typeof openParkEditor === 'function') openParkEditor();
       }
       if (prefix === 'prod-') {
-        ['feed', 'process', 'finish', 'ledger'].forEach((k) => {
+        ['feed', 'finish', 'ledger'].forEach((k) => {
           const p = document.getElementById('prod-' + k);
           if (p) p.style.display = k === id ? '' : 'none';
         });
@@ -3477,10 +3985,8 @@ function applyAuditFilter() {
 function toggleFilingFields() {
   const sel = document.getElementById('matCargoType');
   const show = sel && sel.value === '报备矿';
-  ['matSourceGroup', 'matSourceTitle'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = show ? '' : 'none';
-  });
+  const el = document.getElementById('matSourceGroup');
+  if (el) el.style.display = show ? '' : 'none';
 }
 
 function syncMatCargoByCategory() {
@@ -3680,6 +4186,321 @@ function exportStocktakeMonthOnhand() {
     sorted.map((r) => [ym, r.consignor, r.cargoType, r.stack, r.bl, r.customs, r.wet, r.dry]),
   );
   toast(`已导出 ${ym} 月末在库 ${sorted.length} 条`, 'ok');
+}
+
+let STOCKTAKE_LIST = [
+  { id: 'PD-20260802-003', range: '1#A1', rangeWh: [], rangeStacks: ['1#A1'], person: '仓管-赵', date: '2026-08-02', status: '已完成', attachments: [] },
+  { id: 'PD-20260730-001', range: '4#A2', rangeWh: [], rangeStacks: ['4#A2'], person: '仓管-钱', date: '2026-07-30', status: '已完成', attachments: [] },
+];
+
+let stocktakeModalMode = 'create';
+let stocktakeAttachDraft = [];
+let stocktakeViewingId = '';
+const stocktakeRange = { wh: new Set(), stacks: new Set() };
+
+function stocktakeWarehouseList() {
+  return (typeof WAREHOUSES !== 'undefined' && Array.isArray(WAREHOUSES)) ? WAREHOUSES : [];
+}
+
+function stocktakeAllStackCodes() {
+  return stocktakeWarehouseList().flatMap((w) => w.stacks.map((s) => s.code));
+}
+
+function syncStocktakeWhFromStacks() {
+  const next = new Set();
+  stocktakeWarehouseList().forEach((w) => {
+    const codes = w.stacks.map((s) => s.code);
+    if (codes.length && codes.every((c) => stocktakeRange.stacks.has(c))) next.add(w.id);
+  });
+  stocktakeRange.wh = next;
+}
+
+function formatStocktakeRangeLabel() {
+  const whs = stocktakeWarehouseList();
+  const allStacks = stocktakeAllStackCodes();
+  if (!stocktakeRange.stacks.size) return '未选择';
+  if (allStacks.length && stocktakeRange.stacks.size === allStacks.length) {
+    return stocktakeRange.wh.size === whs.length ? '全部仓库' : '全部堆位';
+  }
+  const fullWh = [];
+  const leftover = [];
+  whs.forEach((w) => {
+    const codes = w.stacks.map((s) => s.code);
+    if (codes.length && codes.every((c) => stocktakeRange.stacks.has(c))) fullWh.push(w.filter);
+    else leftover.push(...codes.filter((c) => stocktakeRange.stacks.has(c)));
+  });
+  const parts = [];
+  if (fullWh.length) parts.push(fullWh.join('、'));
+  if (leftover.length) parts.push(leftover.join('、'));
+  return parts.join('；') || '未选择';
+}
+
+function updateStocktakeRangeSummary() {
+  const el = document.getElementById('stRangeSummary');
+  if (!el) return;
+  const nWh = stocktakeRange.wh.size;
+  const nSt = stocktakeRange.stacks.size;
+  const label = formatStocktakeRangeLabel();
+  el.textContent = nSt ? `${label}（${nWh} 仓 · ${nSt} 堆位）` : '未选择';
+}
+
+function renderStocktakeRangeBox() {
+  const box = document.getElementById('stRangeBox');
+  if (!box) return;
+  const readonly = stocktakeModalMode !== 'create';
+  box.classList.toggle('is-readonly', readonly);
+  const dis = readonly ? 'disabled' : '';
+  box.innerHTML = stocktakeWarehouseList().map((w) => {
+    const codes = w.stacks.map((s) => s.code);
+    const allOn = codes.length && codes.every((c) => stocktakeRange.stacks.has(c));
+    const someOn = codes.some((c) => stocktakeRange.stacks.has(c));
+    const stacks = codes.map((code) => {
+      const on = stocktakeRange.stacks.has(code);
+      return `<label class="perm-item"><input type="checkbox" data-st-stack="${code}" ${on ? 'checked' : ''} ${dis} onchange="onStocktakeStackChange(this)" />${code}</label>`;
+    }).join('');
+    return `<div class="st-range-wh">
+      <label class="st-range-wh-hd">
+        <input type="checkbox" data-st-wh="${w.id}" ${allOn ? 'checked' : ''} ${dis} onchange="onStocktakeWhChange(this)" />
+        ${w.filter}<span style="font-weight:400;color:var(--text-2)">（${codes.length} 个堆位）</span>
+      </label>
+      <div class="st-range-stacks">${stacks}</div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('input[data-st-wh]').forEach((el) => {
+    const w = stocktakeWarehouseList().find((x) => x.id === el.dataset.stWh);
+    if (!w) return;
+    const codes = w.stacks.map((s) => s.code);
+    const allOn = codes.length && codes.every((c) => stocktakeRange.stacks.has(c));
+    const someOn = codes.some((c) => stocktakeRange.stacks.has(c));
+    el.indeterminate = someOn && !allOn;
+  });
+  updateStocktakeRangeSummary();
+}
+
+function onStocktakeWhChange(el) {
+  if (stocktakeModalMode !== 'create') return;
+  const w = stocktakeWarehouseList().find((x) => x.id === el.dataset.stWh);
+  if (!w) return;
+  w.stacks.forEach((s) => {
+    if (el.checked) stocktakeRange.stacks.add(s.code);
+    else stocktakeRange.stacks.delete(s.code);
+  });
+  syncStocktakeWhFromStacks();
+  renderStocktakeRangeBox();
+}
+
+function onStocktakeStackChange(el) {
+  if (stocktakeModalMode !== 'create') return;
+  const code = el.dataset.stStack;
+  if (el.checked) stocktakeRange.stacks.add(code);
+  else stocktakeRange.stacks.delete(code);
+  syncStocktakeWhFromStacks();
+  renderStocktakeRangeBox();
+}
+
+function stocktakeRangeSelectAllWh() {
+  if (stocktakeModalMode !== 'create') return;
+  stocktakeWarehouseList().forEach((w) => {
+    w.stacks.forEach((s) => stocktakeRange.stacks.add(s.code));
+  });
+  syncStocktakeWhFromStacks();
+  renderStocktakeRangeBox();
+}
+
+function stocktakeRangeSelectAllStacks() {
+  stocktakeRangeSelectAllWh();
+}
+
+function stocktakeRangeClear() {
+  if (stocktakeModalMode !== 'create') return;
+  stocktakeRange.wh.clear();
+  stocktakeRange.stacks.clear();
+  renderStocktakeRangeBox();
+}
+
+function applyStocktakeRange(row) {
+  stocktakeRange.wh = new Set(row?.rangeWh || []);
+  stocktakeRange.stacks = new Set(row?.rangeStacks || []);
+  if (!stocktakeRange.stacks.size && row?.range && row.range.includes('#')) {
+    String(row.range).split(/[；、,，\s]+/).forEach((p) => {
+      if (p.includes('#')) stocktakeRange.stacks.add(p);
+    });
+  }
+  syncStocktakeWhFromStacks();
+}
+
+function renderStocktakeTable() {
+  const tbody = document.getElementById('stocktakeTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = STOCKTAKE_LIST.map((row) => {
+    const n = row.attachments?.length || 0;
+    const attCell = n ? `<span class="tag tag-blue">${n} 个</span>` : '—';
+    const range = row.range || '—';
+    return `<tr>
+      <td>${row.id}</td>
+      <td title="${escapeHtml(range)}">${escapeHtml(range)}</td>
+      <td>${row.person}</td>
+      <td>${row.date}</td>
+      <td>${attCell}</td>
+      <td><span class="tag tag-green">${row.status}</span></td>
+      <td class="ops"><button type="button" class="btn-text" onclick="openStocktakeDetail('${row.id}')">详情</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" style="color:var(--text-2)">暂无盘点单</td></tr>';
+}
+
+function renderStocktakeAttachList(items, canDelete) {
+  const list = document.getElementById('stAttachmentList');
+  if (!list) return;
+  list.innerHTML = (items || []).length
+    ? items.map((att) => {
+      const viewMode = getMatAttachmentViewMode(att);
+      const viewLabel = viewMode === 'download' ? '下载' : '查看';
+      const del = canDelete
+        ? `<button type="button" class="btn-text" onclick="deleteStocktakeDraftAttach('${att.id}')">删除</button>`
+        : '';
+      return `<li class="mat-attach-item">
+        <span class="mat-attach-name" title="${escapeHtml(att.name)}">${escapeHtml(att.name)}</span>
+        <span class="mat-attach-meta">${formatMatFileSize(att.size)} · ${formatMatUploadTime(att.uploadedAt)}</span>
+        <span class="mat-attach-actions">
+          <button type="button" class="btn-text" onclick="openStocktakeAttachmentViewer('${att.id}')">${viewLabel}</button>
+          ${del}
+        </span>
+      </li>`;
+    }).join('')
+    : '<li class="mat-attach-item" style="color:var(--text-2)">暂无附件</li>';
+}
+
+function currentStocktakeAttachments() {
+  if (stocktakeModalMode === 'create') return stocktakeAttachDraft;
+  const row = STOCKTAKE_LIST.find((r) => r.id === stocktakeViewingId);
+  return row?.attachments || [];
+}
+
+function openStocktakeAttachmentViewer(id) {
+  const att = currentStocktakeAttachments().find((a) => a.id === id);
+  showAttachmentRecord(att);
+}
+
+function deleteStocktakeDraftAttach(id) {
+  if (stocktakeModalMode !== 'create') return;
+  stocktakeAttachDraft = stocktakeAttachDraft.filter((a) => a.id !== id);
+  renderStocktakeAttachList(stocktakeAttachDraft, true);
+  toast('附件已删除', 'ok');
+}
+
+function onStocktakeAttachUpload(input) {
+  const files = input?.files;
+  if (!files?.length) return;
+  if (stocktakeModalMode !== 'create') {
+    input.value = '';
+    return;
+  }
+  Array.from(files).forEach((file) => {
+    if (file.size > MAT_ATTACH_MAX_BYTES) {
+      toast(`「${file.name}」超过 4MB 限制`, 'warn');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      stocktakeAttachDraft.push({
+        id: `st-att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        mime: file.type || 'application/octet-stream',
+        dataUrl: reader.result,
+        uploadedAt: new Date().toISOString(),
+        size: file.size,
+      });
+      renderStocktakeAttachList(stocktakeAttachDraft, true);
+      toast(`附件已上传：${file.name}`, 'ok');
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+
+function setStocktakeFieldsReadonly(readonly) {
+  const date = document.getElementById('stDate');
+  const person = document.getElementById('stPerson');
+  const uploadBtn = document.getElementById('stAttachUploadBtn');
+  const saveBtn = document.getElementById('stSaveBtn');
+  const bar = document.getElementById('stRangeBar');
+  if (date) date.readOnly = readonly;
+  if (person) person.readOnly = readonly;
+  if (uploadBtn) uploadBtn.style.display = readonly ? 'none' : '';
+  if (saveBtn) saveBtn.style.display = readonly ? 'none' : '';
+  if (bar) bar.style.display = readonly ? 'none' : 'flex';
+}
+
+function openStocktakeModal() {
+  stocktakeModalMode = 'create';
+  stocktakeViewingId = '';
+  stocktakeAttachDraft = [];
+  stocktakeRange.wh.clear();
+  stocktakeRange.stacks.clear();
+  const title = document.getElementById('stocktakeModalTitle');
+  if (title) title.textContent = '新建盘点单';
+  const date = document.getElementById('stDate');
+  if (date) date.value = wmsDemoToday();
+  const person = document.getElementById('stPerson');
+  if (person) person.value = '';
+  setStocktakeFieldsReadonly(false);
+  renderStocktakeRangeBox();
+  renderStocktakeAttachList(stocktakeAttachDraft, true);
+  openModal('modalStocktake');
+}
+
+function openStocktakeDetail(id) {
+  const row = STOCKTAKE_LIST.find((r) => r.id === id);
+  if (!row) {
+    toast('未找到盘点单', 'warn');
+    return;
+  }
+  stocktakeModalMode = 'view';
+  stocktakeViewingId = id;
+  applyStocktakeRange(row);
+  const title = document.getElementById('stocktakeModalTitle');
+  if (title) title.textContent = `盘点单 · ${row.id}`;
+  const date = document.getElementById('stDate');
+  if (date) date.value = row.date;
+  const person = document.getElementById('stPerson');
+  if (person) person.value = row.person;
+  setStocktakeFieldsReadonly(true);
+  renderStocktakeRangeBox();
+  renderStocktakeAttachList(row.attachments || [], false);
+  openModal('modalStocktake');
+}
+
+function saveStocktake() {
+  const person = document.getElementById('stPerson')?.value?.trim();
+  const date = document.getElementById('stDate')?.value;
+  if (!person) {
+    toast('请填写盘点人', 'warn');
+    return;
+  }
+  if (!date) {
+    toast('请选择计划日期', 'warn');
+    return;
+  }
+  if (!stocktakeRange.stacks.size) {
+    toast('请选择盘点范围（仓库或堆位）', 'warn');
+    return;
+  }
+  const ymd = date.replace(/-/g, '');
+  const seq = String(STOCKTAKE_LIST.length + 1).padStart(3, '0');
+  STOCKTAKE_LIST.unshift({
+    id: `PD-${ymd}-${seq}`,
+    range: formatStocktakeRangeLabel(),
+    rangeWh: [...stocktakeRange.wh],
+    rangeStacks: [...stocktakeRange.stacks],
+    person,
+    date,
+    status: '已完成',
+    attachments: stocktakeAttachDraft.slice(),
+  });
+  stocktakeAttachDraft = [];
+  renderStocktakeTable();
+  closeModal('modalStocktake');
+  toast('盘点单已创建（不回写库存）', 'ok');
 }
 
 function downloadExcel(filename, sheetName, headers, rows) {
@@ -3948,8 +4769,7 @@ function dataUrlToText(dataUrl) {
   return decodeURIComponent(payload);
 }
 
-function openMatAttachmentViewer(code, id) {
-  const att = getMatAttachments(code).find((a) => a.id === id);
+function showAttachmentRecord(att) {
   if (!att) {
     toast('附件不存在', 'warn');
     return;
@@ -3986,6 +4806,11 @@ function openMatAttachmentViewer(code, id) {
   openModal('modalMatFileView');
 }
 
+function openMatAttachmentViewer(code, id) {
+  const att = getMatAttachments(code).find((a) => a.id === id);
+  showAttachmentRecord(att);
+}
+
 function downloadMatAttachment(record) {
   if (!record?.dataUrl) return;
   const a = document.createElement('a');
@@ -4009,10 +4834,9 @@ document.addEventListener('DOMContentLoaded', () => {
   renderAccountTable();
   renderReceiveQualityFields({});
   renderOcrQualityFields({});
-  renderHarmfulFields('ibHarmfulFields', 'ib', {});
-  renderHarmfulFields('rcHarmfulFields', 'rc', {});
   renderSourceFilingTable();
   renderMaterialTable();
+  renderStocktakeTable();
   renderInboundTable();
   renderTransferTable();
   renderAllAlerts();
@@ -4061,6 +4885,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   populateWarehouseSelects();
   populateConsignorSelects();
+  renderProdOpsTable();
   seedFlowPartnersFromOutbound();
   renderPartnerTable();
   migrateOverdueBondedLots();
@@ -4392,7 +5217,6 @@ function fillBondedSelects() {
   fill('ibBonded', inbound);
   fill('rcBonded', inbound);
   fill('obBonded', active);
-  fill('matBonded', active);
   fill('invBondedFilter', active, ['<option value="">全部</option>']);
 }
 
@@ -4432,12 +5256,19 @@ function migrateOverdueBondedLots() {
 
 function renderBondedTable() {
   const tbody = document.getElementById('bondedTableBody');
-  if (!tbody) return;
+  if (!tbody) return 0;
   const kw = (document.getElementById('bondedKeyword')?.value || '').trim().toLowerCase();
+  const from = document.getElementById('bondedTimeFrom')?.value || '';
+  const to = document.getElementById('bondedTimeTo')?.value || '';
   const rows = loadBondedBooks().filter((b) => {
-    if (!kw) return true;
-    const customs = bondedCustomsOf(b).join(' ');
-    return `${b.code}${b.name}${b.owner}${customs}`.toLowerCase().includes(kw);
+    if (kw) {
+      const customs = bondedCustomsOf(b).join(' ');
+      if (!`${b.code}${b.name}${b.owner}${customs}`.toLowerCase().includes(kw)) return false;
+    }
+    const day = String(b.oldAlertDate || '').slice(0, 10);
+    if (from && (!day || day < from)) return false;
+    if (to && (!day || day > to)) return false;
+    return true;
   });
   tbody.innerHTML = rows.map((b) => {
     const nos = bondedCustomsOf(b);
@@ -4460,6 +5291,18 @@ function renderBondedTable() {
   }).join('') || '<tr><td colspan="9" style="color:var(--text-2)">暂无账册</td></tr>';
   const count = document.getElementById('bondedTableCount');
   if (count) count.textContent = `共 ${rows.length} 条`;
+  return rows.length;
+}
+
+function applyBondedFilter() {
+  const from = document.getElementById('bondedTimeFrom')?.value || '';
+  const to = document.getElementById('bondedTimeTo')?.value || '';
+  if (from && to && from > to) {
+    toast('开始日期不能晚于结束日期', 'warn');
+    return;
+  }
+  const n = renderBondedTable();
+  toast(n ? `已查询，共 ${n} 条` : '该条件下暂无保税账册', n ? 'ok' : 'warn');
 }
 
 function fillBondedPredecessorSelect(currentCode, selected) {
@@ -4674,19 +5517,19 @@ const WAREHOUSE_DEFS = [
 ];
 
 const STACK_DEMO = {
-  '1#A1': { area: '原料区域', mat: '原料物料-A', used: 94, batch: 'BG20260728041', batchType: '报关单号', inspect: '—' },
-  '1#A2': { area: '原料区域', mat: '原料物料-B', used: 66, batch: 'BG20260801022', batchType: '报关单号', inspect: '—' },
-  '1#B1': { area: '原料区域', mat: '原料物料-A', used: 22, batch: 'BG20260612018', batchType: '报关单号', inspect: '—' },
-  '2#A1': { area: '原料区域', mat: '原料物料-A', used: 70, batch: 'BG20260715033', batchType: '报关单号', inspect: '—' },
-  '2#A2': { area: '原料区域', mat: '原料物料-B', used: 28, batch: 'BG20260508007', batchType: '报关单号', inspect: '—' },
-  '4#A1': { area: '待检区域', mat: 'FL-20260803·待查验', used: 36, batch: 'FL-20260803', batchType: '生产批次', inspect: '查验中' },
-  '4#A2': { area: '混成品区域', mat: '成品物料-A', used: 36, batch: 'FL-20260802', batchType: '生产批次', inspect: '已放行' },
-  '4#B1': { area: '混成品区域', mat: '成品物料-A', used: 60, batch: 'FL-20260728', batchType: '生产批次', inspect: '已放行' },
-  '5#小A': { area: '待检区域', mat: '原料物料-C', used: 30, batch: 'BG20260428016', batchType: '报关单号', inspect: '查验中' },
-  '5#大A前': { area: '原料区域', mat: '原料物料-C', used: 24, batch: 'BG20250120014', batchType: '报关单号', inspect: '—' },
-  '6#C2': { area: '混成品区域', mat: '空闲', used: 0, batch: '—', batchType: '', inspect: '—' },
-  '码头#A1': { area: '原料区域', mat: '原料物料-D', used: 48, batch: 'BG20260725088', batchType: '报关单号', inspect: '—', inAt: '2026-07-25' },
-  '码头#A2': { area: '原料区域', mat: '原料物料-D', used: 18, batch: 'BG20260801055', batchType: '报关单号', inspect: '—', inAt: '2026-08-01' },
+  '1#A1': { area: '原料区', mat: '原料物料-A', used: 94, batch: 'BG20260728041', batchType: '报关单号', inspect: '—' },
+  '1#A2': { area: '原料区', mat: '原料物料-B', used: 66, batch: 'BG20260801022', batchType: '报关单号', inspect: '—' },
+  '1#B1': { area: '原料区', mat: '原料物料-A', used: 22, batch: 'BG20260612018', batchType: '报关单号', inspect: '—' },
+  '2#A1': { area: '原料区', mat: '原料物料-A', used: 70, batch: 'BG20260715033', batchType: '报关单号', inspect: '—' },
+  '2#A2': { area: '原料区', mat: '原料物料-B', used: 28, batch: 'BG20260508007', batchType: '报关单号', inspect: '—' },
+  '4#A1': { area: '待检区', mat: 'FL-20260803·待查验', used: 36, batch: 'FL-20260803', batchType: '生产批次', inspect: '查验中' },
+  '4#A2': { area: '成品区', mat: '成品物料-A', used: 36, batch: 'FL-20260802', batchType: '生产批次', inspect: '已放行' },
+  '4#B1': { area: '成品区', mat: '成品物料-A', used: 60, batch: 'FL-20260728', batchType: '生产批次', inspect: '已放行' },
+  '5#小A': { area: '待检区', mat: '原料物料-C', used: 30, batch: 'BG20260428016', batchType: '报关单号', inspect: '查验中' },
+  '5#大A前': { area: '原料区', mat: '原料物料-C', used: 24, batch: 'BG20250120014', batchType: '报关单号', inspect: '—' },
+  '6#C2': { area: '待检区', mat: '空闲', used: 0, batch: '—', batchType: '', inspect: '—' },
+  '码头#A1': { area: '原料区', mat: '原料物料-D', used: 48, batch: 'BG20260725088', batchType: '报关单号', inspect: '—', inAt: '2026-07-25' },
+  '码头#A2': { area: '原料区', mat: '原料物料-D', used: 18, batch: 'BG20260801055', batchType: '报关单号', inspect: '—', inAt: '2026-08-01' },
 };
 
 const STACK_LOTS = {
@@ -4778,11 +5621,6 @@ function openStackModal(code) {
   if (whSel) whSel.value = whFilter;
   if (slotInput) slotInput.value = slot;
   updateStackCode();
-  const grid = getStackGrid(code || document.getElementById('stCode')?.value || '1#A1');
-  const gridHint = document.getElementById('stGridFromPlan');
-  if (gridHint) {
-    gridHint.value = grid.fromPlan ? `${grid.cols}×${grid.rows}（平面图）` : '未在平面图中绘制';
-  }
   openModal('modalStack');
 }
 
@@ -4815,7 +5653,7 @@ function buildWarehouses() {
     const equalCap = Math.round(def.cap / def.slots.length);
     const stacks = def.slots.map((slot, i) => {
       const code = stackCode(def.no, slot);
-      const demo = STACK_DEMO[code] || { area: '空闲', mat: '空闲', used: 8 + ((i * 7) % 35), batch: '—', batchType: '', inspect: '—' };
+      const demo = STACK_DEMO[code] || { area: '原料区', mat: '空闲', used: 8 + ((i * 7) % 35), batch: '—', batchType: '', inspect: '—' };
       const stackCap = def.slotCaps?.[slot] ?? equalCap;
       const usedTon = Math.round(stackCap * demo.used / 100);
       return {
@@ -5208,11 +6046,57 @@ function populateInboundStacks() {
 }
 
 function areaTagHtml(area) {
-  if (area.includes('待检')) return '<span class="tag tag-orange">待检区域</span>';
-  if (area.includes('混成品')) return '<span class="tag tag-green">混成品区域</span>';
-  if (area.includes('成品')) return '<span class="tag tag-green">成品区域</span>';
-  if (area.includes('原料')) return '<span class="tag tag-blue">原料区域</span>';
+  if (area.includes('待检')) return '<span class="tag tag-orange">待检区</span>';
+  if (area.includes('成品')) return '<span class="tag tag-green">成品区</span>';
+  if (area.includes('原料')) return '<span class="tag tag-blue">原料区</span>';
   return `<span class="tag">${area}</span>`;
+}
+
+function findWarehouseStack(code) {
+  for (const w of WAREHOUSES) {
+    const s = w.stacks.find((x) => x.code === code);
+    if (s) return s;
+  }
+  return null;
+}
+
+function saveFinishInbound() {
+  const raw = document.getElementById('finishTargetStack')?.value || '';
+  const stack = findWarehouseStack(raw);
+  const area = stack?.area || STACK_DEMO[raw]?.area || '';
+  if (!raw || !String(area).includes('待检')) {
+    toast('完工入库只允许进入待检区', 'warn');
+    return;
+  }
+  if (stack) {
+    stack.area = '待检区';
+    stack.inspect = '查验中';
+  }
+  saveAndClose('modalFinish');
+  toast(`${raw} 已完工入库至待检区，查验完成后再改为成品区`, 'ok');
+}
+
+function confirmInspectComplete() {
+  const code = document.getElementById('inspectStackSel')?.value || '4#A1';
+  const stack = findWarehouseStack(code);
+  const area = stack?.area || STACK_DEMO[code]?.area || '';
+  if (!String(area).includes('待检')) {
+    toast('仅待检区堆位可查验完成并改为成品区', 'warn');
+    return;
+  }
+  if (stack) {
+    stack.area = '成品区';
+    stack.inspect = '已放行';
+    if (stack.mat && String(stack.mat).includes('待查验')) stack.mat = '成品物料-A';
+  }
+  if (STACK_DEMO[code]) {
+    STACK_DEMO[code].area = '成品区';
+    STACK_DEMO[code].inspect = '已放行';
+    if (STACK_DEMO[code].mat && String(STACK_DEMO[code].mat).includes('待查验')) STACK_DEMO[code].mat = '成品物料-A';
+  }
+  renderStackTable();
+  saveAndClose('modalInspect');
+  toast(`${code} 片区标识已变更为成品区`, 'ok');
 }
 
 function inspectTagHtml(inspect) {
@@ -5300,7 +6184,6 @@ function populateWarehouseSelects() {
 
 function stackAreaClass(area) {
   if (area.includes('待检')) return 'qc';
-  if (area.includes('混成品')) return 'mix';
   if (area.includes('成品')) return 'fg';
   return 'raw';
 }
@@ -5333,7 +6216,7 @@ const FLOW_LOGS = [
   { date: '2026-08-03', time: '14:18', type: '出仓', cls: 'out', text: 'CK-20260803-012 · 成品 180 干吨 · 华东冶炼' },
   { date: '2026-08-03', time: '13:55', type: '生产', cls: 'prod', text: 'FL-20260803 · 3 票报关单投料 200 干吨' },
   { date: '2026-08-01', time: '13:40', type: '称重', cls: 'weigh', text: 'RK-20260801-015 · 湿 800 / 干 720' },
-  { date: '2026-08-03', time: '13:22', type: '上架', cls: 'put', text: '4#A1 · 生产批次 FL-20260803 上架，片区标识：待检区域' },
+  { date: '2026-08-03', time: '13:22', type: '上架', cls: 'put', text: '4#A1 · 生产批次 FL-20260803 上架，片区标识：待检区' },
   { date: '2026-08-03', time: '12:58', type: '完工', cls: 'done', text: 'WG-20260803-01 · 成品 180 干吨入库' },
   { date: '2026-08-03', time: '12:35', type: '入仓', cls: 'in', text: 'RK-20260803-002 · 物料 620 湿吨 · 2仓' },
   { date: '2026-08-03', time: '11:48', type: '出仓', cls: 'out', text: 'CK-20260803-008 · 成品 95 干吨 · 华南冶炼' },

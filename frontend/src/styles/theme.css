@@ -1,0 +1,99 @@
+:root {
+  --el-color-primary: #1b4f8a;
+  --el-color-primary-light-3: #5d84ad;
+  --el-color-primary-light-5: #8da7c4;
+  --el-color-primary-light-7: #b9c9db;
+  --el-color-primary-light-8: #d1dce8;
+  --el-color-primary-light-9: #e8eef4;
+  --el-color-primary-dark-2: #153d6b;
+  --el-color-success: #2e7d4f;
+  --el-color-warning: #c47a12;
+  --el-color-danger: #b42318;
+  --el-text-color-primary: #1a2332;
+  --el-text-color-regular: #1a2332;
+  --el-text-color-secondary: #5a6a7e;
+  --el-border-color: #d8dee8;
+  --el-bg-color: #ffffff;
+  --el-border-radius-base: 4px;
+  --wms-bg: #f0f3f7;
+  --wms-sidebar: #101217;
+  --wms-dash: #14171c;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #1a2332;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; }
+body { background: var(--wms-bg); }
+
+.admin {
+  display: flex;
+  min-height: 100%;
+  background: var(--wms-bg);
+}
+.sidebar {
+  width: 200px;
+  flex: none;
+  background: var(--wms-sidebar);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  height: 80px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  font-size: 20px;
+  font-weight: 600;
+}
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 4px;
+}
+.menu { padding: 8px 12px 24px; overflow: auto; }
+.group-title {
+  margin: 16px 8px 8px;
+  font-size: 14px;
+  color: #fff;
+}
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+  color: rgba(255,255,255,.7);
+  text-decoration: none;
+  font-size: 14px;
+}
+.nav-link.router-link-active {
+  background: rgba(255,255,255,.08);
+  color: #fff;
+}
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+}
+.topbar h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.topbar p { margin: 2px 0 0; color: #5a6a7e; font-size: 13px; }
+.user-btn { color: inherit; cursor: pointer; outline: none; }
+.content { flex: 1; padding: 0 24px 24px; }
+.panel {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px 16px 8px;
+}
+
+.admin.is-dashboard { background: #070d16; color: #fff; height: 100vh; overflow: hidden; }
+.admin.is-dashboard .main { min-height: 0; }
+.admin.is-dashboard .content { padding: 0; overflow: hidden; display: flex; min-height: 0; }

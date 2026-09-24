@@ -54,6 +54,7 @@ const DATA_DIR = resolveDataDir();
 migrateLegacyData(DATA_DIR);
 const DATA_FILE = path.join(DATA_DIR, 'annotations.json');
 const FLOOR_PLAN_FILE = path.join(DATA_DIR, 'floor-plans.json');
+const PROGRESS_FILE = path.join(DATA_DIR, 'dev-progress.json');
 
 function emptyStore() {
   return { revision: 0, updatedAt: null, items: [] };
@@ -118,6 +119,176 @@ function writeFloorPlans(store) {
   const tmp = FLOOR_PLAN_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
   fs.renameSync(tmp, FLOOR_PLAN_FILE);
+}
+
+const PROG_STATUSES = new Set(['未开始', '进行中', '已完成', '阻塞', '不适用']);
+const PROG_TRACK_KEYS = ['proto', 'ui', 'fe', 'be', 'integ', 'test'];
+const PROG_FIELD_LABELS = {
+  proto: '原型设计',
+  ui: 'UI设计',
+  fe: '前端开发',
+  be: '后端开发',
+  integ: '前后端对接',
+  test: '测试',
+  feOwner: '前端负责人',
+  beOwner: '后端负责人',
+  qaOwner: '测试负责人',
+  planDate: '计划完成',
+  actualDate: '实际完成',
+  block: '阻塞原因',
+  note: '备注',
+};
+const PROG_EDIT_KEYS = Object.keys(PROG_FIELD_LABELS);
+const PROG_TEXT_LIMIT = { feOwner: 40, beOwner: 40, qaOwner: 40, block: 500, note: 500 };
+const PROG_CAP_RE = /^CAP-\d{3,4}$/;
+const PROG_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function progNowCst() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date()).map((p) => [p.type, p.value]));
+  const display = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  const iso = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}+08:00`;
+  return { iso, display };
+}
+
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || '';
+  let ip = String(fwd).split(',')[0].trim();
+  if (!ip) ip = (req.socket && req.socket.remoteAddress) || '';
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return ip || '未知';
+}
+
+function clipText(value, limit) {
+  return String(value == null ? '' : value).replace(/\u0000/g, '').trim().slice(0, limit);
+}
+
+function emptyProgress() {
+  return { revision: 0, updatedAt: null, overrides: {}, logs: [] };
+}
+
+function ensureProgress() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(PROGRESS_FILE)) {
+    fs.writeFileSync(PROGRESS_FILE, JSON.stringify(emptyProgress(), null, 2), 'utf8');
+  }
+}
+
+function readProgress() {
+  ensureProgress();
+  try {
+    const raw = JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf8'));
+    if (!raw || typeof raw !== 'object') return emptyProgress();
+    return {
+      revision: Number(raw.revision) || 0,
+      updatedAt: raw.updatedAt || null,
+      overrides: raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {},
+      logs: Array.isArray(raw.logs) ? raw.logs : [],
+    };
+  } catch {
+    return emptyProgress();
+  }
+}
+
+function writeProgress(store) {
+  ensureProgress();
+  const tmp = `${PROGRESS_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
+  fs.renameSync(tmp, PROGRESS_FILE);
+}
+
+function progressData(req, store) {
+  return {
+    revision: store.revision,
+    updatedAt: store.updatedAt,
+    clientIp: clientIp(req),
+    overrides: store.overrides,
+    logs: store.logs,
+  };
+}
+
+function putDevProgress(body, ip) {
+  if (!body || typeof body !== 'object') return { status: 400, payload: { success: false, data: null, message: 'invalid json' } };
+  const capId = String(body.id || '').trim();
+  if (!PROG_CAP_RE.test(capId)) return { status: 400, payload: { success: false, data: null, message: '能力编号无效' } };
+  const patch = body.patch && typeof body.patch === 'object' ? body.patch : {};
+  const before = body.before && typeof body.before === 'object' ? body.before : {};
+  const operator = clipText(body.operator || '未知', 40) || '未知';
+  const operatorUser = clipText(body.operatorUser, 40);
+  const capName = clipText(body.capName, 80);
+  const moduleName = clipText(body.module, 40);
+  const store = readProgress();
+  const prev = store.overrides[capId] && typeof store.overrides[capId] === 'object' ? store.overrides[capId] : {};
+  const oldOf = (key) => {
+    if (Object.prototype.hasOwnProperty.call(prev, key) && prev[key] != null) return String(prev[key]).trim();
+    if (Object.prototype.hasOwnProperty.call(before, key) && before[key] != null) return String(before[key]).trim();
+    return '';
+  };
+  const normalized = {};
+  for (const key of PROG_EDIT_KEYS) {
+    const raw = Object.prototype.hasOwnProperty.call(patch, key) && patch[key] != null ? patch[key] : oldOf(key);
+    if (PROG_TRACK_KEYS.includes(key)) {
+      const val = String(raw || '').trim();
+      if (!PROG_STATUSES.has(val)) return { status: 400, payload: { success: false, data: null, message: '进度状态不在允许取值内' } };
+      normalized[key] = val;
+    } else if (key === 'planDate' || key === 'actualDate') {
+      const val = String(raw || '').trim();
+      if (val && !PROG_DATE_RE.test(val)) return { status: 400, payload: { success: false, data: null, message: '计划完成与实际完成须为日期' } };
+      normalized[key] = val;
+    } else {
+      normalized[key] = clipText(raw, PROG_TEXT_LIMIT[key]);
+    }
+  }
+  if (PROG_TRACK_KEYS.some((key) => normalized[key] === '阻塞') && !normalized.block) {
+    return { status: 400, payload: { success: false, data: null, message: '存在阻塞轨道时必须填写阻塞原因' } };
+  }
+  const changes = [];
+  PROG_EDIT_KEYS.forEach((key) => {
+    const old = oldOf(key);
+    const next = normalized[key];
+    if (old !== next) changes.push({ field: PROG_FIELD_LABELS[key], before: old, after: next });
+  });
+  if (!changes.length) return { status: 400, payload: { success: false, data: null, message: '没有变更' } };
+  const { iso, display } = progNowCst();
+  const item = {
+    ...normalized,
+    updatedAt: iso,
+    updatedAtDisplay: display,
+    updatedBy: operator,
+    updatedIp: ip,
+  };
+  const log = {
+    id: `plog-${Date.now()}`,
+    at: iso,
+    atDisplay: display,
+    ip,
+    operator,
+    operatorUser,
+    capId,
+    capName,
+    module: moduleName,
+    changes,
+  };
+  const logs = [log, ...store.logs.filter((row) => row && typeof row === 'object')].slice(0, 500);
+  const overrides = { ...store.overrides, [capId]: item };
+  const next = { revision: store.revision + 1, updatedAt: iso, overrides, logs };
+  writeProgress(next);
+  return {
+    status: 200,
+    payload: {
+      success: true,
+      data: { revision: next.revision, updatedAt: iso, clientIp: ip, item, log, logs },
+      message: '已记录',
+    },
+  };
 }
 
 function normalizeFloorPlan(raw) {
@@ -198,6 +369,16 @@ app.use(express.json({ limit: '2mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, data: { ok: true }, message: 'ok' });
+});
+
+app.get('/api/dev-progress', (req, res) => {
+  const store = readProgress();
+  res.json({ success: true, data: progressData(req, store), message: 'ok' });
+});
+
+app.put('/api/dev-progress', (req, res) => {
+  const result = putDevProgress(req.body || {}, clientIp(req));
+  res.status(result.status).json(result.payload);
 });
 
 app.get('/api/annotations', (_req, res) => {
@@ -339,6 +520,7 @@ app.put('/api/warehouses/:id/floor-plan', (req, res) => {
 
 ensureStore();
 ensureFloorPlans();
+ensureProgress();
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[wms-anno-api] listening on :${PORT}, data=${DATA_FILE}, floorPlans=${FLOOR_PLAN_FILE}`);
 });

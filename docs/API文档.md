@@ -1,6 +1,10 @@
 # API 文档（草案）
 
 > 0期为原型阶段，接口待开发后细化。后端：**Java Spring Boot**。统一响应：`{ "success": boolean, "data": any, "message": string }`
+>
+> `frontend/` 已按本文封装。默认 `VITE_USE_MOCK=true`，浏览器内返回同样的响应结构；`VITE_USE_MOCK=false` 时请求发往 `VITE_API_BASE`（默认 `/api`）。不调用对外对接、开发进度、批注接口。
+>
+> 前端动作额外预留：`PUT /api/warehouses/{id}`、`PUT /api/warehouses/stacks/{id}`、`PUT /api/materials/{id}`、`PUT /api/partners/{id}`、`PUT /api/bonded-books/{id}`、`PUT /api/inbound/{id}`、`PUT /api/outbound/{id}`、`PUT /api/auth/users/{id}`、`POST /api/production/{id}/complete`、`POST /api/production/{id}/inspect`、`POST /api/outbound/{id}/approve`、`GET /api/ocr/tasks`、`PUT /api/ocr/tasks/{id}`、`GET/PUT /api/settings/params`。
 
 ## 认证
 
@@ -12,17 +16,17 @@
 
 - `GET/POST /api/warehouses` — 仓库档案（编号 1/2/4/5/6 及**码头仓库**，总库容，**面积㎡仅展示可编辑**）
 - `GET/POST /api/warehouses/stacks` — 堆位（隶属于仓库；编码如 1#A1；含库容、片区标识；网格 rows/cols **由园区平面图该堆位占格计算**，不在堆位档案单独维护；档案页不展示报关单号/生产批次/占用率/查验状态）
-- `PUT /api/warehouses/stacks/{id}/area-label` — 更新片区标识（报关单号/生产批次号查验完成等触发，留痕）
+- `PUT /api/warehouses/stacks/{id}/area-label` — 更新片区标识（三类：**原料区 / 待检区 / 成品区**；完工入库写入待检区，查验完成改为成品区，留痕）
 - `GET/PUT /api/floor-plans` — 园区平面图（`id=park`：网格行×列 `gridRows`/`gridCols`、功能区/仓库/生产线/门/堆位/道路/灌木坐标；`stackGrids` 各堆位行列）。旧 `GET/PUT /api/warehouses/{id}/floor-plan` 单仓接口保留兼容。0 期原型已实现，见下文「原型平面图」
-- `GET/POST /api/materials` — 物料档案（原料：达标矿/报备矿；成品：混成品；报备矿关联矿源，不含原产国、备案号、商品编码、品质参数、附件）
+- `GET/POST /api/materials` — 物料档案（原料：达标矿/报备矿；成品：混成品；报备矿关联矿源；档案仅基础信息，不含原产国、备案号、商品编码、品质参数、附件、干湿重规则、默认账册、单证样例）
 - `GET /api/materials/export` — 物料档案导出 Excel（编码、名称、货物类型、类型、矿源）
-- `GET/POST /api/material-sources/filings` — 矿源备案（报备矿；含备案原产国、备案数量/核销/剩余/用量%、附件；一矿源多备案号；入库按矿源自动匹配）
+- `GET/POST /api/material-sources/filings` — 矿源备案（报备矿；含备案原产国、备案数量/核销/剩余/用量%、**关联生产批次号**、附件；一矿源多备案号；入库按矿源自动匹配；列表查询支持矿源、编号、状态、**备案日期起止**）
 - `GET /api/material-sources/filings/export` — 矿源备案列表导出 Excel
-- `GET /api/material-sources/filings/{code}/lots` — 该备案下全部票货（报关单/委托方/重量/堆位/状态）
+- `GET /api/material-sources/filings/{code}/lots` — 该备案下全部票货（报关单/**生产批次号**/委托方/重量/堆位/状态）
 - `GET /api/material-sources/filings/{code}/lots/export` — 备案票货导出 Excel
 - `GET/POST /api/partners` — 往来主体（编码、名称、角色、联系电话、状态、来源；委托方/物流账册主体手工维护；**流向企业由出库报关单字段自动识别写入**；**不含统一社会信用代码**）
 - `GET /api/partners/consignors` — 委托方列表（五矿有色、广西金川、广西南国）
-- `GET/POST /api/bonded-books` — 保税账册（编号、名称、经营单位、**货值**、**报关单号**、状态；**新账衔接旧账时须填旧账预警日期**；旧账只出不进；到期未出库入库数据转入新账）
+- `GET/POST /api/bonded-books` — 保税账册（编号、名称、经营单位、**货值**、**报关单号**、状态；**新账衔接旧账时须填旧账预警日期**；旧账只出不进；到期未出库入库数据转入新账；列表查询支持关键字、**旧账预警起止日期**）
 - `GET /api/bonded-books/{code}/lots` — 账册下全部出入库票矿
 - `GET /api/bonded-books/{code}/lots/export` — 账册票矿导出 Excel
 - `GET/PUT /api/roles/{id}/permissions` — 角色菜单权限（可见模块列表）
@@ -33,16 +37,16 @@
 
 ## 业务单据
 
-- `GET/POST /api/inbound` — 入库（状态：暂存码头/待收货/已入库/混成品；字段含矿种、五项有害元素 As/Pb/Cd/F/Hg、装运方式集装箱|散货、集装箱柜数；查询支持时间范围、货运方式、矿种）；预约须提交预定堆位及堆位内存放格子（`stackCode` + `cells[{r,c}]`）
-- `GET/POST /api/transfers` — 移库（先选原堆位再选批次；含船名、柜数；`timeFrom`/`timeTo` 精确到时）
-- `POST /api/transfers/batch` — 批量移库，勾选多票后**各生成一条移库单**（不合并）
+- `GET/POST /api/inbound` — 入库（状态：暂存码头/待收货/已入库/混成品；字段含矿种、装运方式集装箱|散货、集装箱柜数；预约与到货登记不提交五项有害元素；查询支持时间范围、货运方式、矿种）；预约须提交预定堆位及堆位内存放格子（`stackCode` + `cells[{r,c}]`）
+- `GET/POST /api/transfers` — 移库（先选原堆位再选批次；委托方/报关单号/生产批次/物料/船名/柜数由批次带出只读；列表查询支持委托方、时间范围；`timeFrom`/`timeTo` 精确到时）
+- `POST /api/transfers/batch` — 批量移库，可跨仓库勾选多票（支持仓库/堆位/委托方/关键字查询）后**各生成一条移库单**（不合并）
 - `GET/POST /api/inventory` — 库存查询（时间维度 `timeMode=month|range`，`range` 时 `from`/`to` 精确到小时；品质八项；成品 `cargoType=混成品`、`originCountry` 为空；已出库 `stackCode` 为空；响应不含类型列）
-- `GET /api/inventory/batches/{batchNo}` — 本票详情。原料：报关单、重量证书、品质证书及八项品质参数；成品：仅出库报关单与品质证书（未出库时出库报关单为空）。`batchNo` 为报关单号或生产批次号
+- `GET /api/inventory/batches/{batchNo}` — 本票详情。原料：报关单、重量证书、品质证书及八项品质参数，以及本票投入后的**成品/库存/出库**；成品：出库报关单、品质证书，以及本批次库存与出库（未出库时出库报关单为空）。`batchNo` 为报关单号或生产批次号
 - `GET /api/inventory/batches/{batchNo}/ledger` — 干湿重及业务流水穿透；出库行含 `consignee`（流向企业）；`batchNo` 为**报关单号**或**生产批次号**（query `type=customs|production`）
 - `GET /api/inventory/alerts` — 库容、库龄、**码头仓库超期（默认 7 天）**、账册到期与账实差异预警
-- `GET/POST /api/stocktakes` — 盘点
+- `GET/POST /api/stocktakes` — 盘点（无类型字段；范围可多选仓库与堆位；创建可上传附件；不回写库存重量、不生成账实差异）
 - `GET /api/stocktakes/onhand-export` — 按月份导出各委托方在库（数量湿/干重、堆位、货物类型、提单号、报关单号；`month=YYYY-MM`，取月末在库快照）
-- `GET/POST /api/production` — 生产流转；投料按**生产批次号**挂接 **1:N 报关单号**，记录**出库报关单号**；矿物按**达标矿/报备矿**展示；物料、船名/航次、提单号、来源国家在批次详情；完工入库库存批次取该生产批次号
+- `GET/POST /api/production` — 生产流转；投料按**生产批次号**挂接 **1:N 报关单号**，记录**出库报关单号**；**投料与加工过程同一列表**，查询支持**委托方、起止日期**；矿物按**达标矿/报备矿**展示；物料、船名/航次、提单号、来源国家在批次详情；**完工入库目标堆位仅限待检区**；完工入库库存批次取该生产批次号
 - `GET /api/production/{prodBatchNo}` — 生产批次详情及关联报关单号谱系
 - `GET/POST /api/outbound` — 出库；创建时可提交出库报关单 OCR（报关单号、核注清单号、流向企业、**消费使用单位**、重量、报关单金额）及备注；查询支持 `from`/`to` 时间范围；OCR 字段人工修正写入审计日志
 
@@ -88,3 +92,12 @@
 - `items[].type`：`warehouse` / `idle` / `office` / `zone` / `line` / `door` / `stack` / `stamp`（`kind=road|bush` 为图标重复铺贴）；编辑器中 `stack` 填充固定为白色
 
 服务端联调仍可用 `node server.js`（需自行 `npm install`）。本地浏览原型**不必**再起本地批注服务。
+
+## 原型开发进度（0期已实现）
+
+与批注、平面图同一服务。数据文件 **`wms/data/dev-progress.json`**（覆盖代码时不要覆盖 `data/`）。能力清单基线在前端 `wms/dist/progress-seed.js`（来自 `docs/汇报/开发进度跟踪表.xlsx`），服务端只存提交后的覆盖值与变更日志。
+
+- `GET /api/dev-progress` — `{ revision, updatedAt, clientIp, overrides, logs }`
+- `PUT /api/dev-progress` — body：`{ id, patch, before, operator, operatorUser, capName, module }`；`id` 为 `CAP-###`。成功时 `data` 含本条 `item`、新日志 `log`、全量 `logs` 与 `clientIp`
+- 日志字段：`at` / `atDisplay`（东八区）、`ip`（`X-Forwarded-For` 或连接地址）、`operator`、`capId`、`changes[]`（字段、修改前、修改后）
+- 任一轨道为「阻塞」时必须带 `block`；无字段变化返回 400「没有变更」
