@@ -58,9 +58,10 @@ export const bondedApi = {
   exportLots: (code: string) => request<FilePayload>('GET', `/bonded-books/${encodeURIComponent(code)}/lots/export`),
 }
 
+/** 平面图。对接前写入 localStorage（键 `wws.floor-plan`）；`VITE_USE_MOCK=false` 后同一路径请求后端。 */
 export const floorApi = {
   get: () => request<FloorPlan>('GET', '/floor-plans'),
-  save: (body: FloorPlan) => request('PUT', '/floor-plans', { body }),
+  save: (body: FloorPlan) => request<FloorPlan>('PUT', '/floor-plans', { body }),
 }
 
 export const dashboardApi = {

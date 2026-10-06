@@ -25,7 +25,9 @@ export interface AuthUser {
 export interface FieldSchema {
   key: string
   label: string
-  type?: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea' | 'multi' | 'file'
+  type?: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea' | 'multi' | 'file' | 'cells'
+  optionsFrom?: 'stacks'
+  stackKey?: string
   required?: boolean
   options?: Array<string | { label: string; value: string }> | ((form: Record<string, unknown>) => Array<string | { label: string; value: string }>)
   when?: (form: Record<string, unknown>) => boolean
@@ -49,11 +51,20 @@ export interface DetailBlock {
   table?: { columns: ColumnSchema[]; rows: Record<string, unknown>[] }
 }
 
+export interface ActionDialog {
+  title: string
+  message?: string
+  confirmLabel?: string
+  fields: FieldSchema[]
+  fill?: (row: Record<string, unknown>) => Record<string, unknown>
+}
+
 export interface RowAction {
   label: string
   when?: (row: Record<string, unknown>) => boolean
   confirm?: string
-  prompt?: { title: string; message: string; key: string }
+  dialog?: ActionDialog
+  inDetail?: boolean
   request?: (row: Record<string, unknown>, extra: Record<string, unknown>) => Promise<ApiResult>
   path?: string
   queryKey?: string
@@ -73,6 +84,7 @@ export interface ModuleSchema {
   detail?: (row: Record<string, unknown>) => DetailBlock[] | Promise<DetailBlock[]>
   canEdit?: (row: Record<string, unknown>) => boolean
   showDetail?: boolean | ((row: Record<string, unknown>) => boolean)
+  detailColumn?: string
   actions?: RowAction[]
   exportRows?: () => Promise<ApiResult<{ filename: string; content: string }>>
   monthExport?: (month: string) => Promise<ApiResult<{ filename: string; content: string }>>
@@ -97,6 +109,8 @@ export interface PlanItem {
 
 export interface FloorPlan {
   id: string
+  /** 每一格在屏幕上的像素边长 */
+  gridPx: number
   gridCols: number
   gridRows: number
   items: PlanItem[]
