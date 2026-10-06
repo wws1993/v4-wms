@@ -13,6 +13,22 @@ export const PLAN_COLORS: Record<PlanType, string> = {
   bush: '#2E7D4F',
 }
 
+/** 右键背景色：前 9 个为平面图规定色，后 3 个为马卡龙色。 */
+export const PLAN_SWATCHES = [
+  '#FFFFFF',
+  '#F8E4C5',
+  '#9EBCE9',
+  '#D6E4F2',
+  '#D9E8F6',
+  '#E5F2EA',
+  '#E4E8EE',
+  '#D8DEE8',
+  '#2E7D4F',
+  '#F6C6D5',
+  '#F8D7A8',
+  '#E4D0F5',
+]
+
 export const PLAN_STROKE: Record<PlanType, string> = {
   warehouse: '#D8DEE8',
   idle: '#D8DEE8',
@@ -43,9 +59,10 @@ const Z: Record<PlanType, number> = {
 }
 
 export function planFill(item: PlanItem) {
-  if (item.type === 'stack') return '#ffffff'
   if (item.type === 'road' || item.type === 'bush') return `url(#plan-${item.type})`
-  return item.color || PLAN_COLORS[item.type]
+  if (item.color) return item.color
+  if (item.type === 'stack') return '#ffffff'
+  return PLAN_COLORS[item.type]
 }
 
 export function planStroke(item: PlanItem) {
@@ -118,7 +135,33 @@ export function warehouseMark(item: PlanItem) {
 }
 
 export function sortPlanItems(items: PlanItem[]) {
-  return items.slice().sort((a, b) => Z[a.type] - Z[b.type])
+  return items.slice().sort((a, b) => Z[a.type] - Z[b.type] || (isWarehouseItem(a) ? -1 : 1))
+}
+
+export function isWarehouseItem(item: PlanItem) {
+  return item.type === 'warehouse' || item.type === 'idle'
+}
+
+/** 绘制内容的外接范围，驾驶舱按此居中，而不是铺满整张空网格。 */
+export function contentFrame(plan: FloorPlan, pad = 1.2) {
+  if (!plan.items.length) return { x: 0, y: 0, w: 24, h: 16 }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const item of plan.items) {
+    minX = Math.min(minX, item.col)
+    minY = Math.min(minY, item.row)
+    maxX = Math.max(maxX, item.col + item.cols)
+    const labelPad = isWarehouseItem(item) ? 1.1 : 0
+    maxY = Math.max(maxY, item.row + item.rows + labelPad)
+  }
+  return {
+    x: minX - pad,
+    y: minY - pad,
+    w: Math.max(4, maxX - minX + pad * 2),
+    h: Math.max(4, maxY - minY + pad * 2),
+  }
 }
 
 export function hostOf(item: PlanItem, items: PlanItem[]) {
@@ -196,7 +239,7 @@ export function defaultPlan(): FloorPlan {
     block('door', '1号门', 24, 18, 2, 1),
     block('door', '2号门', 30, 18, 2, 1),
   ]
-  return { id: 'park', gridCols: 42, gridRows: 26, items }
+  return { id: 'park', gridPx: 24, gridCols: 42, gridRows: 26, items }
 }
 
 export function presetSize(type: PlanType) {

@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { warehouseApi } from '@/api'
 import { getSchema } from '@/modules/schemas'
 import { downloadText } from '@/mock/util'
 import type { ColumnSchema, DetailBlock, FieldSchema, RowAction } from '@/types'
@@ -22,10 +23,18 @@ const saving = ref(false)
 const editingId = ref('')
 const form = reactive<Record<string, any>>({})
 const formRef = ref<FormInstance>()
-const drawer = ref(false)
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detailRow = ref<Record<string, unknown> | null>(null)
 const detailBlocks = ref<DetailBlock[]>([])
+const actionOpen = ref(false)
+const actionSaving = ref(false)
+const actionDef = ref<RowAction | null>(null)
+const actionRow = ref<Record<string, unknown> | null>(null)
+const actionForm = reactive<Record<string, any>>({})
 const monthDialog = ref(false)
 const monthValue = ref('')
+const stackRows = ref<Record<string, unknown>[]>([])
 
 const rules = computed(() => {
   const result: Record<string, { required: boolean; message: string; trigger: string }[]> = {}
@@ -72,8 +81,51 @@ function search() {
 }
 
 function fieldOptions(field: FieldSchema) {
+  if (field.optionsFrom === 'stacks') {
+    return stackRows.value.map((row) => ({
+      label: `${row.code}（${row.grid || '无网格'}）`,
+      value: String(row.code),
+    }))
+  }
   const source = typeof field.options === 'function' ? field.options(form) : field.options || []
   return source.map((item) => (typeof item === 'string' ? { label: item, value: item } : item))
+}
+
+function stackGrid(code: string) {
+  const row = stackRows.value.find((item) => item.code === code)
+  const cols = Number(row?.gridCols || 0)
+  const rows = Number(row?.gridRows || 0)
+  if (cols > 0 && rows > 0) return { cols, rows }
+  const matched = String(row?.grid || '').match(/(\d+)\s*[×xX]\s*(\d+)/)
+  if (!matched) return { cols: 0, rows: 0 }
+  return { cols: Number(matched[1]), rows: Number(matched[2]) }
+}
+
+function cellKeys(code: string) {
+  const { cols, rows } = stackGrid(code)
+  const list: string[] = []
+  for (let row = 1; row <= rows; row += 1) {
+    for (let col = 1; col <= cols; col += 1) list.push(`${row}-${col}`)
+  }
+  return list
+}
+
+function cellOn(value: unknown, cell: string) {
+  return String(value || '').split(',').includes(cell)
+}
+
+function toggleCell(key: string, cell: string) {
+  const set = new Set(String(form[key] || '').split(',').filter(Boolean))
+  if (set.has(cell)) set.delete(cell)
+  else set.add(cell)
+  form[key] = [...set].join(',')
+}
+
+async function loadStacks() {
+  const needs = schema.value?.form?.some((field) => field.optionsFrom === 'stacks' || field.type === 'cells')
+  if (!needs) return
+  const res = await warehouseApi.stacks({ page: 1, pageSize: 200 })
+  stackRows.value = res.success && res.data ? res.data.list : []
 }
 
 function defaultValue(field: FieldSchema) {
@@ -96,6 +148,7 @@ function openCreate() {
     form[field.key] = defaultValue(field)
   }
   dialog.value = true
+  loadStacks()
 }
 
 function openEdit(row: Record<string, unknown>) {
@@ -109,6 +162,7 @@ function openEdit(row: Record<string, unknown>) {
       : raw ?? ''
   }
   dialog.value = true
+  loadStacks()
 }
 
 function onFieldChange(key: string) {
@@ -135,8 +189,12 @@ async function submit() {
 }
 
 async function openDetail(row: Record<string, unknown>) {
-  drawer.value = true
+  detailRow.value = row
+  detailOpen.value = true
+  detailLoading.value = true
+  detailBlocks.value = []
   detailBlocks.value = schema.value?.detail ? await schema.value.detail(row) : []
+  detailLoading.value = false
 }
 
 function canShowDetail(row: Record<string, unknown>) {
@@ -146,7 +204,45 @@ function canShowDetail(row: Record<string, unknown>) {
 }
 
 function visibleActions(row: Record<string, unknown>) {
-  return (schema.value?.actions || []).filter((action) => !action.when || action.when(row))
+  return (schema.value?.actions || []).filter((action) => !action.inDetail && (!action.when || action.when(row)))
+}
+
+function detailFooterActions() {
+  return (schema.value?.actions || []).filter((action) => action.inDetail)
+}
+
+function openActionDialog(action: RowAction, row: Record<string, unknown>) {
+  actionDef.value = action
+  actionRow.value = row
+  Object.keys(actionForm).forEach((key) => delete actionForm[key])
+  Object.assign(actionForm, action.dialog?.fill?.(row) || {})
+  actionOpen.value = true
+}
+
+async function submitAction() {
+  const action = actionDef.value
+  const row = actionRow.value
+  if (!action?.request || !row) return
+  for (const field of action.dialog?.fields || []) {
+    if (!field.required) continue
+    const value = actionForm[field.key]
+    if (value === '' || value == null || (Array.isArray(value) && !value.length)) {
+      ElMessage.warning(`请填写${field.label}`)
+      return
+    }
+  }
+  actionSaving.value = true
+  const res = await action.request(row, { ...actionForm })
+  actionSaving.value = false
+  if (!res.success) {
+    ElMessage.error(res.message)
+    return
+  }
+  const payload = res.data as { filename?: string; content?: string } | null
+  if (payload && payload.filename && payload.content) downloadText(payload.filename, payload.content)
+  ElMessage.success(res.message || '已完成')
+  actionOpen.value = false
+  load()
 }
 
 async function runAction(action: RowAction, row: Record<string, unknown>) {
@@ -159,14 +255,13 @@ async function runAction(action: RowAction, row: Record<string, unknown>) {
     router.push(String(row[action.pathFrom] || '/'))
     return
   }
-  if (action.confirm) await ElMessageBox.confirm(action.confirm, '确认')
-  const extra: Record<string, unknown> = {}
-  if (action.prompt) {
-    const answer = await ElMessageBox.prompt(action.prompt.message, action.prompt.title)
-    extra[action.prompt.key] = answer.value
+  if (action.dialog) {
+    openActionDialog(action, row)
+    return
   }
+  if (action.confirm) await ElMessageBox.confirm(action.confirm, '确认')
   if (!action.request) return
-  const res = await action.request(row, extra)
+  const res = await action.request(row, {})
   if (!res.success) {
     ElMessage.error(res.message)
     return
@@ -242,6 +337,8 @@ watch(() => [props.name, route.query.warehouse, route.query.keyword] as const, (
 
 const usageText = (row: Record<string, unknown>) => `${row.used ?? 0} / ${row.rate ?? 0}%`
 const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column.label, width: column.width, minWidth: column.minWidth })
+const detailTitle = computed(() => detailBlocks.value[0]?.title || '详情')
+const detailWidth = computed(() => (detailBlocks.value.some((block) => block.table) ? 920 : 640))
 </script>
 
 <template>
@@ -273,6 +370,7 @@ const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column
             <div class="usage">{{ usageText(row) }}</div>
             <el-progress :percentage="Number(row.rate || 0)" :stroke-width="8" :show-text="false" />
           </template>
+          <el-button v-else-if="schema.detailColumn === column.prop" link type="primary" @click="openDetail(row)">{{ row[column.prop] || '—' }}</el-button>
           <el-tag v-else-if="column.tag" :type="tagType(row[column.prop])" effect="light">{{ row[column.prop] || '—' }}</el-tag>
           <span v-else>{{ row[column.prop] === '' || row[column.prop] == null ? '—' : row[column.prop] }}</span>
         </template>
@@ -280,7 +378,7 @@ const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column
       <el-table-column v-if="schema.form || schema.showDetail || schema.actions?.length" label="操作" fixed="right" min-width="200">
         <template #default="{ row }">
           <el-button v-if="showEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="canShowDetail(row)" link type="primary" @click="openDetail(row)">详情</el-button>
+          <el-button v-if="canShowDetail(row) && !schema.detailColumn" link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button v-for="action in visibleActions(row)" :key="action.label" link type="primary" @click="runAction(action, row)">{{ action.label }}</el-button>
         </template>
       </el-table-column>
@@ -316,6 +414,18 @@ const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column
                 <el-button>选择文件</el-button>
                 <span class="file-name">{{ form[field.key] }}</span>
               </el-upload>
+              <div v-else-if="field.type === 'cells'" class="cells">
+                <template v-if="cellKeys(String(form[field.stackKey || ''] || '')).length">
+                  <button
+                    v-for="cell in cellKeys(String(form[field.stackKey || ''] || ''))"
+                    :key="cell"
+                    type="button"
+                    :class="{ on: cellOn(form[field.key], cell) }"
+                    @click="toggleCell(field.key, cell)"
+                  >{{ cell }}</button>
+                </template>
+                <span v-else class="file-name">请先选择已在平面图中绘制的堆位</span>
+              </div>
               <el-input v-else v-model="form[field.key]" :disabled="isDisabled(field)" :placeholder="field.placeholder" />
             </el-form-item>
           </el-col>
@@ -327,17 +437,44 @@ const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column
       </template>
     </el-dialog>
 
-    <el-drawer v-model="drawer" title="详情" size="640px">
-      <section v-for="block in detailBlocks" :key="block.title" class="detail-block">
-        <h3>{{ block.title }}</h3>
-        <el-descriptions v-if="block.fields?.length" :column="2" border>
-          <el-descriptions-item v-for="item in block.fields" :key="item.label" :label="item.label">{{ item.value }}</el-descriptions-item>
-        </el-descriptions>
-        <el-table v-if="block.table" :data="block.table.rows" border size="small" class="detail-table">
-          <el-table-column v-for="column in block.table.columns" :key="column.prop" :prop="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth" />
-        </el-table>
-      </section>
-    </el-drawer>
+    <el-dialog v-model="detailOpen" :title="detailTitle" :width="detailWidth" align-center destroy-on-close>
+      <div v-loading="detailLoading">
+        <section v-for="block in detailBlocks" :key="block.title" class="detail-block">
+          <h3 v-if="detailBlocks.length > 1">{{ block.title }}</h3>
+          <el-descriptions v-if="block.fields?.length" :column="2" border>
+            <el-descriptions-item v-for="item in block.fields" :key="item.label" :label="item.label">{{ item.value }}</el-descriptions-item>
+          </el-descriptions>
+          <el-table v-if="block.table" :data="block.table.rows" border size="small" class="detail-table">
+            <el-table-column v-for="column in block.table.columns" :key="column.prop" :prop="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth" />
+          </el-table>
+        </section>
+      </div>
+      <template #footer>
+        <el-button v-for="action in detailFooterActions()" :key="action.label" :disabled="!detailRow" @click="detailRow && runAction(action, detailRow)">{{ action.label }}</el-button>
+        <el-button @click="detailOpen = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-if="actionDef?.dialog" v-model="actionOpen" :title="actionDef.dialog.title" width="720px" align-center destroy-on-close>
+      <p v-if="actionDef.dialog.message" class="action-note">{{ actionDef.dialog.message }}</p>
+      <el-form label-width="120px">
+        <el-row :gutter="16">
+          <el-col v-for="field in actionDef.dialog.fields" :key="field.key" :span="field.span || (field.type === 'textarea' ? 24 : 12)">
+            <el-form-item :label="field.label">
+              <el-select v-if="field.type === 'select'" v-model="actionForm[field.key]" :disabled="isDisabled(field)" style="width: 100%">
+                <el-option v-for="opt in fieldOptions(field)" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+              <el-input v-else-if="field.type === 'textarea'" v-model="actionForm[field.key]" type="textarea" :rows="3" :placeholder="field.placeholder" />
+              <el-input v-else v-model="actionForm[field.key]" :disabled="isDisabled(field)" :placeholder="field.placeholder" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button @click="actionOpen = false">取消</el-button>
+        <el-button type="primary" :loading="actionSaving" @click="submitAction">{{ actionDef.dialog.confirmLabel || '确定' }}</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="monthDialog" title="按月导出在库" width="420px">
       <el-date-picker v-model="monthValue" type="month" value-format="YYYY-MM" placeholder="选择月份" />
@@ -356,7 +493,11 @@ const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column
 .usage { margin-bottom: 4px; font-size: 13px; }
 .assist { margin-bottom: 12px; }
 .file-name { margin-left: 8px; color: #5a6a7e; }
+.cells { display: flex; flex-wrap: wrap; gap: 6px; }
+.cells button { min-width: 52px; height: 28px; border: 1px solid #d8dee8; background: #fff; color: #1a2332; cursor: pointer; }
+.cells button.on { background: #1b4f8a; color: #fff; border-color: #1b4f8a; }
 .detail-block + .detail-block { margin-top: 20px; }
 .detail-block h3 { margin: 0 0 10px; font-size: 15px; }
 .detail-table { margin-top: 12px; }
+.action-note { margin: 0 0 16px; color: #5a6a7e; line-height: 1.6; }
 </style>

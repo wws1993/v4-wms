@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { floorApi, inventoryApi } from '@/api'
 import PlanSvg from '@/components/PlanSvg.vue'
-import { defaultPlan } from '@/plan/model'
+import { contentFrame, defaultPlan, hostOf } from '@/plan/model'
 import type { CargoLot } from '@/plan/model'
 import type { FloorPlan, PlanItem } from '@/types'
 
@@ -12,8 +12,10 @@ const plan = reactive<FloorPlan>(defaultPlan())
 const lots = ref<CargoLot[]>([])
 const satellite = ref(false)
 const focusId = ref('')
+const stageRef = ref<HTMLElement>()
 const view = reactive({ x: 0, y: 0, w: defaultPlan().gridCols, h: defaultPlan().gridRows })
 let fly = 0
+let observer: ResizeObserver | undefined
 
 onMounted(async () => {
   const [planRes, stockRes] = await Promise.all([
@@ -31,20 +33,52 @@ onMounted(async () => {
       status: String(row.status || ''),
     }))
   }
-  view.w = plan.gridCols
-  view.h = plan.gridRows
+  await nextTick()
+  applyFrame(contentFrame(plan))
+  if (stageRef.value) {
+    observer = new ResizeObserver(() => {
+      if (focusId.value) return
+      applyFrame(contentFrame(plan))
+    })
+    observer.observe(stageRef.value)
+  }
 })
 
+onBeforeUnmount(() => observer?.disconnect())
+
+function applyFrame(frame: { x: number; y: number; w: number; h: number }) {
+  const next = coverFrame(frame)
+  view.x = next.x
+  view.y = next.y
+  view.w = next.w
+  view.h = next.h
+}
+
+function coverFrame(frame: { x: number; y: number; w: number; h: number }) {
+  const el = stageRef.value
+  const aspect = el && el.clientHeight > 0 ? el.clientWidth / el.clientHeight : frame.w / frame.h
+  let w = frame.w
+  let h = frame.h
+  if (w / h < aspect) w = h * aspect
+  else h = w / aspect
+  return {
+    x: frame.x + frame.w / 2 - w / 2,
+    y: frame.y + frame.h / 2 - h / 2,
+    w,
+    h,
+  }
+}
+
 function frameOf(item?: PlanItem) {
-  if (!item) return { x: 0, y: 0, w: plan.gridCols, h: plan.gridRows }
+  if (!item) return coverFrame(contentFrame(plan))
   const padX = Math.max(0.6, item.cols * 0.12)
   const padY = Math.max(1.2, item.rows * 0.2)
-  return {
+  return coverFrame({
     x: item.col - padX,
     y: item.row - padY,
     w: item.cols + padX * 2,
     h: item.rows + padY * 2,
-  }
+  })
 }
 
 function flyTo(next: { x: number; y: number; w: number; h: number }) {
@@ -64,20 +98,25 @@ function flyTo(next: { x: number; y: number; w: number; h: number }) {
 }
 
 function onItem(item: PlanItem) {
-  if (item.type === 'stack') {
-    router.push('/stacks')
+  if (!focusId.value) {
+    const host = item.type === 'warehouse' || item.type === 'idle'
+      ? item
+      : item.type === 'stack'
+        ? hostOf(item, plan.items)
+        : undefined
+    if (!host) return
+    focusId.value = host.id
+    flyTo(frameOf(host))
     return
   }
-  if (item.type === 'warehouse' || item.type === 'idle') {
-    focusId.value = item.id
-    flyTo(frameOf(item))
-  }
+  if (item.type === 'stack') router.push('/stacks')
 }
 
 function back() {
   focusId.value = ''
   flyTo(frameOf())
 }
+
 </script>
 
 <template>
@@ -87,14 +126,17 @@ function back() {
       <label class="sat">卫星图 <el-switch v-model="satellite" /></label>
     </div>
     <div class="body">
-      <PlanSvg
-        :plan="plan"
-        theme="cockpit"
-        :satellite="satellite"
-        :lots="lots"
-        :view="view"
-        @item-down="(_event, item) => onItem(item)"
-      />
+      <div ref="stageRef" class="stage">
+        <PlanSvg
+          :plan="plan"
+          theme="cockpit"
+          :satellite="satellite"
+          :lots="lots"
+          :only-host-id="focusId"
+          :view="view"
+          @item-down="(_event, item) => onItem(item)"
+        />
+      </div>
       <button v-if="focusId" class="back" type="button" @click="back">返回总览</button>
       <ul v-if="!focusId" class="legend">
         <li><span>五矿有色达标/报备</span><i class="ore std" /><i class="ore" /></li>
@@ -149,6 +191,8 @@ function back() {
 .sat { display: flex; align-items: center; gap: 8px; color: #c5d0dc; font-size: 13px; }
 .sat :deep(.el-switch.is-checked .el-switch__core) { background: #e7c98a; border-color: #e7c98a; }
 .body { position: relative; flex: 1; min-height: 0; margin: 0 10px 10px; }
+.stage { position: absolute; inset: 0; }
+.stage :deep(.plan-svg) { width: 100%; height: 100%; }
 .back {
   position: absolute;
   left: 8px;

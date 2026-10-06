@@ -26,6 +26,37 @@
 html, body, #app { margin: 0; height: 100%; }
 body { background: var(--wms-bg); }
 
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #8da7c4 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #b9c9db;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #1b4f8a;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.el-scrollbar {
+  --el-scrollbar-opacity: 0.55;
+  --el-scrollbar-bg-color: #5d84ad;
+  --el-scrollbar-hover-opacity: 0.9;
+  --el-scrollbar-hover-bg-color: #1b4f8a;
+}
+
 .admin {
   display: flex;
   min-height: 100%;
@@ -54,7 +85,17 @@ body { background: var(--wms-bg); }
   border: 1px solid rgba(255,255,255,.35);
   border-radius: 4px;
 }
-.menu { padding: 8px 12px 24px; overflow: auto; }
+.menu {
+  padding: 8px 12px 24px;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.menu::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
 .group-title {
   margin: 16px 8px 8px;
   font-size: 14px;
@@ -95,5 +136,9 @@ body { background: var(--wms-bg); }
 }
 
 .admin.is-dashboard { background: #070d16; color: #fff; height: 100vh; overflow: hidden; }
+.admin.is-dashboard .el-scrollbar {
+  --el-scrollbar-bg-color: rgba(209, 192, 64, 0.72);
+  --el-scrollbar-hover-bg-color: #d1c040;
+}
 .admin.is-dashboard .main { min-height: 0; }
 .admin.is-dashboard .content { padding: 0; overflow: hidden; display: flex; min-height: 0; }

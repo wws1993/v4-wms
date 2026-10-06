@@ -17,7 +17,7 @@
 - `GET/POST /api/warehouses` — 仓库档案（编号 1/2/4/5/6 及**码头仓库**，总库容，**面积㎡仅展示可编辑**）
 - `GET/POST /api/warehouses/stacks` — 堆位（隶属于仓库；编码如 1#A1；含库容、片区标识；网格 rows/cols **由园区平面图该堆位占格计算**，不在堆位档案单独维护；档案页不展示报关单号/生产批次/占用率/查验状态）
 - `PUT /api/warehouses/stacks/{id}/area-label` — 更新片区标识（三类：**原料区 / 待检区 / 成品区**；完工入库写入待检区，查验完成改为成品区，留痕）
-- `GET/PUT /api/floor-plans` — 园区平面图（`id=park`：网格行×列 `gridRows`/`gridCols`、功能区/仓库/生产线/门/堆位/道路/灌木坐标；`stackGrids` 各堆位行列）。旧 `GET/PUT /api/warehouses/{id}/floor-plan` 单仓接口保留兼容。0 期原型已实现，见下文「原型平面图」
+- `GET/PUT /api/floor-plans` — 园区平面图。`data` 为 `{ id, gridPx, gridCols, gridRows, items[] }`。`items[]` 含 `id/type/name/col/row/cols/rows/color?`。保存后按仓内占格同步堆位网格。**对接前**前端把整图写入浏览器 `localStorage` 键 `wws.floor-plan`（信封 `{ savedAt, plan }`），刷新后仍可读；`VITE_USE_MOCK=false` 时同一路径改请求后端。0 期原型文件存储见下文「原型平面图」
 - `GET/POST /api/materials` — 物料档案（原料：达标矿/报备矿；成品：混成品；报备矿关联矿源；档案仅基础信息，不含原产国、备案号、商品编码、品质参数、附件、干湿重规则、默认账册、单证样例）
 - `GET /api/materials/export` — 物料档案导出 Excel（编码、名称、货物类型、类型、矿源）
 - `GET/POST /api/material-sources/filings` — 矿源备案（报备矿；含备案原产国、备案数量/核销/剩余/用量%、**关联生产批次号**、附件；一矿源多备案号；入库按矿源自动匹配；列表查询支持矿源、编号、状态、**备案日期起止**）

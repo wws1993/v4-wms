@@ -1,4 +1,6 @@
-import type { RoleKey } from '@/types'
+import type { FloorPlan, PlanItem, RoleKey } from '@/types'
+import { hostOf, warehouseMark } from '@/plan/model'
+import { loadFloorPlan, saveFloorPlan } from '@/plan/storage'
 import { db, nextId, type Row } from './db'
 import { daysBefore, fail, filled, inRange, includes, nowText, ok, pageOf, toCsv } from './util'
 
@@ -40,6 +42,54 @@ function syncWarehouse(code: string) {
   if (!house) return
   const stacks = db.stacks.filter((row) => row.warehouse === code)
   house.stackCount = stacks.length
+}
+
+function warehouseCode(name: string) {
+  if (name.includes('码头')) return '码头仓库'
+  const matched = name.match(/(\d+)/)
+  return matched ? `${matched[1]}仓` : name
+}
+
+function syncPlanStacks(items: PlanItem[]) {
+  const skip = new Set(['warehouse', 'idle', 'road', 'bush', 'door', 'line', 'office'])
+  const drawn: { item: PlanItem; code: string; warehouse: string }[] = []
+  for (const item of items) {
+    if (skip.has(item.type)) continue
+    const host = hostOf(item, items)
+    if (!host) continue
+    const slot = item.name.replace(/^\d+#/, '').trim()
+    if (!slot) continue
+    item.type = 'stack'
+    drawn.push({ item, code: `${warehouseMark(host)}#${slot}`, warehouse: warehouseCode(host.name) })
+  }
+  const aliveIds = new Set(drawn.map((row) => row.item.id))
+  for (const row of drawn) {
+    const found = db.stacks.find((stack) => stack.planId === row.item.id) || db.stacks.find((stack) => stack.code === row.code)
+    const grid = `${row.item.cols}×${row.item.rows}`
+    if (found) {
+      found.code = row.code
+      found.grid = grid
+      found.gridCols = row.item.cols
+      found.gridRows = row.item.rows
+      found.warehouse = row.warehouse
+      found.planId = row.item.id
+    } else {
+      db.stacks.unshift({
+        id: nextId('s'),
+        code: row.code,
+        warehouse: row.warehouse,
+        areaLabel: '原料区',
+        grid,
+        gridCols: row.item.cols,
+        gridRows: row.item.rows,
+        capacity: 0,
+        status: '启用',
+        planId: row.item.id,
+      })
+    }
+  }
+  db.stacks = db.stacks.filter((stack) => !stack.planId || aliveIds.has(String(stack.planId)))
+  new Set(db.stacks.map((stack) => String(stack.warehouse))).forEach((code) => syncWarehouse(code))
 }
 
 function buildAlerts() {
@@ -363,17 +413,28 @@ route('PUT', '/bonded-books/:id', ({ params, body }) => {
   return ok(db.books[index], '已保存')
 })
 
-route('GET', '/floor-plans', () => ok(db.floorPlan))
+function rememberFloorPlan(plan: FloorPlan) {
+  syncPlanStacks(plan.items)
+  db.floorPlan = plan
+  return plan
+}
+
+route('GET', '/floor-plans', () => {
+  const stored = loadFloorPlan()
+  return ok(rememberFloorPlan(stored ?? (db.floorPlan as FloorPlan)))
+})
 
 route('PUT', '/floor-plans', ({ body }) => {
-  db.floorPlan = {
-    id: 'park',
-    gridCols: Number(body.gridCols || 40),
-    gridRows: Number(body.gridRows || 24),
-    items: Array.isArray(body.items) ? body.items : [],
+  let plan: FloorPlan
+  try {
+    plan = saveFloorPlan(body)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '平面图保存失败'
+    return fail(message === '平面图数据无效' ? message : '本地存储空间不足，平面图未保存')
   }
-  audit({ module: '平面图设置', action: '保存平面图', bizNo: 'park', before: '—', after: `${db.floorPlan.items.length} 个图块` })
-  return ok({ id: 'park' }, '平面图已保存')
+  rememberFloorPlan(plan)
+  audit({ module: '平面图设置', action: '保存平面图', bizNo: plan.id, before: '—', after: `${plan.items.length} 个图块，网格 ${plan.gridPx}px` })
+  return ok(plan, '平面图已保存，堆位网格已同步')
 })
 
 route('GET', '/dashboard/cockpit', () => ok({
@@ -689,6 +750,9 @@ route('GET', '/audit-logs', ({ query }) => ok(pageOf(db.audits, query, (row) => 
   if (!includes(`${row.operator}${row.bizNo}`, query.keyword)) return false
   return inRange(String(row.time), query.from, query.to)
 })))
+
+const storedPlan = loadFloorPlan()
+if (storedPlan) rememberFloorPlan(storedPlan)
 
 export function handleMock(method: string, url: string, body?: unknown, params?: Query) {
   const path = url.split('?')[0]

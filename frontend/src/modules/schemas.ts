@@ -135,6 +135,7 @@ export const schemas: Record<string, ModuleSchema> = {
     create: materialApi.createFiling,
     exportRows: materialApi.exportFilings,
     showDetail: true,
+    detailColumn: 'code',
     async detail(row) {
       const res = await materialApi.lots(String(row.code))
       const blocks: DetailBlock[] = [{
@@ -155,7 +156,8 @@ export const schemas: Record<string, ModuleSchema> = {
       return blocks
     },
     actions: [{
-      label: '导出票货',
+      label: '导出 Excel',
+      inDetail: true,
       request: async (row) => materialApi.exportLots(String(row.code)),
     }],
   },
@@ -217,6 +219,12 @@ export const schemas: Record<string, ModuleSchema> = {
     create: bondedApi.create,
     update: bondedApi.update,
     showDetail: true,
+    detailColumn: 'code',
+    actions: [{
+      label: '导出 Excel',
+      inDetail: true,
+      request: async (row) => bondedApi.exportLots(String(row.code)),
+    }],
     async detail(row) {
       const res = await bondedApi.lots(String(row.code))
       return [{
@@ -302,11 +310,14 @@ export const schemas: Record<string, ModuleSchema> = {
       { key: 'shipMode', label: '装运方式', type: 'select', options: ['集装箱', '散货'], required: true },
       { key: 'containerCount', label: '集装箱柜数', type: 'number', when: (form) => form.shipMode === '集装箱', required: true },
       { key: 'consignor', label: '委托方', type: 'select', options: consignors, required: true },
-      { key: 'stackCode', label: '预定堆位', type: 'select', options: stackCodes, required: true },
-      { key: 'cells', label: '存放格子', placeholder: '如 1-1,1-2' },
+      { key: 'stackCode', label: '预定堆位', type: 'select', required: true, optionsFrom: 'stacks' },
+      { key: 'cells', label: '存放格子', type: 'cells', stackKey: 'stackCode', span: 24, required: true },
       { key: 'time', label: '时间', type: 'datetime', required: true },
       { key: 'status', label: '状态', type: 'select', options: ['暂存码头', '待收货', '已入库', '混成品'], required: true },
     ],
+    onFormChange(form, key) {
+      if (key === 'stackCode') form.cells = ''
+    },
     canEdit: (row) => row.status === '暂存码头' || row.status === '待收货',
     showDetail: (row) => row.status === '已入库' || row.status === '混成品',
     detail: (row) => [{
@@ -536,13 +547,35 @@ export const schemas: Record<string, ModuleSchema> = {
       {
         label: '完工入库',
         when: (row) => row.stage === '投料' || row.stage === '加工',
-        prompt: { title: '完工入库', message: '目标堆位仅限待检区，例如 4#A1', key: 'stackCode' },
+        dialog: {
+          title: '成品完工入库',
+          message: '完工入库目标堆位仅限待检区。检验完成后在堆位管理点击查验完成，片区标识改为成品区。',
+          confirmLabel: '完工入库',
+          fields: [
+            { key: 'prodBatch', label: '生产批次', disabled: true },
+            { key: 'customsNos', label: '关联报关单号', disabled: true },
+            { key: 'stackCode', label: '目标堆位', type: 'select', required: true, options: [{ label: '4#A1（4仓 / 待检区）', value: '4#A1' }] },
+          ],
+          fill: (row) => ({ prodBatch: row.prodBatch, customsNos: row.customsNos, stackCode: '4#A1' }),
+        },
         request: (row, extra) => productionApi.complete(String(row.id), String(extra.stackCode || '')),
       },
       {
         label: '查验完成',
         when: (row) => row.stage === '待检',
-        confirm: '确认查验完成？堆位片区标识将改为成品区。',
+        dialog: {
+          title: '批次查验完成',
+          message: '成品生产批次查验完成后，所在堆位的片区标识由待检区变为成品区。',
+          confirmLabel: '确认查验完成',
+          fields: [
+            { key: 'stackCode', label: '堆位', disabled: true },
+            { key: 'prodBatch', label: '生产批次', disabled: true },
+            { key: 'before', label: '当前片区标识', disabled: true },
+            { key: 'after', label: '变更后片区标识', disabled: true },
+            { key: 'opinion', label: '查验意见', type: 'textarea', span: 24, placeholder: '可选：品质复核说明' },
+          ],
+          fill: (row) => ({ stackCode: row.stackCode, prodBatch: row.prodBatch, before: '待检区', after: '成品区', opinion: '' }),
+        },
         request: (row) => productionApi.inspect(String(row.id)),
       },
     ],
