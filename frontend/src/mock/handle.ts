@@ -1,7 +1,9 @@
 import type { FloorPlan, PlanItem, RoleKey } from '@/types'
-import { hostOf, warehouseMark } from '@/plan/model'
 import { loadFloorPlan, saveFloorPlan } from '@/plan/storage'
+import { presentAudit } from '@/audit/present'
 import { db, nextId, type Row } from './db'
+import { monthlyTickets } from './ledger'
+import { passwordIssue } from '@/security/policy'
 import { daysBefore, fail, filled, inRange, includes, nowText, ok, pageOf, toCsv } from './util'
 
 type Query = Record<string, unknown>
@@ -37,6 +39,17 @@ function findIndex(list: Row[], id: string) {
   return list.findIndex((row) => row.id === id)
 }
 
+function setRowStatus(list: Row[], id: string, status: unknown, module: string, biz: string) {
+  const index = findIndex(list, id)
+  if (index < 0) return fail(`${biz}不存在`)
+  if (status !== '启用' && status !== '停用') return fail('状态只能是启用或停用')
+  const prev = String(list[index].status || '')
+  list[index].status = status
+  const code = String(list[index].code || list[index].username || id)
+  audit({ module, action: status === '停用' ? '停用' : '启用', bizNo: code, before: prev, after: String(status) })
+  return ok(list[index], status === '停用' ? '已停用' : '已启用')
+}
+
 function syncWarehouse(code: string) {
   const house = db.warehouses.find((row) => row.code === code)
   if (!house) return
@@ -44,52 +57,19 @@ function syncWarehouse(code: string) {
   house.stackCount = stacks.length
 }
 
-function warehouseCode(name: string) {
-  if (name.includes('码头')) return '码头仓库'
-  const matched = name.match(/(\d+)/)
-  return matched ? `${matched[1]}仓` : name
-}
-
+/** 平面图保存后，只把已关联堆位的占格写回档案。新增和删除由平面图编辑器在点击保存时处理。 */
 function syncPlanStacks(items: PlanItem[]) {
-  const skip = new Set(['warehouse', 'idle', 'road', 'bush', 'door', 'line', 'office'])
-  const drawn: { item: PlanItem; code: string; warehouse: string }[] = []
   for (const item of items) {
-    if (skip.has(item.type)) continue
-    const host = hostOf(item, items)
-    if (!host) continue
-    const slot = item.name.replace(/^\d+#/, '').trim()
-    if (!slot) continue
-    item.type = 'stack'
-    drawn.push({ item, code: `${warehouseMark(host)}#${slot}`, warehouse: warehouseCode(host.name) })
+    if (item.type !== 'stack' || !item.stackId) continue
+    const found = db.stacks.find((stack) => String(stack.id) === item.stackId)
+    if (!found) continue
+    const cols = Math.max(1, Math.round(item.cols))
+    const rows = Math.max(1, Math.round(item.rows))
+    found.grid = `${cols}×${rows}`
+    found.gridCols = cols
+    found.gridRows = rows
+    found.planId = item.id
   }
-  const aliveIds = new Set(drawn.map((row) => row.item.id))
-  for (const row of drawn) {
-    const found = db.stacks.find((stack) => stack.planId === row.item.id) || db.stacks.find((stack) => stack.code === row.code)
-    const grid = `${row.item.cols}×${row.item.rows}`
-    if (found) {
-      found.code = row.code
-      found.grid = grid
-      found.gridCols = row.item.cols
-      found.gridRows = row.item.rows
-      found.warehouse = row.warehouse
-      found.planId = row.item.id
-    } else {
-      db.stacks.unshift({
-        id: nextId('s'),
-        code: row.code,
-        warehouse: row.warehouse,
-        areaLabel: '原料区',
-        grid,
-        gridCols: row.item.cols,
-        gridRows: row.item.rows,
-        capacity: 0,
-        status: '启用',
-        planId: row.item.id,
-      })
-    }
-  }
-  db.stacks = db.stacks.filter((stack) => !stack.planId || aliveIds.has(String(stack.planId)))
-  new Set(db.stacks.map((stack) => String(stack.warehouse))).forEach((code) => syncWarehouse(code))
 }
 
 function buildAlerts() {
@@ -100,6 +80,7 @@ function buildAlerts() {
       list.push({
         id: `cap-${house.id}`,
         type: '库容',
+        level: Number(house.rate) >= 90 ? '高' : '中',
         target: String(house.code),
         detail: `${house.code}占用${house.rate}%，已达 ${params.capacityWarn}% 阈值`,
         time: nowText().slice(0, 10),
@@ -114,6 +95,7 @@ function buildAlerts() {
       list.push({
         id: `age-${row.id}`,
         type: '库龄',
+        level: '中',
         target: String(row.batchNo),
         detail: `${row.batchNo} 原料在库 ${age} 天，超过 ${params.ageWarn} 天`,
         time: String(row.inDate),
@@ -124,6 +106,7 @@ function buildAlerts() {
       list.push({
         id: `dock-${row.id}`,
         type: '码头超期',
+        level: '高',
         target: String(row.batchNo),
         detail: `码头仓库 ${row.batchNo} 已存放 ${age} 天，超过 ${params.dockDays} 天`,
         time: String(row.inDate),
@@ -136,6 +119,7 @@ function buildAlerts() {
       list.push({
         id: `filing-${row.id}`,
         type: '备案用量',
+        level: '中',
         target: String(row.code),
         detail: `${row.source} 备案用量 ${row.usage}%，达到 ${params.filingUsageWarn}%`,
         time: String(row.filingDate),
@@ -177,11 +161,32 @@ route('GET', '/auth/users', ({ query }) => ok(pageOf(db.users.map(({ password: _
   return includes(row.username, query.keyword) || includes(row.name, query.keyword)
 })))
 
+route('POST', '/auth/password', ({ body }) => {
+  let username = ''
+  try {
+    username = String((JSON.parse(sessionStorage.getItem('wms_auth') || 'null') as { username?: string } | null)?.username || '')
+  } catch {
+    username = ''
+  }
+  const user = db.users.find((item) => item.username === username)
+  if (!user || user.password !== body.oldPassword) return fail('原密码不正确')
+  if (body.newPassword === body.oldPassword) return fail('新密码不能与原密码相同')
+  const issue = passwordIssue(body.newPassword)
+  if (issue) return fail(issue)
+  user.password = String(body.newPassword)
+  audit({ module: '系统设置', action: '修改密码', bizNo: user.username, before: '—', after: '已更新' })
+  return ok(true, '密码已更新')
+})
+
 route('POST', '/auth/users', ({ body }) => {
   if (db.users.some((item) => item.username === body.username)) return fail('账号已存在')
+  const password = String(body.password || '')
+  if (!password) return fail('请填写密码')
+  const issue = passwordIssue(password)
+  if (issue) return fail(issue)
   const roleKey = String(body.roleKey || 'warehouse') as RoleKey
   const roleName = roleKey === 'admin' ? '系统管理员' : roleKey === 'customs' ? '关务员' : '仓管员'
-  const row: Row = { id: nextId('u'), username: body.username, password: body.password || '123456', name: body.name, roleKey, roleName, phone: body.phone || '', status: body.status || '启用' }
+  const row: Row = { id: nextId('u'), username: body.username, password, name: body.name, roleKey, roleName, phone: body.phone || '', status: body.status || '启用' }
   db.users.unshift(row as (typeof db.users)[number])
   audit({ module: '系统设置', action: '注册账号', bizNo: row.username, before: '—', after: roleName })
   const { password: _password, ...safe } = row
@@ -196,6 +201,8 @@ route('PUT', '/auth/users/:id', ({ params, body }) => {
   audit({ module: '系统设置', action: '修改账号', bizNo: prev.username, before: String(prev.status), after: String(db.users[index].status) })
   return ok(true, '已保存')
 })
+
+route('PUT', '/auth/users/:id/status', ({ params, body }) => setRowStatus(db.users, params.id, body.status, '系统设置', '账号'))
 
 route('GET', '/roles/permissions', () => ok(db.rolePerms))
 
@@ -217,6 +224,7 @@ route('PUT', '/settings/params', ({ body }) => {
     dockDays: Number(body.dockDays ?? db.params.dockDays),
     filingUsageWarn: Number(body.filingUsageWarn ?? db.params.filingUsageWarn),
     qualities: String(body.qualities ?? db.params.qualities),
+    qualityItems: Array.isArray(body.qualityItems) ? body.qualityItems : db.params.qualityItems,
   }
   audit({ module: '系统设置', action: '修改参数', bizNo: 'params', before, after: JSON.stringify(db.params) })
   return ok(db.params, '参数已保存')
@@ -229,12 +237,25 @@ route('GET', '/warehouses/stacks', ({ query }) => ok(pageOf(db.stacks, query, (r
 })))
 
 route('POST', '/warehouses/stacks', ({ body }) => {
-  const row: Row = { id: nextId('s'), code: body.code, warehouse: body.warehouse, areaLabel: body.areaLabel, grid: '—', capacity: Number(body.capacity || 0), status: body.status || '启用' }
+  const house = db.warehouses.find((row) => row.code === body.warehouse)
+  const row: Row = { id: nextId('s'), code: body.code, warehouse: body.warehouse, warehouseId: house?.id || '', areaLabel: body.areaLabel, grid: '—', capacity: Number(body.capacity || 0), status: body.status || '启用' }
   db.stacks.unshift(row)
   syncWarehouse(String(row.warehouse))
   audit({ module: '堆位管理', action: '新建堆位', bizNo: row.code, before: '—', after: String(row.areaLabel) })
   return ok(row, '堆位已创建')
 })
+
+route('DELETE', '/warehouses/stacks/:id', ({ params }) => {
+  const index = findIndex(db.stacks, params.id)
+  if (index < 0) return fail('堆位不存在')
+  const row = db.stacks[index]
+  db.stacks.splice(index, 1)
+  syncWarehouse(String(row.warehouse))
+  audit({ module: '堆位管理', action: '删除堆位', bizNo: row.code, before: String(row.areaLabel), after: '—' })
+  return ok(true, '已删除')
+})
+
+route('PUT', '/warehouses/stacks/:id/status', ({ params, body }) => setRowStatus(db.stacks, params.id, body.status, '堆位管理', '堆位'))
 
 route('PUT', '/warehouses/stacks/:id', ({ params, body }) => {
   const index = findIndex(db.stacks, params.id)
@@ -250,6 +271,15 @@ route('PUT', '/warehouses/stacks/:id', ({ params, body }) => {
   return ok(db.stacks[index], '已保存')
 })
 
+route('POST', '/warehouses/stacks/:id/inspect', ({ params }) => {
+  const row = db.stacks.find((item) => item.id === params.id)
+  if (!row) return fail('堆位不存在')
+  if (row.areaLabel !== '待检区') return fail('仅待检区堆位可以查验完成')
+  row.areaLabel = '成品区'
+  audit({ module: '堆位管理', action: '查验完成', bizNo: row.code, before: '待检区', after: '成品区' })
+  return ok(row, '片区标识已改为成品区')
+})
+
 route('GET', '/warehouses', ({ query }) => ok(pageOf(db.warehouses, query, (row) => {
   if (filled(query.status) && row.status !== query.status) return false
   return includes(row.code, query.keyword)
@@ -263,6 +293,19 @@ route('POST', '/warehouses', ({ body }) => {
   return ok(row, '仓库已创建')
 })
 
+route('DELETE', '/warehouses/:id', ({ params }) => {
+  const index = findIndex(db.warehouses, params.id)
+  if (index < 0) return fail('仓库不存在')
+  const row = db.warehouses[index]
+  const stacks = db.stacks.filter((item) => item.warehouse === row.code)
+  if (stacks.length) return fail('请先删除该仓库下的堆位')
+  db.warehouses.splice(index, 1)
+  audit({ module: '仓位管理', action: '删除仓库', bizNo: row.code, before: String(row.status), after: '—' })
+  return ok(true, '已删除')
+})
+
+route('PUT', '/warehouses/:id/status', ({ params, body }) => setRowStatus(db.warehouses, params.id, body.status, '仓位管理', '仓库'))
+
 route('PUT', '/warehouses/:id', ({ params, body }) => {
   const index = findIndex(db.warehouses, params.id)
   if (index < 0) return fail('仓库不存在')
@@ -275,21 +318,69 @@ route('PUT', '/warehouses/:id', ({ params, body }) => {
   return ok(prev, '已保存')
 })
 
-route('GET', '/materials/export', () => ok({
-  filename: '物料档案.csv',
-  content: toCsv([
-    { key: 'code', label: '编码' },
-    { key: 'name', label: '名称' },
-    { key: 'cargoType', label: '货物类型' },
-    { key: 'kind', label: '类型' },
-    { key: 'source', label: '矿源' },
-  ], db.materials),
-}, '导出成功'))
+route('GET', '/shipping-methods', () => ok({
+  list: [
+    { id: 'ship-box', name: '集装箱', containers: 0 },
+    { id: 'ship-bulk', name: '散货', containers: 0 },
+  ],
+  total: 2,
+  page: 1,
+  pageSize: 20,
+}))
 
-route('GET', '/materials', ({ query }) => ok(pageOf(db.materials, query, (row) => includes(`${row.code}${row.name}`, query.keyword) && (!filled(query.kind) || row.kind === query.kind))))
+function materialMatch(row: Row, query: Query) {
+  return includes(`${row.code}${row.name}`, query.keyword)
+    && (!filled(query.kind) || row.kind === query.kind)
+    && (!filled(query.cargoType) || row.cargoType === query.cargoType)
+}
+
+function filingView(row: Row): Row {
+  const qty = Number(row.qty) || 0
+  const used = Number(row.usedQty) || 0
+  const remain = Math.max(0, Math.round((qty - used) * 100) / 100)
+  const usageNum = qty ? (used / qty) * 100 : 0
+  const threshold = Number(db.params.filingUsageWarn) || 80
+  let status = '有效'
+  if (remain <= 0 || usageNum >= 100) status = '已用尽'
+  else if (usageNum >= threshold) status = '即将用尽'
+  const attachment = String(row.attachment || '')
+  return {
+    ...row,
+    remain,
+    usage: `${usageNum.toFixed(2)}%`,
+    status,
+    attachmentText: attachment ? '1 个' : '—',
+    prodBatches: row.prodBatches && row.prodBatches !== '—' ? row.prodBatches : '—',
+  }
+}
+
+function filingMatch(row: Row, query: Query) {
+  const view = filingView(row)
+  if (filled(query.source) && view.source !== query.source) return false
+  if (filled(query.status) && view.status !== query.status) return false
+  if (!includes(view.code, query.keyword)) return false
+  return inRange(String(view.filingDate || ''), query.from, query.to)
+}
+
+route('GET', '/materials/export', ({ query }) => {
+  const day = new Date().toISOString().slice(0, 10)
+  const rows = db.materials.filter((row) => materialMatch(row, query)).map((row) => ({ ...row, source: row.source || '—' }))
+  return ok({
+    filename: `物料档案_${day}.csv`,
+    content: toCsv([
+      { key: 'code', label: '物料编码' },
+      { key: 'name', label: '名称' },
+      { key: 'cargoType', label: '货物类型' },
+      { key: 'kind', label: '类型' },
+      { key: 'source', label: '矿源' },
+    ], rows),
+  }, '导出成功')
+})
+
+route('GET', '/materials', ({ query }) => ok(pageOf(db.materials, query, (row) => materialMatch(row, query))))
 
 route('POST', '/materials', ({ body }) => {
-  const row: Row = { id: nextId('m'), code: body.code, name: body.name, cargoType: body.cargoType, kind: body.kind, source: body.kind === '原料' && body.cargoType === '报备矿' ? body.source : '' }
+  const row: Row = { id: nextId('m'), code: body.code, name: body.name, cargoType: body.cargoType, kind: body.kind, source: body.kind === '原料' ? body.source || '' : '' }
   db.materials.unshift(row)
   audit({ module: '物料档案', action: '新建物料', bizNo: row.code, before: '—', after: `${row.kind}/${row.cargoType}` })
   return ok(row, '物料已创建')
@@ -300,53 +391,102 @@ route('PUT', '/materials/:id', ({ params, body }) => {
   if (index < 0) return fail('物料不存在')
   const prev = { ...db.materials[index] }
   Object.assign(db.materials[index], body, { id: prev.id })
-  if (db.materials[index].kind !== '原料' || db.materials[index].cargoType !== '报备矿') db.materials[index].source = ''
+  if (db.materials[index].kind !== '原料') db.materials[index].source = ''
   audit({ module: '物料档案', action: '编辑物料', bizNo: prev.code, before: String(prev.name), after: String(db.materials[index].name) })
   return ok(db.materials[index], '已保存')
 })
 
-route('GET', '/material-sources/filings/export', () => ok({
-  filename: '矿源备案.csv',
-  content: toCsv([
-    { key: 'code', label: '备案编号' },
-    { key: 'source', label: '矿源' },
-    { key: 'originCountry', label: '原产国' },
-    { key: 'qty', label: '备案数量' },
-    { key: 'remain', label: '剩余' },
-    { key: 'usage', label: '用量%' },
-    { key: 'prodBatches', label: '生产批次号' },
-  ], db.filings),
-}))
+route('DELETE', '/materials/:id', ({ params }) => {
+  const index = findIndex(db.materials, params.id)
+  if (index < 0) return fail('物料不存在')
+  const prev = db.materials[index]
+  db.materials.splice(index, 1)
+  audit({ module: '物料档案', action: '删除物料', bizNo: prev.code, before: String(prev.name), after: '—' })
+  return ok(true, '已删除')
+})
+
+route('GET', '/material-sources/filings/export', ({ query }) => {
+  const day = new Date().toISOString().slice(0, 10)
+  const rows = db.filings.filter((row) => filingMatch(row, query)).map(filingView)
+  return ok({
+    filename: `矿源备案_${day}.csv`,
+    content: toCsv([
+      { key: 'source', label: '矿源' },
+      { key: 'originCountry', label: '备案原产国' },
+      { key: 'code', label: '矿源备案编号' },
+      { key: 'filingDate', label: '备案日期' },
+      { key: 'status', label: '状态' },
+      { key: 'qty', label: '备案数量(DMT)' },
+      { key: 'usedQty', label: '核销吨数' },
+      { key: 'remain', label: '剩余吨数' },
+      { key: 'usage', label: '用量%' },
+      { key: 'prodBatches', label: '生产批次号' },
+    ], rows),
+  })
+})
 
 route('GET', '/material-sources/filings/:code/lots/export', ({ params }) => ok({
-  filename: `${params.code}-票货.csv`,
+  filename: `矿源备案票货_${params.code}.csv`,
   content: toCsv([
     { key: 'customsNo', label: '报关单号' },
     { key: 'prodBatch', label: '生产批次号' },
     { key: 'consignor', label: '委托方' },
-    { key: 'wet', label: '湿吨' },
-    { key: 'dry', label: '干吨' },
+    { key: 'material', label: '物料' },
+    { key: 'cargoType', label: '货物类型' },
     { key: 'stack', label: '堆位' },
+    { key: 'wet', label: '湿重' },
+    { key: 'dry', label: '干重(DMT)' },
+    { key: 'inAt', label: '入库时间' },
     { key: 'status', label: '状态' },
   ], db.filingLots[params.code] || []),
 }))
 
 route('GET', '/material-sources/filings/:code/lots', ({ params }) => ok(db.filingLots[params.code] || []))
 
-route('GET', '/material-sources/filings', ({ query }) => ok(pageOf(db.filings, query, (row) => {
-  if (filled(query.source) && row.source !== query.source) return false
-  if (filled(query.status) && row.status !== query.status) return false
-  if (!includes(row.code, query.keyword)) return false
-  return inRange(String(row.filingDate), query.from, query.to)
-})))
+route('GET', '/material-sources/filings', ({ query }) => ok(pageOf(db.filings.map(filingView), query, (row) => filingMatch(row, query))))
 
 route('POST', '/material-sources/filings', ({ body }) => {
   const qty = Number(body.qty || 0)
-  const row: Row = { id: nextId('f'), code: body.code, source: body.source, originCountry: body.originCountry, qty, usedQty: 0, remain: qty, usage: 0, status: body.status || '有效', filingDate: body.filingDate, prodBatches: body.prodBatches || '', attachment: body.attachment || '' }
+  if (!body.code || !body.source || !body.originCountry) return fail('请填写矿源、备案原产国和备案编号')
+  if (!(qty > 0)) return fail('请填写备案数量')
+  const row: Row = {
+    id: nextId('f'),
+    code: body.code,
+    source: body.source,
+    originCountry: body.originCountry,
+    qty,
+    usedQty: 0,
+    remain: qty,
+    usage: 0,
+    status: '有效',
+    filingDate: body.filingDate,
+    prodBatches: '—',
+    attachment: body.attachment || '',
+  }
   db.filings.unshift(row)
   db.filingLots[String(row.code)] = []
   audit({ module: '矿源备案', action: '新建备案', bizNo: row.code, before: '—', after: String(row.source) })
-  return ok(row, '备案已创建')
+  return ok(filingView(row), '备案已创建')
+})
+
+route('PUT', '/material-sources/filings/:id', ({ params, body }) => {
+  const index = findIndex(db.filings, params.id)
+  if (index < 0) return fail('备案不存在')
+  const prev = db.filings[index]
+  const qty = Number(body.qty ?? prev.qty)
+  const used = Number(prev.usedQty) || 0
+  if (qty < used) return fail('备案数量不能小于已核销吨数')
+  Object.assign(prev, {
+    source: body.source || prev.source,
+    originCountry: body.originCountry || prev.originCountry,
+    filingDate: body.filingDate || prev.filingDate,
+    qty,
+    remain: Math.round((qty - used) * 100) / 100,
+    usage: qty ? Math.round((used / qty) * 10000) / 100 : 0,
+    attachment: body.attachment ?? prev.attachment,
+  })
+  audit({ module: '矿源备案', action: '编辑备案', bizNo: prev.code, before: String(prev.source), after: String(body.source || prev.source) })
+  return ok(filingView(prev), '已保存')
 })
 
 route('GET', '/partners/consignors', () => ok(db.partners.filter((row) => row.role === '委托方').map((row) => row.name)))
@@ -364,6 +504,8 @@ route('POST', '/partners', ({ body }) => {
   return ok(row, '已创建')
 })
 
+route('PUT', '/partners/:id/status', ({ params, body }) => setRowStatus(db.partners, params.id, body.status, '往来主体', '主体'))
+
 route('PUT', '/partners/:id', ({ params, body }) => {
   const index = findIndex(db.partners, params.id)
   if (index < 0) return fail('主体不存在')
@@ -372,6 +514,121 @@ route('PUT', '/partners/:id', ({ params, body }) => {
   Object.assign(db.partners[index], body, { id: prev.id, source: prev.source })
   audit({ module: '往来主体', action: '编辑', bizNo: prev.code, before: String(prev.name), after: String(db.partners[index].name) })
   return ok(db.partners[index], '已保存')
+})
+
+route('GET', '/dicts/types', ({ query }) => ok(pageOf(db.dictTypes, query, (row) => {
+  if (filled(query.status) && row.status !== query.status) return false
+  if (filled(query.name) && !includes(row.name, query.name)) return false
+  return !filled(query.type) || includes(row.type, query.type)
+})))
+
+route('POST', '/dicts/types', ({ body }) => {
+  const type = String(body.type || '')
+  if (!/^[a-z][a-z0-9_]*$/.test(type)) return fail('字典类型须以小写字母开头，只能含小写字母、数字和下划线')
+  if (db.dictTypes.some((row) => row.type === type)) return fail('字典类型已存在')
+  const row: Row = { id: nextId('dt'), name: body.name, type, status: body.status || '正常', remark: body.remark || '', createdAt: nowText() }
+  db.dictTypes.unshift(row)
+  audit({ module: '字典管理', action: '新建类型', bizNo: type, before: '—', after: String(row.name) })
+  return ok(row, '已保存')
+})
+
+route('PUT', '/dicts/types/:id', ({ params, body }) => {
+  const index = findIndex(db.dictTypes, params.id)
+  if (index < 0) return fail('字典类型不存在')
+  const prev = { ...db.dictTypes[index] }
+  const type = String(body.type || prev.type)
+  if (!/^[a-z][a-z0-9_]*$/.test(type)) return fail('字典类型须以小写字母开头，只能含小写字母、数字和下划线')
+  Object.assign(db.dictTypes[index], { name: body.name, type, status: body.status || prev.status, remark: body.remark ?? prev.remark })
+  if (prev.type !== type) {
+    db.dictData.forEach((item) => {
+      if (item.type === prev.type) item.type = type
+    })
+  }
+  audit({ module: '字典管理', action: '编辑类型', bizNo: type, before: String(prev.name), after: String(body.name) })
+  return ok(db.dictTypes[index], '已保存')
+})
+
+route('DELETE', '/dicts/types/:id', ({ params }) => {
+  const index = findIndex(db.dictTypes, params.id)
+  if (index < 0) return fail('字典类型不存在')
+  const prev = db.dictTypes[index]
+  db.dictTypes.splice(index, 1)
+  for (let i = db.dictData.length - 1; i >= 0; i -= 1) {
+    if (db.dictData[i].type === prev.type) db.dictData.splice(i, 1)
+  }
+  audit({ module: '字典管理', action: '删除类型', bizNo: prev.type, before: String(prev.name), after: '—' })
+  return ok(true, '已删除')
+})
+
+route('DELETE', '/dicts/cache', () => ok(true, '字典缓存已刷新'))
+
+route('GET', '/dicts/labels', ({ query }) => ok(
+  db.dictData
+    .filter((row) => row.type === query.type && row.status !== '停用')
+    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0))
+    .map((row) => String(row.label || ''))
+    .filter(Boolean),
+))
+
+route('GET', '/dicts/data', ({ query }) => ok(pageOf(db.dictData, query, (row) => {
+  if (filled(query.type) && row.type !== query.type) return false
+  if (filled(query.status) && row.status !== query.status) return false
+  return includes(row.label, query.label)
+})))
+
+route('POST', '/dicts/data', ({ body }) => {
+  if (!db.dictTypes.some((row) => row.type === body.type)) return fail('请选择字典类型')
+  const row: Row = {
+    id: nextId('dd'),
+    type: body.type,
+    sort: Number(body.sort || 0),
+    label: body.label,
+    value: body.value,
+    isDefault: body.isDefault || '否',
+    status: body.status || '正常',
+    remark: body.remark || '',
+    cssClass: body.cssClass || '',
+    listClass: body.listClass || '',
+    createdAt: nowText(),
+  }
+  db.dictData.unshift(row)
+  audit({ module: '字典管理', action: '新建字典值', bizNo: String(body.type), before: '—', after: String(row.label) })
+  return ok(row, '已保存')
+})
+
+route('PUT', '/dicts/data/:id', ({ params, body }) => {
+  const index = findIndex(db.dictData, params.id)
+  if (index < 0) return fail('字典值不存在')
+  const prev = { ...db.dictData[index] }
+  Object.assign(db.dictData[index], {
+    sort: Number(body.sort ?? prev.sort),
+    label: body.label,
+    value: body.value,
+    isDefault: body.isDefault || prev.isDefault,
+    status: body.status || prev.status,
+    remark: body.remark ?? prev.remark,
+  })
+  audit({ module: '字典管理', action: '编辑字典值', bizNo: String(prev.type), before: String(prev.label), after: String(body.label) })
+  return ok(db.dictData[index], '已保存')
+})
+
+route('DELETE', '/dicts/data/:id', ({ params }) => {
+  const index = findIndex(db.dictData, params.id)
+  if (index < 0) return fail('字典值不存在')
+  const prev = db.dictData[index]
+  db.dictData.splice(index, 1)
+  audit({ module: '字典管理', action: '删除字典值', bizNo: String(prev.type), before: String(prev.label), after: '—' })
+  return ok(true, '已删除')
+})
+
+route('DELETE', '/partners/:id', ({ params }) => {
+  const index = findIndex(db.partners, params.id)
+  if (index < 0) return fail('主体不存在')
+  if (db.partners[index].source === '出库识别') return fail('出库识别的流向企业不能删除')
+  const prev = db.partners[index]
+  db.partners.splice(index, 1)
+  audit({ module: '往来主体', action: '删除', bizNo: prev.code, before: String(prev.name), after: '—' })
+  return ok(true, '已删除')
 })
 
 route('GET', '/bonded-books/:code/lots/export', ({ params }) => ok({
@@ -394,21 +651,113 @@ route('GET', '/bonded-books', ({ query }) => ok(pageOf(db.books, query, (row) =>
   return inRange(String(row.warnDate), query.from, query.to)
 })))
 
+function activeBook() {
+  return db.books.find((row) => row.status === '在用' || row.status === '新账')
+}
+
+function shippedTicketKeys(lots: Record<string, unknown>[]) {
+  const keys = new Set<string>()
+  lots.forEach((lot) => {
+    if (lot.direction !== '出库') return
+    const key = String(lot.customsNo || lot.blNo || '')
+    if (key) keys.add(key)
+  })
+  db.inventory.forEach((row) => {
+    if (row.status !== '已出库') return
+    const key = String(row.batchNo || '')
+    if (key) keys.add(key)
+  })
+  return keys
+}
+
+function carryOpenLots(fromCode: string, toCode: string) {
+  const lots = db.bookLots[fromCode] || []
+  const shipped = shippedTicketKeys(lots)
+  const stay: Record<string, unknown>[] = []
+  const move: Record<string, unknown>[] = []
+  lots.forEach((lot) => {
+    const key = String(lot.customsNo || lot.blNo || '')
+    const closed = lot.direction === '出库' || (!!key && shipped.has(key))
+    if (closed) stay.push(lot)
+    else move.push({ ...lot, transferredFrom: fromCode })
+  })
+  db.bookLots[fromCode] = stay
+  db.bookLots[toCode] = move
+  return move.length
+}
+
 route('POST', '/bonded-books', ({ body }) => {
-  if (body.status === '新账' && !filled(body.warnDate)) return fail('新账衔接旧账须填写旧账预警日期')
-  const row: Row = { id: nextId('b'), code: body.code, name: body.name, operator: body.operator, value: Number(body.value || 0), customsNo: body.customsNo, status: body.status, prevBook: body.prevBook || '', warnDate: body.warnDate || '' }
+  const code = String(body.code || '').trim()
+  const name = String(body.name || '').trim()
+  if (!code || !name) return fail('请填写账册编号与名称')
+  if (db.books.some((row) => row.code === code)) return fail('账册编号已存在')
+  const current = activeBook()
+  if (current && !filled(body.warnDate)) return fail('衔接旧账册须填写旧账预警日期')
+  const row: Row = {
+    id: nextId('b'),
+    code,
+    name,
+    operator: '',
+    value: 0,
+    customsNo: '',
+    status: '在用',
+    prevBook: current ? String(current.code) : '',
+    warnDate: body.warnDate || '',
+  }
+  let moved = 0
+  if (current) {
+    current.status = '停用'
+    moved = carryOpenLots(String(current.code), code)
+  } else {
+    db.bookLots[code] = []
+  }
   db.books.unshift(row)
-  db.bookLots[String(row.code)] = []
-  audit({ module: '保税账册', action: '新建账册', bizNo: row.code, before: '—', after: String(row.status) })
-  return ok(row, '账册已创建')
+  audit({ module: '保税账册', action: '备案账册', bizNo: row.code, before: current ? String(current.code) : '—', after: `在用，转入 ${moved} 票` })
+  const message = current ? `账册已备案，${current.code} 已停用，转入 ${moved} 票在册未出库票货` : '账册已备案'
+  return ok(row, message)
+})
+
+function monthlyLedgerRows(query: Query) {
+  const month = String(query.month || '2026-08')
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return { message: '月份请按 2026-08 填写' }
+  const rows = monthlyTickets(db.ledgerTickets, month).filter((row) => {
+    if (filled(query.status) && row.monthlyStatus !== query.status) return false
+    return includes(`${row.seq}${row.customsNo}`, query.keyword)
+  })
+  return { month, rows }
+}
+
+const monthlyExportColumns = [
+  { key: 'month', label: '入库账期' },
+  { key: 'seq', label: '票次' },
+  { key: 'customsNo', label: '报关单号' },
+  { key: 'inboundTons', label: '入库(吨)' },
+  { key: 'monthConsume', label: '当月耗用(吨)' },
+  { key: 'monthlyStatus', label: '出清' },
+  { key: 'nextStock', label: '次月库存' },
+]
+
+route('GET', '/ledger/monthly/export', ({ query }) => {
+  const result = monthlyLedgerRows(query)
+  if (result.message || !result.rows) return fail(result.message || '无法导出')
+  return ok({ filename: `月度账册-${result.month}.csv`, content: toCsv(monthlyExportColumns, result.rows) })
+})
+
+route('GET', '/ledger/monthly', ({ query }) => {
+  const result = monthlyLedgerRows(query)
+  if (result.message || !result.rows) return fail(result.message || '无法查询')
+  return ok(pageOf(result.rows, query))
 })
 
 route('PUT', '/bonded-books/:id', ({ params, body }) => {
   const index = findIndex(db.books, params.id)
   if (index < 0) return fail('账册不存在')
-  if (db.books[index].status === '旧账' && body.status !== '旧账') return fail('旧账只出不进，不能改回新账')
   const prev = { ...db.books[index] }
-  Object.assign(db.books[index], body, { id: prev.id, code: prev.code })
+  if ((prev.status === '停用' || prev.status === '旧账') && body.status && body.status !== prev.status) {
+    return fail('已停用的账册不能恢复')
+  }
+  db.books[index].name = body.name || prev.name
+  db.books[index].warnDate = body.warnDate ?? prev.warnDate
   audit({ module: '保税账册', action: '编辑账册', bizNo: prev.code, before: String(prev.warnDate), after: String(db.books[index].warnDate) })
   return ok(db.books[index], '已保存')
 })
@@ -490,26 +839,32 @@ route('GET', '/dashboard/cockpit', () => ok({
     title: '库容占用达阈值',
     detail: '1#A1占用94%，建议移库疏导',
     time: '08:00',
-    link: '/alerts',
+    link: '/alert-logs',
     tone: ['red', 'orange', 'yellow', 'orange'][id],
   })),
 }))
 
 route('GET', '/inbound', ({ query }) => ok(pageOf(db.inbound, query, (row) => {
+  if (filled(query.consignor) && row.consignor !== query.consignor) return false
   if (filled(query.shipMode) && row.shipMode !== query.shipMode) return false
   if (filled(query.oreType) && !includes(row.oreType, query.oreType)) return false
   if (filled(query.status) && row.status !== query.status) return false
+  if (filled(query.keyword) && !includes(`${row.orderNo || ''}${row.shipName}${row.blNo}${row.customsNo}`, query.keyword)) return false
   return inRange(String(row.time), query.from, query.to)
 })))
 
 route('POST', '/inbound', ({ body }) => {
   const row: Row = {
     id: nextId('in'),
+    orderNo: body.orderNo || `RK-${nowText().slice(0, 10).replace(/-/g, '')}-${String(db.inbound.length + 1).padStart(3, '0')}`,
     shipName: body.shipName, voyage: body.voyage || '', blNo: body.blNo, customsNo: body.customsNo,
-    checklistNo: body.checklistNo, amount: Number(body.amount || 0), oreType: body.oreType || '铜精矿',
+    checklistNo: body.checklistNo, amount: Number(body.amount || 0), currency: body.currency || 'CNY',
+    oreType: body.oreType || '铜精矿', material: body.material || '', filingNo: body.filingNo || '',
+    logisticsOwner: body.logisticsOwner || '', bondedBook: body.bondedBook || '', orcId: body.orcId || '',
     shipMode: body.shipMode, containerCount: body.shipMode === '集装箱' ? Number(body.containerCount || 0) : 0,
     consignor: body.consignor, stackCode: body.stackCode, cells: body.cells || '', status: body.status || '待收货',
-    time: body.time || nowText(), as: '', pb: '', cd: '', f: '', hg: '',
+    time: body.time || nowText(), wet: '', dry: '', moisture: '', qualityNo: '', category: '原料', remark: '',
+    as: '', pb: '', cd: '', f: '', hg: '', cu: '', ag: '', au: '',
   }
   db.inbound.unshift(row)
   audit({ module: '入库管理', action: '新建预约', bizNo: row.customsNo, before: '—', after: String(row.stackCode) })
@@ -520,14 +875,17 @@ route('PUT', '/inbound/:id', ({ params, body }) => {
   const index = findIndex(db.inbound, params.id)
   if (index < 0) return fail('入库单不存在')
   const prev = { ...db.inbound[index] }
-  const keep = { as: prev.as, pb: prev.pb, cd: prev.cd, f: prev.f, hg: prev.hg }
-  Object.assign(db.inbound[index], body, { id: prev.id }, keep)
+  Object.assign(db.inbound[index], body, { id: prev.id })
+  for (const key of ['as', 'pb', 'cd', 'f', 'hg', 'cu', 'ag', 'au']) {
+    if (!(key in body)) db.inbound[index][key] = prev[key]
+  }
   audit({ module: '入库管理', action: '编辑入库', bizNo: prev.customsNo, before: String(prev.status), after: String(db.inbound[index].status) })
   return ok(db.inbound[index], '已保存')
 })
 
 route('GET', '/transfers', ({ query }) => ok(pageOf(db.transfers, query, (row) => {
   if (filled(query.consignor) && row.consignor !== query.consignor) return false
+  if (filled(query.scene) && row.scene !== query.scene) return false
   return inRange(String(row.timeFrom), query.from, query.to)
 })))
 
@@ -536,6 +894,10 @@ route('POST', '/transfers', ({ body }) => {
   if (!lotRow) return fail('未找到在库批次')
   const row: Row = {
     id: nextId('mv'),
+    orderNo: `YK-${nowText().slice(0, 10).replace(/-/g, '')}-${String(db.transfers.length + 1).padStart(3, '0')}`,
+    scene: body.scene || '整票移位',
+    weight: Number(body.weight || lotRow.dry || 0),
+    status: '已完成',
     consignor: lotRow.consignor, customsNo: lotRow.batchKind === '报关单号' ? lotRow.batchNo : '',
     prodBatch: lotRow.batchKind === '生产批次号' ? lotRow.batchNo : '',
     material: lotRow.material, shipName: body.shipName || '—', containerCount: Number(body.containerCount || 0),
@@ -595,6 +957,11 @@ route('GET', '/inventory', ({ query }) => ok(pageOf(db.inventory, query, (row) =
   if (filled(query.areaLabel) && row.areaLabel !== query.areaLabel) return false
   if (filled(query.cargoType) && row.cargoType !== query.cargoType) return false
   if (filled(query.status) && row.status !== query.status) return false
+  if (filled(query.originCountry) && row.originCountry !== query.originCountry) return false
+  if (filled(query.kind) && (query.kind === '成品' ? row.cargoType !== '混成品' : row.cargoType === '混成品')) return false
+  if (filled(query.stack) && !includes(row.stackText, query.stack)) return false
+  if (filled(query.filingNo) && !includes(row.filingNo, query.filingNo)) return false
+  if (filled(query.book) && row.book && row.book !== query.book) return false
   if (!includes(`${row.batchNo}${row.stackText}`, query.keyword)) return false
   if (query.timeMode === 'month') {
     const month = nowText().slice(0, 7)
@@ -603,7 +970,12 @@ route('GET', '/inventory', ({ query }) => ok(pageOf(db.inventory, query, (row) =
   return inRange(String(row.inDate), query.from, query.to)
 })))
 
-route('GET', '/inventory/alerts', ({ query }) => ok(pageOf(buildAlerts(), query, (row) => !filled(query.type) || row.type === query.type)))
+route('GET', '/inventory/alerts', ({ query }) => ok(pageOf(buildAlerts(), query, (row) => {
+  if (filled(query.type) && row.type !== query.type) return false
+  if (filled(query.level) && row.level !== query.level) return false
+  if (filled(query.keyword) && !includes(`${row.target}${row.detail}`, query.keyword)) return false
+  return inRange(String(row.time), query.from, query.to)
+})))
 
 route('GET', '/stocktakes/onhand-export', ({ query }) => {
   const month = String(query.month || nowText().slice(0, 7))
@@ -636,24 +1008,28 @@ route('GET', '/production/:prodBatchNo', ({ params }) => {
 route('POST', '/production/:id/complete', ({ params, body }) => {
   const row = db.production.find((item) => item.id === params.id)
   if (!row) return fail('记录不存在')
-  const stack = db.stacks.find((item) => item.code === body.stackCode)
-  if (!stack || stack.areaLabel !== '待检区') return fail('完工入库只允许进入待检区')
-  row.stage = '待检'
-  row.stackCode = stack.code
-  audit({ module: '生产/完工', action: '完工入库', bizNo: row.prodBatch, before: '加工中', after: `待检区 ${stack.code}` })
-  return ok(row, '已入待检区')
+  return createFinish({
+    prodBatch: row.prodBatch,
+    consignor: body.consignor || row.consignor,
+    product: body.product || '铜精矿混成品',
+    outputDry: body.outputDry || 0,
+    stackCode: body.stackCode,
+    customsNos: row.customsNos,
+    sourceStacks: body.sourceStacks || '',
+  })
 })
 
 route('POST', '/production/:id/inspect', ({ params }) => {
   const row = db.production.find((item) => item.id === params.id)
   if (!row) return fail('记录不存在')
-  const stack = db.stacks.find((item) => item.code === row.stackCode)
+  const finish = db.production.find((item) => item.docType === '完工入库' && item.prodBatch === row.prodBatch) || row
+  const stack = db.stacks.find((item) => item.code === finish.stackCode)
   if (stack && stack.areaLabel === '待检区') stack.areaLabel = '成品区'
-  const inv = db.inventory.find((item) => item.batchNo === row.prodBatch)
+  const inv = db.inventory.find((item) => item.batchNo === finish.prodBatch)
   if (inv) inv.areaLabel = '成品区'
-  row.stage = '成品'
-  audit({ module: '生产/完工', action: '查验完成', bizNo: row.prodBatch, before: '待检区', after: '成品区' })
-  return ok(row, '片区标识已改为成品区')
+  finish.areaLabel = '成品区'
+  audit({ module: '生产/完工', action: '查验完成', bizNo: finish.prodBatch, before: '待检区', after: '成品区' })
+  return ok(finish, '片区标识已改为成品区')
 })
 
 route('GET', '/production', ({ query }) => ok(pageOf(db.production, query, (row) => {
@@ -661,16 +1037,97 @@ route('GET', '/production', ({ query }) => ok(pageOf(db.production, query, (row)
   return inRange(String(row.time), query.from, query.to)
 })))
 
-route('POST', '/production', ({ body }) => {
-  const customsNos = Array.isArray(body.customsNos) ? body.customsNos.join('、') : body.customsNos
+function feedAmount(line: { feedDry?: number; dry?: number }) {
+  return Number(line.feedDry ?? line.dry ?? 0)
+}
+
+function feedLinesOf(body: Record<string, unknown>) {
+  if (!Array.isArray(body.feedLines)) return []
+  return body.feedLines.map((item) => {
+    const line = item as Record<string, unknown>
+    const feedDry = Number(line.feedDry ?? line.dry ?? 0)
+    return {
+      customsNo: String(line.customsNo || ''),
+      consignor: String(line.consignor || ''),
+      cargoType: String(line.cargoType || ''),
+      material: String(line.material || ''),
+      voyage: String(line.voyage || ''),
+      blNo: String(line.blNo || ''),
+      originCountry: String(line.originCountry || ''),
+      wet: Number(line.wet || 0),
+      dry: Number(line.dry || 0),
+      feedDry,
+      stack: String(line.stack || ''),
+      areaLabel: String(line.areaLabel || ''),
+    }
+  }).filter((line) => line.customsNo)
+}
+
+function usedFeedDry(customsNo: string) {
+  return db.production.reduce((sum, row) => {
+    if (row.docType && row.docType !== '投料出库') return sum
+    const lines = Array.isArray(row.feedLines) ? row.feedLines as { customsNo?: string; feedDry?: number; dry?: number }[] : []
+    return sum + lines.reduce((inner, line) => inner + (line.customsNo === customsNo ? feedAmount(line) : 0), 0)
+  }, 0)
+}
+
+function availableFeedDry(customsNo: string) {
+  const lot = db.inventory.find((item) => item.batchNo === customsNo && item.status === '在库' && item.batchKind === '报关单号')
+  return Math.max(0, Number(lot?.dry || 0) - usedFeedDry(customsNo))
+}
+
+function prodDocNo(prefix: string) {
+  const day = nowText().slice(0, 10).replace(/-/g, '')
+  const seq = db.production.filter((row) => String(row.id).startsWith(`${prefix}-`)).length + 1
+  return `${prefix}-${day}-${String(seq).padStart(3, '0')}`
+}
+
+function createFinish(body: Record<string, unknown>) {
+  const stack = db.stacks.find((item) => item.code === body.stackCode)
+  if (!stack || stack.areaLabel !== '待检区') return fail('完工入库只允许进入待检区')
+  if (!body.prodBatch || !body.consignor || !body.product) return fail('请填写委托方、成品物料和生产批次')
+  if (!(Number(body.outputDry) > 0)) return fail('请填写产量')
+  if (db.production.some((item) => item.docType === '完工入库' && item.prodBatch === body.prodBatch)) return fail('该生产批次已完工入库')
   const row: Row = {
-    id: nextId('pr'), prodBatch: body.prodBatch, consignor: body.consignor, stage: '投料', customsNos,
-    outCustomsNo: body.outCustomsNo || '', cargoType: body.cargoType, wet: Number(body.wet || 0), time: body.time || nowText(),
-    material: body.material || '铜精矿', voyage: body.voyage || '', blNo: body.blNo || '', originCountry: body.originCountry || '',
-    process: body.process || '混矿', stackCode: '',
+    id: prodDocNo('WG'), docType: '完工入库', prodBatch: body.prodBatch, consignor: body.consignor,
+    product: body.product, outputDry: Number(body.outputDry), stackCode: stack.code, areaLabel: '待检区',
+    sourceStacks: body.sourceStacks || '', customsNos: body.customsNos || '', time: nowText(), feedLines: [],
   }
   db.production.unshift(row)
-  audit({ module: '生产/完工', action: '投料', bizNo: row.prodBatch, before: '—', after: String(customsNos) })
+  audit({ module: '生产/完工', action: '完工入库', bizNo: row.prodBatch, before: '加工中', after: `待检区 ${stack.code}` })
+  return ok(row, '已入待检区')
+}
+
+route('POST', '/production', ({ body }) => {
+  const docType = String(body.docType || (body.stage === '加工' ? '加工过程' : body.stage === '完工入库' ? '完工入库' : '投料出库'))
+  if (docType === '完工入库') return createFinish(body)
+  if (docType === '加工过程') {
+    if (!body.consignor || !body.prodBatch || !body.process) return fail('请填写委托方、生产批次和工序')
+    const row: Row = {
+      id: prodDocNo('JG'), docType: '加工过程', prodBatch: body.prodBatch, consignor: body.consignor,
+      workOrder: body.workOrder || '', process: body.process, time: body.time || nowText(), timeTo: body.timeTo || '',
+      remark: body.remark || '', outCustomsNo: '', feedLines: [],
+    }
+    db.production.unshift(row)
+    audit({ module: '生产/完工', action: '加工过程登记', bizNo: row.prodBatch, before: '—', after: String(body.process) })
+    return ok(row, '加工过程已登记，留痕见操作日志')
+  }
+  const lines = feedLinesOf(body)
+  if (!lines.length) return fail('请按报关单填写投料干吨')
+  for (const line of lines) {
+    const amount = feedAmount(line)
+    if (!(amount > 0)) return fail(`报关单 ${line.customsNo} 投料干吨须大于 0`)
+    const left = availableFeedDry(line.customsNo)
+    if (amount > left) return fail(`报关单 ${line.customsNo} 本次 ${amount} 吨，可用 ${left} 吨`)
+  }
+  const customsNos = lines.map((line) => line.customsNo).join('、')
+  const row: Row = {
+    id: prodDocNo('TL'), docType: '投料出库', prodBatch: body.prodBatch, consignor: body.consignor,
+    workOrder: body.workOrder || '', outCustomsNo: body.outCustomsNo || `BGCKTL${nowText().slice(0, 10).replace(/-/g, '')}`,
+    time: body.time || nowText(), feedLines: lines,
+  }
+  db.production.unshift(row)
+  audit({ module: '生产/完工', action: '投料出库', bizNo: row.prodBatch, before: '—', after: customsNos })
   return ok(row, '投料已登记')
 })
 
@@ -683,14 +1140,27 @@ route('POST', '/outbound/:id/approve', ({ params }) => {
 })
 
 route('GET', '/outbound', ({ query }) => ok(pageOf(db.outbound, query, (row) => {
+  if (filled(query.consignor) && row.consignor !== query.consignor) return false
   if (filled(query.status) && row.status !== query.status) return false
   return inRange(String(row.time), query.from, query.to)
 })))
 
+route('POST', '/outbound/:id/complete', ({ params }) => {
+  const row = db.outbound.find((item) => item.id === params.id)
+  if (!row) return fail('出库单不存在')
+  if (row.status !== '已审核') return fail('请先审核通过')
+  row.status = '已出库'
+  row.finishedAt = nowText()
+  audit({ module: '出库管理', action: '出库完成', bizNo: row.customsNo, before: '已审核', after: String(row.finishedAt) })
+  return ok(row, '出库已完成')
+})
+
 route('POST', '/outbound', ({ body }) => {
   const row: Row = {
-    id: nextId('ob'), customsNo: body.customsNo, checklistNo: body.checklistNo, consignee: body.consignee,
-    consumer: body.consumer, wet: Number(body.wet || 0), amount: Number(body.amount || 0), time: body.time || nowText(),
+    id: nextId('ob'), orderNo: `CK-${nowText().slice(0, 10).replace(/-/g, '')}-${String(db.outbound.length + 1).padStart(3, '0')}`,
+    customsNo: body.customsNo, checklistNo: body.checklistNo, consignee: body.consignee,
+    consumer: body.consumer, wet: Number(body.wet || 0), amount: Number(body.amount || 0), currency: body.currency || 'CNY',
+    consignor: body.consignor || '', bondedBook: body.bondedBook || '', time: body.time || nowText(), finishedAt: '',
     status: '待审核', remark: body.remark || '', batchNo: body.batchNo || '',
   }
   db.outbound.unshift(row)
@@ -735,7 +1205,7 @@ route('PUT', '/ocr/tasks/:id', ({ params, body }) => {
   const index = findIndex(db.ocrTasks, params.id)
   if (index < 0) return fail('识别任务不存在')
   const prev = { ...db.ocrTasks[index] }
-  Object.assign(db.ocrTasks[index], body, { id: prev.id, status: '已修正' })
+  Object.assign(db.ocrTasks[index], body, { id: prev.id, status: body.archiveOnly ? '已归档' : '已回填' })
   audit({ module: 'OCR识别', action: '手工修正', bizNo: prev.customsNo, before: String(prev.customsNo), after: String(db.ocrTasks[index].customsNo) })
   return ok(db.ocrTasks[index], '修正已写入日志')
 })
@@ -745,9 +1215,14 @@ route('GET', '/audit-logs/:id', ({ params }) => {
   return row ? ok(row) : fail('日志不存在')
 })
 
-route('GET', '/audit-logs', ({ query }) => ok(pageOf(db.audits, query, (row) => {
+route('GET', '/audit-logs', ({ query }) => ok(pageOf(db.audits.map((row) => presentAudit(row)), query, (row) => {
   if (filled(query.module) && row.module !== query.module) return false
-  if (!includes(`${row.operator}${row.bizNo}`, query.keyword)) return false
+  if (filled(query.operator) && !includes(row.operator, query.operator)) return false
+  if (filled(query.bizNo) && !includes(row.bizNo, query.bizNo)) return false
+  if (filled(query.customsNo) && !includes(`${row.customsNo}${row.detail}${row.content}${row.bizNo}`, query.customsNo)) return false
+  if (filled(query.prodBatch) && !includes(`${row.prodBatch}${row.detail}${row.content}${row.bizNo}`, query.prodBatch)) return false
+  if (query.customsOnly === '是' && row.accountType !== '海关专用账号' && row.module !== '关务') return false
+  if (filled(query.keyword) && !includes(`${row.operator}${row.bizNo}`, query.keyword)) return false
   return inRange(String(row.time), query.from, query.to)
 })))
 

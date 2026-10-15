@@ -2,8 +2,10 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { dashboardApi } from '@/api'
+import { authApi, dashboardApi } from '@/api'
+import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import PulseDot from '@/components/PulseDot.vue'
 import YardBoard from '@/components/YardBoard.vue'
 
 interface LogItem { type: string; text: string; time: string }
@@ -13,10 +15,10 @@ interface WarnItem { title: string; detail: string; time: string; link: string; 
 
 const router = useRouter()
 const auth = useAuthStore()
-const fitRef = ref<HTMLElement>()
+const passwordOpen = ref(false)
+const boardRef = ref<HTMLElement>()
 const barRef = ref<HTMLElement>()
 const lineRef = ref<HTMLElement>()
-const scale = ref(1)
 const kpi = ref({ rawWet: 0, rawDry: 0, fgWet: 0, fgDry: 0, inboundToday: 0, outboundToday: 0, pendingQc: 0, alerts: 0 })
 const production = ref({ batchNo: '', total: 0, date: '', eta: '' })
 const logs = ref<LogItem[]>([])
@@ -37,38 +39,19 @@ const tagColor: Record<string, string> = {
 
 let observer: ResizeObserver | null = null
 const num = (value: number) => value.toLocaleString('zh-CN')
-const roleLabel = () => (auth.user?.roleName === '管理员' ? '系统管理员' : auth.user?.roleName || '')
-
-function fit() {
-  const el = fitRef.value
-  if (!el) return
-  const next = Math.min(el.clientWidth / 1720, el.clientHeight / 1080)
-  scale.value = next > 0 ? next : 1
+function resizeCharts() {
+  barChart?.resize()
+  lineChart?.resize()
 }
 
-function logout() {
+async function logout() {
+  await authApi.logout()
   auth.logout()
   router.push('/login')
 }
 
 const showIn = ref(true)
 const showOut = ref(true)
-const pointerCleanups: Array<() => void> = []
-
-function bindPointer(dom: HTMLElement) {
-  const fix = (event: Event) => {
-    const e = event as MouseEvent
-    const rect = dom.getBoundingClientRect()
-    if (!rect.width || !rect.height) return
-    const x = (e.clientX - rect.left) * (dom.clientWidth / rect.width)
-    const y = (e.clientY - rect.top) * (dom.clientHeight / rect.height)
-    Object.defineProperty(e, 'offsetX', { configurable: true, get: () => x })
-    Object.defineProperty(e, 'offsetY', { configurable: true, get: () => y })
-  }
-  const types = ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup', 'click']
-  types.forEach((type) => dom.addEventListener(type, fix, true))
-  pointerCleanups.push(() => types.forEach((type) => dom.removeEventListener(type, fix, true)))
-}
 
 function tooltipBase() {
   return {
@@ -81,13 +64,11 @@ function tooltipBase() {
 }
 
 function renderCharts() {
-  pointerCleanups.splice(0).forEach((cleanup) => cleanup())
   const label = { color: '#8b9bb0', fontSize: 12 }
   const split = { lineStyle: { color: 'rgba(160, 180, 200, 0.16)', type: 'dashed' as const } }
   const axisLine = { lineStyle: { color: 'rgba(255,255,255,0.12)' } }
   if (barRef.value) {
     barChart?.dispose()
-    bindPointer(barRef.value)
     barChart = echarts.init(barRef.value)
     barChart.setOption({
       backgroundColor: 'transparent',
@@ -136,7 +117,6 @@ function renderCharts() {
   }
   if (lineRef.value) {
     lineChart?.dispose()
-    bindPointer(lineRef.value)
     lineChart = echarts.init(lineRef.value)
     const area = (color: string) => new echarts.graphic.LinearGradient(0, 0, 0, 1, [
       { offset: 0, color },
@@ -238,14 +218,12 @@ onMounted(async () => {
     warnings.value = data.warnings
   }
   await nextTick()
-  fit()
   renderCharts()
-  observer = new ResizeObserver(() => fit())
-  if (fitRef.value) observer.observe(fitRef.value)
+  observer = new ResizeObserver(() => resizeCharts())
+  if (boardRef.value) observer.observe(boardRef.value)
 })
 
 onBeforeUnmount(() => {
-  pointerCleanups.forEach((cleanup) => cleanup())
   observer?.disconnect()
   barChart?.dispose()
   lineChart?.dispose()
@@ -253,26 +231,29 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="fitRef" class="fit">
-    <div class="stage" :style="{ transform: `translate(-50%, -50%) scale(${scale})` }">
-      <header class="head">
+  <div ref="boardRef" class="board">
+    <header class="head">
         <div>
           <h1>系统概览</h1>
           <p>BONDED WMS · 关务监管</p>
         </div>
         <div class="tools">
           <el-dropdown>
-            <span class="tool user-btn">{{ roleLabel() }}</span>
+            <span class="tool user-btn">{{ auth.user?.name }}</span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="passwordOpen = true">修改密码</el-dropdown-item>
                 <el-dropdown-item @click="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
           <img class="avatar" src="/avatar.png" alt="" />
         </div>
-      </header>
+    </header>
+    <ChangePasswordDialog v-model="passwordOpen" />
 
+    <div class="mid">
+      <div class="main-col">
       <section class="kpis">
         <article><b>{{ num(kpi.rawWet) }}</b><span>原料湿吨</span></article>
         <article><b>{{ num(kpi.rawDry) }}</b><span>原料干吨</span></article>
@@ -280,6 +261,10 @@ onBeforeUnmount(() => {
         <article><b>{{ num(kpi.fgDry) }}</b><span>原料干吨</span></article>
       </section>
 
+      <YardBoard />
+      </div>
+
+      <div class="side-col">
       <section class="hero">
         <img src="/factory.png" alt="生产现场" />
         <div class="hero-meta">
@@ -297,12 +282,10 @@ onBeforeUnmount(() => {
         <article><b class="red">{{ kpi.alerts }}</b><span>库存预警</span></article>
       </section>
 
-      <YardBoard />
-
       <section class="card logs">
         <div class="card-head">
-          <h3><i />仓库作业链路</h3>
-          <b class="live">LIVE</b>
+          <h3><PulseDot />仓库作业链路</h3>
+          <b class="live"><PulseDot color="#3d8bff" round :size="6" />LIVE</b>
         </div>
         <ul>
           <li v-for="(item, index) in logs" :key="item.type" :class="{ alt: index % 2 === 1 }">
@@ -312,15 +295,17 @@ onBeforeUnmount(() => {
           </li>
         </ul>
       </section>
+      </div>
+    </div>
 
-      <section class="foot">
+    <section class="foot">
         <article class="chart-card">
-          <div class="card-head"><h3><i />仓库使用分布</h3></div>
+          <div class="card-head"><h3><PulseDot />仓库使用分布</h3></div>
           <div ref="barRef" class="chart" />
         </article>
         <article class="chart-card">
           <div class="card-head">
-            <h3><i />近七日入出库趋势</h3>
+            <h3><PulseDot />近七日入出库趋势</h3>
             <div class="legend">
               <span class="in" :class="{ off: !showIn }" @click="toggleSeries('入库湿吨')">入库湿吨</span>
               <span class="out" :class="{ off: !showOut }" @click="toggleSeries('出库湿吨')">出库湿吨</span>
@@ -329,7 +314,7 @@ onBeforeUnmount(() => {
           <div ref="lineRef" class="chart" />
         </article>
         <article class="chart-card">
-          <div class="card-head"><h3><i />预警</h3></div>
+          <div class="card-head"><h3><PulseDot />预警</h3></div>
           <ul class="warns">
             <li v-for="(item, index) in warnings" :key="index" @click="router.push(item.link)">
               <i :class="item.tone || 'red'" />
@@ -341,37 +326,41 @@ onBeforeUnmount(() => {
             </li>
           </ul>
         </article>
-      </section>
-    </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.fit {
+.board {
   flex: 1;
   min-width: 0;
-  position: relative;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) minmax(200px, 28%);
+  gap: 14px;
+  padding: 16px 20px 16px;
   overflow: hidden;
-  background: #070d16;
-}
-.stage {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 1720px;
-  height: 1080px;
-  transform-origin: center center;
   color: #e8eef6;
   background:
     radial-gradient(900px 520px at 28% 18%, rgba(120, 72, 24, .18), transparent 60%),
     #0b1018;
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
 }
+.mid {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
+  gap: 14px;
+}
+.main-col, .side-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 .head {
-  position: absolute;
-  left: 40px;
-  right: 36px;
-  top: 18px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -395,14 +384,11 @@ onBeforeUnmount(() => {
 .avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #1a120c; }
 
 .kpis {
-  position: absolute;
-  left: 40px;
-  top: 102px;
-  width: 1024px;
-  height: 103px;
+  flex: none;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
+  min-height: 96px;
 }
 .kpis article {
   position: relative;
@@ -443,11 +429,9 @@ onBeforeUnmount(() => {
 .kpis span { margin-top: 8px; color: #d5dde6; font-size: 14px; }
 
 .hero {
-  position: absolute;
-  left: 1080px;
-  top: 102px;
-  width: 600px;
-  height: 218px;
+  position: relative;
+  flex: none;
+  height: 200px;
   overflow: hidden;
 }
 .hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -468,13 +452,11 @@ onBeforeUnmount(() => {
 .hero-meta b { font-weight: 600; }
 
 .minis {
-  position: absolute;
-  left: 1080px;
-  top: 336px;
-  width: 600px;
+  position: relative;
+  flex: none;
   height: 82px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   background: linear-gradient(90deg, rgba(18, 24, 36, .92), rgba(12, 16, 24, .92));
   border: 1px solid rgba(214, 176, 106, .45);
@@ -488,13 +470,10 @@ onBeforeUnmount(() => {
 .red { color: #e23b32; }
 
 .foot {
-  position: absolute;
-  left: 44px;
-  top: 777px;
-  width: 1634px;
-  height: 287px;
+  min-width: 0;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .chart-card {
@@ -502,10 +481,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: rgba(13, 18, 28, .94);
   border: 1px solid rgba(214, 176, 106, .28);
 }
-.chart { flex: 1; min-height: 0; }
+.chart { flex: 1; min-height: 0; width: 100%; }
 .legend { display: flex; gap: 14px; color: #c5d0dc; font-size: 12px; }
 .legend span { cursor: pointer; }
 .legend span.off { opacity: 0.35; }
@@ -519,7 +499,7 @@ onBeforeUnmount(() => {
   background: #3aa0ff;
 }
 .legend .out::before { background: #e0a04a; }
-.warns { list-style: none; margin: 0; padding: 0 12px; overflow: hidden; }
+.warns { list-style: none; margin: 0; padding: 0 12px; flex: 1; min-height: 0; overflow: auto; }
 .warns li {
   display: grid;
   grid-template-columns: 12px 1fr auto;
@@ -537,11 +517,12 @@ onBeforeUnmount(() => {
 .warns span, .warns time { color: #8ea0b5; font-size: 12px; }
 
 .logs {
-  position: absolute;
-  left: 1080px;
-  top: 434px;
-  width: 600px;
-  height: 327px;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: rgba(16, 22, 32, .92);
   border: 1px solid rgba(214, 176, 106, .28);
 }
@@ -561,24 +542,15 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 600;
 }
-.card-head h3 i {
-  width: 8px;
-  height: 8px;
-  background: #e7c98a;
-  box-shadow: 0 0 6px rgba(231, 201, 138, .8);
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #3d8bff;
+  font-size: 13px;
+  letter-spacing: 1px;
 }
-.live { color: #3d8bff; font-size: 13px; letter-spacing: 1px; }
-.live::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: #3d8bff;
-  box-shadow: 0 0 6px #3d8bff;
-}
-.logs ul { list-style: none; margin: 0; padding: 0 8px 8px; }
+.logs ul { list-style: none; margin: 0; padding: 0 8px 8px; flex: 1; min-height: 0; overflow: auto; }
 .logs li {
   display: grid;
   grid-template-columns: 48px 1fr auto;

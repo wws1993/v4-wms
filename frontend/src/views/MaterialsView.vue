@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import DataPage from '@/components/DataPage.vue'
+import { usePageTab } from '@/hooks/pageTab'
 
-const tab = ref('materials')
+const tab = usePageTab('materials', ['materials', 'filings'])
 </script>
 
 <template>

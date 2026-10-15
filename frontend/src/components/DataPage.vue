@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
-import { warehouseApi } from '@/api'
+import { ElMessage, ElMessageBox, type FormInstance, type FormItemRule, type FormRules } from 'element-plus'
+import { passwordIssue, passwordRuleText } from '@/security/policy'
+import { materialApi, partnerApi, shippingApi, warehouseApi, dictApi } from '@/api'
+import { isLiveModule } from '@/api/http'
 import { getSchema } from '@/modules/schemas'
-import { downloadText } from '@/mock/util'
+import { downloadBlob, downloadText } from '@/mock/util'
 import type { ColumnSchema, DetailBlock, FieldSchema, RowAction } from '@/types'
 
-const props = defineProps<{ name: string }>()
+const props = defineProps<{ name: string; initialFilters?: Record<string, string> }>()
 const route = useRoute()
 const router = useRouter()
 
 const schema = computed(() => getSchema(props.name))
+const importInput = ref<HTMLInputElement>()
 const loading = ref(false)
 const rows = ref<Record<string, unknown>[]>([])
 const total = ref(0)
@@ -35,13 +38,28 @@ const actionForm = reactive<Record<string, any>>({})
 const monthDialog = ref(false)
 const monthValue = ref('')
 const stackRows = ref<Record<string, unknown>[]>([])
+const materialOptions = ref<{ label: string; value: string }[]>([])
+const shippingOptions = ref<{ label: string; value: string }[]>([])
+const consignorOptions = ref<{ label: string; value: string }[]>([])
+const warehouseOptions = ref<{ label: string; value: string }[]>([])
+const dictOptions = ref<Record<string, string[]>>({})
 
-const rules = computed(() => {
-  const result: Record<string, { required: boolean; message: string; trigger: string }[]> = {}
+const rules = computed<FormRules>(() => {
+  const result: FormRules = {}
   for (const field of schema.value?.form || []) {
     if (field.when && !field.when(form)) continue
-    if (!field.required) continue
-    result[field.key] = [{ required: true, message: `请填写${field.label}`, trigger: 'blur' }]
+    const list: FormItemRule[] = []
+    if (field.required) list.push({ required: true, message: `请填写${field.label}`, trigger: 'blur' })
+    if (field.type === 'password') {
+      list.push({
+        validator: (_rule, value, callback) => {
+          const message = passwordIssue(value)
+          callback(message ? new Error(message) : undefined)
+        },
+        trigger: 'blur',
+      })
+    }
+    if (list.length) result[field.key] = list
   }
   return result
 })
@@ -54,6 +72,9 @@ function resetFilters() {
     const value = query[key]
     if (typeof value === 'string') filters[key] = value
   })
+  for (const [key, value] of Object.entries(props.initialFilters || {})) {
+    if (!filters[key] && value) filters[key] = value
+  }
 }
 
 async function load() {
@@ -86,6 +107,21 @@ function fieldOptions(field: FieldSchema) {
       label: `${row.code}（${row.grid || '无网格'}）`,
       value: String(row.code),
     }))
+  }
+  if (field.optionsFrom === 'materials') return materialOptions.value
+  if (field.optionsFrom === 'shipping') {
+    if (shippingOptions.value.length || isLiveModule('shipping')) return shippingOptions.value
+    return [
+      { label: '集装箱', value: '集装箱' },
+      { label: '散货', value: '散货' },
+    ]
+  }
+  if (field.optionsFrom === 'consignors') return consignorOptions.value
+  if (field.optionsFrom === 'warehouses') return warehouseOptions.value
+  if (field.dict) {
+    const labels = dictOptions.value[field.dict] || []
+    const source = typeof field.options === 'function' ? field.options(form, labels) : labels
+    return source.map((item) => (typeof item === 'string' ? { label: item, value: item } : item))
   }
   const source = typeof field.options === 'function' ? field.options(form) : field.options || []
   return source.map((item) => (typeof item === 'string' ? { label: item, value: item } : item))
@@ -121,11 +157,50 @@ function toggleCell(key: string, cell: string) {
   form[key] = [...set].join(',')
 }
 
-async function loadStacks() {
-  const needs = schema.value?.form?.some((field) => field.optionsFrom === 'stacks' || field.type === 'cells')
-  if (!needs) return
-  const res = await warehouseApi.stacks({ page: 1, pageSize: 200 })
-  stackRows.value = res.success && res.data ? res.data.list : []
+function uses(kind: FieldSchema['optionsFrom']) {
+  const fields = [...(schema.value?.form || []), ...(schema.value?.filters || [])]
+  return fields.some((field) => field.optionsFrom === kind || (kind === 'stacks' && field.type === 'cells'))
+}
+
+async function loadLookups() {
+  if (uses('stacks')) {
+    const res = await warehouseApi.stacks({ page: 1, pageSize: 200 })
+    stackRows.value = res.success && res.data ? res.data.list : []
+  }
+  if (uses('materials')) {
+    const res = await materialApi.list({ page: 1, pageSize: 200 })
+    materialOptions.value = res.success && res.data
+      ? res.data.list.map((row) => ({ label: `${row.code} ${row.name}`, value: String(row.id) }))
+      : []
+  }
+  if (uses('shipping')) {
+    const res = await shippingApi.list()
+    shippingOptions.value = res.success && res.data
+      ? res.data.list.map((row) => ({ label: String(row.name), value: String(row.name) }))
+      : []
+  }
+  if (uses('consignors')) {
+    const res = await partnerApi.consignors()
+    const names = res.success && Array.isArray(res.data) ? res.data : []
+    const fallback = isLiveModule('partners') || names.length ? names : ['五矿有色', '广西金川', '广西南国']
+    consignorOptions.value = fallback.map((name) => ({ label: name, value: name }))
+  }
+  if (uses('warehouses')) {
+    const res = await warehouseApi.list({ page: 1, pageSize: 200 })
+    warehouseOptions.value = res.success && res.data
+      ? res.data.list.map((row) => ({ label: String(row.code), value: String(row.code) }))
+      : []
+  }
+  const dictKeys = [...new Set(
+    [...(schema.value?.form || []), ...(schema.value?.filters || [])].map((field) => field.dict).filter((item): item is string => Boolean(item)),
+  )]
+  if (dictKeys.length) {
+    const entries = await Promise.all(dictKeys.map(async (type) => {
+      const res = await dictApi.labels(type)
+      return [type, res.success && Array.isArray(res.data) ? res.data : []] as const
+    }))
+    dictOptions.value = Object.fromEntries(entries)
+  }
 }
 
 function defaultValue(field: FieldSchema) {
@@ -147,8 +222,9 @@ function openCreate() {
   for (const field of schema.value?.form || []) {
     form[field.key] = defaultValue(field)
   }
+  Object.assign(form, schema.value?.defaults?.() || {})
   dialog.value = true
-  loadStacks()
+  loadLookups()
 }
 
 function openEdit(row: Record<string, unknown>) {
@@ -161,8 +237,12 @@ function openEdit(row: Record<string, unknown>) {
       ? (Array.isArray(raw) ? raw : String(raw || '').split('、').filter(Boolean))
       : raw ?? ''
   }
+  if (schema.value?.key === 'stacks' && form.code && !form.stackName) {
+    const parts = String(form.code).split('#')
+    form.stackName = parts.length > 1 ? parts.slice(1).join('#') : ''
+  }
   dialog.value = true
-  loadStacks()
+  loadLookups()
 }
 
 function onFieldChange(key: string) {
@@ -245,7 +325,30 @@ async function submitAction() {
   load()
 }
 
+function pickImport() {
+  importInput.value?.click()
+}
+
+async function onImport(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !schema.value?.importRows) return
+  const res = await schema.value.importRows(file)
+  if (res.success) ElMessage.success(res.message)
+  else ElMessage.warning(res.message)
+  load()
+}
+
 async function runAction(action: RowAction, row: Record<string, unknown>) {
+  if (action.opensDetail) {
+    openDetail(row)
+    return
+  }
+  if (action.notice) {
+    await ElMessageBox.alert(action.notice(row), '矿源备案附件', { confirmButtonText: '关闭' })
+    return
+  }
   if (action.path) {
     const query = action.queryKey && action.queryFrom ? { [action.queryKey]: String(row[action.queryFrom] ?? '') } : undefined
     router.push({ path: action.path, query })
@@ -259,7 +362,13 @@ async function runAction(action: RowAction, row: Record<string, unknown>) {
     openActionDialog(action, row)
     return
   }
-  if (action.confirm) await ElMessageBox.confirm(action.confirm, '确认')
+  if (action.confirm) {
+    try {
+      await ElMessageBox.confirm(action.confirm, '确认', { type: 'warning' })
+    } catch {
+      return
+    }
+  }
   if (!action.request) return
   const res = await action.request(row, {})
   if (!res.success) {
@@ -281,12 +390,21 @@ async function runToolbar(run: () => Promise<{ success: boolean; message: string
 
 async function exportAll() {
   if (!schema.value?.exportRows) return
-  const res = await schema.value.exportRows()
+  const query: Record<string, unknown> = {}
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== '' && value != null) query[key] = value
+  })
+  const res = await schema.value.exportRows(query)
   if (!res.success || !res.data) {
     ElMessage.error(res.message)
     return
   }
-  downloadText(res.data.filename, res.data.content)
+  if (res.data.blob) downloadBlob(res.data.filename, res.data.blob)
+  else if (res.data.content != null) downloadText(res.data.filename, res.data.content)
+  else {
+    ElMessage.error('导出内容为空')
+    return
+  }
   ElMessage.success('已导出')
 }
 
@@ -298,13 +416,18 @@ async function exportMonth() {
     ElMessage.error(res.message)
     return
   }
+  if (res.data.content == null) {
+    ElMessage.error('导出内容为空')
+    return
+  }
   downloadText(res.data.filename, res.data.content)
   ElMessage.success('已导出在库快照')
 }
 
 function bindFile(key: string) {
-  return (file: { name: string }) => {
+  return (file: { name: string; raw?: File }) => {
     form[key] = file.name
+    form.__file = file.raw
   }
 }
 
@@ -317,9 +440,12 @@ function applyAssist() {
 
 function tagType(value: unknown) {
   const text = String(value)
-  if (['启用', '已入库', '已审核', '一致', '成品', '已回填', '已修正', '有效', '在库'].includes(text)) return 'success'
-  if (['待收货', '暂存码头', '待审核', '待检', '待修正', '有差异', '投料', '加工'].includes(text)) return 'warning'
-  if (['停用', '旧账', '已出库', '混成品'].includes(text)) return 'info'
+  if (['启用', '已入库', '已审核', '一致', '成品', '已回填', '已修正', '有效', '在库', '已出清', '本期账册', '纳入库存'].includes(text)) return 'success'
+  if (['待收货', '暂存码头', '待审核', '待检', '待修正', '有差异', '投料', '加工', '未出清', '下期账册'].includes(text)) return 'warning'
+  if (['停用', '旧账', '已出库', '已用尽', '已核销'].includes(text)) return 'info'
+  if (['达标矿', '混成品'].includes(text)) return 'success'
+  if (text === '原料') return 'primary'
+  if (['报备矿', '即将用尽', '已投料'].includes(text)) return 'warning'
   if (['库容', '库龄', '码头超期', '备案用量'].includes(text)) return 'danger'
   return 'info'
 }
@@ -329,13 +455,23 @@ function showEdit(row: Record<string, unknown>) {
   return schema.value.canEdit ? schema.value.canEdit(row) : true
 }
 
+watch(() => [form.warehouse, form.stackName], () => {
+  if (schema.value?.key !== 'stacks') return
+  const name = String(form.stackName || '').trim()
+  const house = String(form.warehouse || '')
+  if (!name || !house) return
+  const prefix = house === '码头仓库' ? '码头' : house.replace(/^#/, '').replace(/仓$/, '')
+  form.code = `${prefix}#${name}`
+})
+
 watch(() => [props.name, route.query.warehouse, route.query.keyword] as const, () => {
   page.value = 1
   resetFilters()
+  loadLookups()
   load()
 }, { immediate: true })
 
-const usageText = (row: Record<string, unknown>) => `${row.used ?? 0} / ${row.rate ?? 0}%`
+const usageText = (row: Record<string, unknown>) => row.occupyText ? String(row.occupyText) : `${row.used ?? 0} / ${row.rate ?? 0}%`
 const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column.label, width: column.width, minWidth: column.minWidth })
 const detailTitle = computed(() => detailBlocks.value[0]?.title || '详情')
 const detailWidth = computed(() => (detailBlocks.value.some((block) => block.table) ? 920 : 640))
@@ -345,7 +481,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
   <div v-if="schema" class="data-page">
     <el-form :inline="true" class="filters" @submit.prevent="search">
       <el-form-item v-for="field in schema.filters" :key="field.key" :label="field.label">
-        <el-select v-if="field.type === 'select'" v-model="filters[field.key]" clearable :placeholder="field.label" style="width: 160px">
+        <el-select v-if="field.type === 'select'" v-model="filters[field.key]" clearable :placeholder="field.placeholder || field.label" style="width: 160px">
           <el-option v-for="opt in fieldOptions(field)" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
         <el-date-picker v-else-if="field.type === 'date'" v-model="filters[field.key]" type="date" value-format="YYYY-MM-DD" :placeholder="field.label" />
@@ -358,7 +494,9 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
 
     <div class="toolbar">
       <el-button v-if="schema.create && schema.form" type="primary" @click="openCreate">{{ schema.createLabel || '新建' }}</el-button>
-      <el-button v-if="schema.exportRows" @click="exportAll">导出</el-button>
+      <el-button v-if="schema.importRows" @click="pickImport">导入</el-button>
+      <input ref="importInput" type="file" accept=".csv,text/csv" hidden @change="onImport" />
+      <el-button v-if="schema.exportRows" @click="exportAll">{{ schema.exportLabel || '导出' }}</el-button>
       <el-button v-if="schema.monthExport" @click="monthDialog = true">按月导出在库</el-button>
       <el-button v-for="tool in schema.toolbar || []" :key="tool.label" @click="runToolbar(tool.run)">{{ tool.label }}</el-button>
     </div>
@@ -375,11 +513,11 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
           <span v-else>{{ row[column.prop] === '' || row[column.prop] == null ? '—' : row[column.prop] }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="schema.form || schema.showDetail || schema.actions?.length" label="操作" fixed="right" min-width="200">
+      <el-table-column v-if="schema.form || schema.showDetail || schema.actions?.length" label="操作" fixed="right" min-width="240">
         <template #default="{ row }">
           <el-button v-if="showEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button v-if="canShowDetail(row) && !schema.detailColumn" link type="primary" @click="openDetail(row)">详情</el-button>
-          <el-button v-for="action in visibleActions(row)" :key="action.label" link type="primary" @click="runAction(action, row)">{{ action.label }}</el-button>
+          <el-button v-for="action in visibleActions(row)" :key="action.label" link :type="action.danger ? 'danger' : 'primary'" @click="runAction(action, row)">{{ action.label }}</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -397,7 +535,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
       />
     </div>
 
-    <el-dialog v-model="dialog" :title="editingId ? '编辑' : (schema.createLabel || '新建')" :width="schema.formWidth || 720" destroy-on-close>
+    <el-dialog v-model="dialog" :title="schema.dialogTitle || (editingId ? '编辑' : (schema.createLabel || '新建'))" :width="schema.formWidth || 720" destroy-on-close>
       <el-button v-if="schema.assist && !editingId" class="assist" @click="applyAssist">{{ schema.assist.label }}</el-button>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
         <el-row :gutter="16">
@@ -406,7 +544,10 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
               <el-select v-if="field.type === 'select' || field.type === 'multi'" v-model="form[field.key]" :multiple="field.type === 'multi'" :disabled="isDisabled(field)" style="width: 100%" @change="onFieldChange(field.key)">
                 <el-option v-for="opt in fieldOptions(field)" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-select>
-              <el-input-number v-else-if="field.type === 'number'" v-model="form[field.key]" :disabled="isDisabled(field)" :min="0" style="width: 100%" />
+              <div v-else-if="field.type === 'number'" class="number-field">
+                <el-input-number v-model="form[field.key]" :disabled="isDisabled(field)" :min="0" />
+                <span v-if="field.unit" class="unit">{{ field.unit }}</span>
+              </div>
               <el-date-picker v-else-if="field.type === 'date'" v-model="form[field.key]" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
               <el-date-picker v-else-if="field.type === 'datetime'" v-model="form[field.key]" type="datetime" value-format="YYYY-MM-DD HH:mm" style="width: 100%" />
               <el-input v-else-if="field.type === 'textarea'" v-model="form[field.key]" type="textarea" :rows="3" />
@@ -425,6 +566,10 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
                   >{{ cell }}</button>
                 </template>
                 <span v-else class="file-name">请先选择已在平面图中绘制的堆位</span>
+              </div>
+              <div v-else-if="field.type === 'password'" class="password-field">
+                <el-input v-model="form[field.key]" type="password" show-password :disabled="isDisabled(field)" :placeholder="field.placeholder" autocomplete="new-password" />
+                <p class="field-hint">密码须为 {{ passwordRuleText() }}</p>
               </div>
               <el-input v-else v-model="form[field.key]" :disabled="isDisabled(field)" :placeholder="field.placeholder" />
             </el-form-item>
@@ -493,9 +638,14 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
 .usage { margin-bottom: 4px; font-size: 13px; }
 .assist { margin-bottom: 12px; }
 .file-name { margin-left: 8px; color: #5a6a7e; }
+.password-field { width: 100%; }
+.field-hint { margin: 6px 0 0; color: #5a6a7e; font-size: 12px; line-height: 1.5; }
+.number-field { display: flex; align-items: center; gap: 8px; width: 100%; }
+.number-field :deep(.el-input-number) { flex: 1; width: auto; }
+.unit { flex: none; color: #5a6a7e; }
 .cells { display: flex; flex-wrap: wrap; gap: 6px; }
 .cells button { min-width: 52px; height: 28px; border: 1px solid #d8dee8; background: #fff; color: #1a2332; cursor: pointer; }
-.cells button.on { background: #1b4f8a; color: #fff; border-color: #1b4f8a; }
+.cells button.on { background: var(--el-color-primary); color: #fff; border-color: var(--el-color-primary); }
 .detail-block + .detail-block { margin-top: 20px; }
 .detail-block h3 { margin: 0 0 10px; font-size: 15px; }
 .detail-table { margin-top: 12px; }

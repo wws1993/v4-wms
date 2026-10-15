@@ -56,6 +56,14 @@ export function daysBefore(dateText: string) {
   return Math.floor((today.getTime() - then.getTime()) / 86400000)
 }
 
+export function downloadBlob(filename: string, blob: Blob) {
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 export function downloadText(filename: string, content: string) {
   const blob = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8' })
   const link = document.createElement('a')

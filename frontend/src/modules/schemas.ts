@@ -1,8 +1,8 @@
 import {
-  auditApi, bondedApi, customsApi, inboundApi, inventoryApi, materialApi, ocrApi,
+  auditApi, bondedApi, customsApi, inboundApi, inventoryApi, ledgerApi, materialApi, ocrApi,
   outboundApi, partnerApi, productionApi, stocktakeApi, warehouseApi, authApi,
 } from '@/api'
-import type { DetailBlock, ModuleSchema } from '@/types'
+import type { ApiResult, DetailBlock, ModuleSchema } from '@/types'
 
 const consignors = ['五矿有色', '广西金川', '广西南国']
 const houses = ['1仓', '2仓', '4仓', '5仓', '6仓', '码头仓库']
@@ -10,9 +10,53 @@ const areas = ['原料区', '待检区', '成品区']
 const stackCodes = ['1#A1', '1#A2', '2#A1', '4#A1', '4#B1', '5#A1', '6#A1', '码头#A1']
 const customsNos = ['5301202600001234', '5301202600002234', '5301202600003234', '5301202600004234']
 
+function ledgerDetail(row: Record<string, unknown>): DetailBlock[] {
+  const records = Array.isArray(row.records) ? row.records as Record<string, unknown>[] : []
+  const block = (kind: string, title: string): DetailBlock => ({
+    title,
+    table: {
+      columns: [
+        { prop: 'action', label: '事项', width: 140 },
+        { prop: 'tons', label: '吨数', width: 100 },
+        { prop: 'time', label: '时间', minWidth: 160 },
+        { prop: 'refNo', label: '单号', minWidth: 160 },
+      ],
+      rows: records.filter((item) => item.kind === kind),
+    },
+  })
+  const consume = Number(row.consumeTons || 0)
+  return [
+    {
+      title: `${row.seq || ''} ${row.customsNo || ''}`.trim() || '票货',
+      fields: [
+        { label: '账期', value: text(row.month) },
+        { label: '入库(吨)', value: text(row.inboundTons) },
+        { label: '投产(吨)', value: text(row.consumeTons) },
+        { label: '保税归属', value: text(row.place) },
+        { label: '月度出清', value: text(row.monthlyStatus || (consume > 0 ? '已出清' : '未出清')) },
+        { label: '次月库存', value: text(row.nextStock || (consume > 0 ? '不再纳入' : '纳入库存')) },
+      ],
+    },
+    block('存储', '原料存储'),
+    block('加工', '加工'),
+    block('出库', '出库'),
+  ]
+}
+
 function text(value: unknown) {
   if (value == null || value === '') return '—'
   return String(value)
+}
+
+function statusActions(
+  noun: string,
+  save: (id: string, body: Record<string, unknown>) => Promise<ApiResult>,
+) {
+  const send = (row: Record<string, unknown>, status: '启用' | '停用') => save(String(row.id), { ...row, status })
+  return [
+    { label: '停用', when: (row: Record<string, unknown>) => row.status === '启用', confirm: `确认停用该${noun}？`, request: (row: Record<string, unknown>) => send(row, '停用') },
+    { label: '启用', when: (row: Record<string, unknown>) => row.status !== '启用', confirm: `确认启用该${noun}？`, request: (row: Record<string, unknown>) => send(row, '启用') },
+  ]
 }
 
 export const schemas: Record<string, ModuleSchema> = {
@@ -31,23 +75,28 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'rate', label: '已用/占用率', minWidth: 180, usage: true },
       { prop: 'status', label: '状态', width: 90, tag: true },
     ],
+    formWidth: 520,
     form: [
-      { key: 'code', label: '仓库编号', required: true, disabled: (_form, isEdit) => isEdit },
-      { key: 'capacity', label: '库容(吨)', type: 'number', required: true },
-      { key: 'area', label: '面积(㎡)', type: 'number', required: true, placeholder: '仅展示，不参与占用' },
-      { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true },
+      { key: 'code', label: '仓库编号', required: true, disabled: (_form, isEdit) => isEdit, span: 24 },
+      { key: 'capacity', label: '库容', type: 'number', required: true, unit: '吨', span: 24 },
+      { key: 'area', label: '面积', type: 'number', required: true, unit: '方', placeholder: '仅展示，不参与占用', span: 24 },
+      { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true, span: 24 },
     ],
     list: warehouseApi.list,
     create: warehouseApi.create,
     update: warehouseApi.update,
-    actions: [{ label: '查看堆位', path: '/stacks', queryKey: 'warehouse', queryFrom: 'code' }],
+    actions: [
+      ...statusActions('仓库', warehouseApi.setStatus),
+      { label: '查看堆位', path: '/stacks', queryKey: 'warehouse', queryFrom: 'code' },
+      { label: '删除', confirm: '确认删除该仓库？', danger: true, request: (row) => warehouseApi.remove(String(row.id)) },
+    ],
   },
   stacks: {
     key: 'stacks',
     createLabel: '新建堆位',
     filters: [
-      { key: 'warehouse', label: '仓库', type: 'select', options: houses },
-      { key: 'areaLabel', label: '片区标识', type: 'select', options: areas },
+      { key: 'warehouse', label: '仓库', type: 'select', optionsFrom: 'warehouses' },
+      { key: 'areaLabel', label: '片区标识', type: 'select', dict: 'wms_area_identification' },
       { key: 'keyword', label: '堆位编码', placeholder: '如 4#A1' },
     ],
     columns: [
@@ -56,117 +105,182 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'areaLabel', label: '片区标识', width: 120, tag: true },
       { prop: 'grid', label: '网格', width: 100 },
       { prop: 'capacity', label: '库容(吨)', width: 120 },
-      { prop: 'status', label: '状态', width: 90, tag: true },
     ],
+    formWidth: 520,
     form: [
-      { key: 'code', label: '堆位编码', required: true, disabled: (_f, isEdit) => isEdit },
-      { key: 'warehouse', label: '所属仓库', type: 'select', options: houses, required: true },
-      { key: 'areaLabel', label: '片区标识', type: 'select', options: areas, required: true },
-      { key: 'capacity', label: '库容(吨)', type: 'number', required: true },
-      { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true },
+      { key: 'stackName', label: '堆位名称', required: true, placeholder: '如 A1、小A', span: 24 },
+      { key: 'code', label: '堆位编码', required: true, disabled: () => true, placeholder: '由仓库编号与名称自动拼接', span: 24 },
+      { key: 'warehouse', label: '所属仓库', type: 'select', optionsFrom: 'warehouses', required: true, span: 24 },
+      { key: 'areaLabel', label: '片区标识', type: 'select', dict: 'wms_area_identification', required: true, span: 24 },
+      { key: 'capacity', label: '库容', type: 'number', required: true, unit: '吨', span: 24 },
     ],
     list: warehouseApi.stacks,
     create: warehouseApi.createStack,
     update: warehouseApi.updateStack,
+    actions: [
+      {
+        label: '查验完成',
+        when: (row) => row.areaLabel === '待检区',
+        confirm: '确认将该堆位从待检区改为成品区？',
+        request: (row) => warehouseApi.inspectStack(String(row.id)),
+      },
+      { label: '删除', confirm: '确认删除该堆位？', danger: true, request: (row) => warehouseApi.removeStack(String(row.id)) },
+    ],
   },
   materials: {
     key: 'materials',
     createLabel: '新建物料',
+    dialogTitle: '物料档案',
+    formWidth: 520,
+    exportLabel: '导出 Excel',
     filters: [
-      { key: 'keyword', label: '编码/名称' },
-      { key: 'kind', label: '类型', type: 'select', options: ['原料', '成品'] },
+      { key: 'cargoType', label: '货物类型', type: 'select', placeholder: '全部货物类型', dict: 'wms_item_category' },
+      { key: 'kind', label: '类型', type: 'select', placeholder: '全部类型', dict: 'wms_item_type' },
+      { key: 'keyword', label: '物料编码/名称', placeholder: '物料编码/名称' },
     ],
     columns: [
-      { prop: 'code', label: '编码', minWidth: 140 },
+      { prop: 'code', label: '物料编码', minWidth: 140 },
       { prop: 'name', label: '名称', minWidth: 160 },
-      { prop: 'cargoType', label: '货物类型', width: 120 },
-      { prop: 'kind', label: '类型', width: 100 },
+      { prop: 'cargoType', label: '货物类型', width: 120, tag: true },
+      { prop: 'kind', label: '类型', width: 100, tag: true },
       { prop: 'source', label: '矿源', minWidth: 140 },
     ],
     form: [
-      { key: 'code', label: '物料编码', required: true, placeholder: '如 CU-RAW-01', disabled: (_f, isEdit) => isEdit },
-      { key: 'name', label: '名称', required: true },
-      { key: 'kind', label: '类型', type: 'select', options: ['原料', '成品'], required: true },
-      { key: 'cargoType', label: '货物类型', type: 'select', required: true, options: (form) => form.kind === '成品' ? ['混成品'] : ['达标矿', '报备矿'] },
-      { key: 'source', label: '矿源', required: true, placeholder: '报备矿填写矿源', when: (form) => form.kind === '原料' && form.cargoType === '报备矿' },
+      { key: 'code', label: '物料编码', required: true, placeholder: '如 YL-CU-001', disabled: (_f, isEdit) => isEdit, span: 24 },
+      { key: 'name', label: '名称', required: true, span: 24 },
+      { key: 'cargoType', label: '货物类型', type: 'select', dict: 'wms_item_category', required: true, span: 24, disabled: (form) => form.kind === '成品', options: (form, labels = []) => {
+        if (form.kind === '成品') {
+          const locked = labels.filter((item) => item === '混成品')
+          return locked.length ? locked : labels
+        }
+        const raw = labels.filter((item) => item !== '混成品')
+        return raw.length ? raw : labels
+      } },
+      { key: 'kind', label: '类型', type: 'select', dict: 'wms_item_type', required: true, span: 24 },
+      { key: 'source', label: '矿源', type: 'select', required: true, span: 24, options: ['智利精矿', '澳洲精矿'], when: (form) => form.kind !== '成品' },
     ],
     onFormChange(form, key) {
       if (key === 'kind' && form.kind === '成品') form.cargoType = '混成品'
       if (key === 'kind' && form.kind === '原料' && form.cargoType === '混成品') form.cargoType = '达标矿'
+      if (form.kind === '成品') form.source = ''
     },
     list: materialApi.list,
     create: materialApi.create,
     update: materialApi.update,
-    exportRows: materialApi.exportRows,
+    exportRows: (query) => materialApi.exportRows(query),
+    importRows: (file) => materialApi.importFile(file),
+    actions: [
+      { label: '删除', confirm: '确认删除该物料？', danger: true, request: (row) => materialApi.remove(String(row.id)) },
+    ],
   },
   filings: {
     key: 'filings',
-    createLabel: '新建备案',
+    createLabel: '新建矿源备案',
+    dialogTitle: '矿源备案',
+    exportLabel: '导出 Excel',
+    defaults: () => {
+      const now = new Date()
+      const seq = String(now.getTime()).slice(-4)
+      return {
+        code: `JG-${now.getFullYear()}-KY${seq}`,
+        source: '智利精矿',
+        originCountry: '智利',
+        filingDate: now.toISOString().slice(0, 10),
+        status: '有效',
+        usedQty: 0,
+        remain: 0,
+        usage: '0.00%',
+        prodBatches: '—',
+      }
+    },
     filters: [
-      { key: 'source', label: '矿源', type: 'select', options: ['智利矿源A', '秘鲁矿源B'] },
-      { key: 'keyword', label: '备案编号' },
-      { key: 'status', label: '状态', type: 'select', options: ['有效', '停用'] },
-      { key: 'from', label: '备案起', type: 'date' },
-      { key: 'to', label: '备案止', type: 'date' },
+      { key: 'source', label: '矿源', type: 'select', placeholder: '全部矿源', options: ['智利精矿', '澳洲精矿'] },
+      { key: 'keyword', label: '矿源备案编号', placeholder: '如 JG-2023-KY04' },
+      { key: 'status', label: '状态', type: 'select', placeholder: '全部状态', options: ['有效', '即将用尽', '已用尽'] },
+      { key: 'from', label: '开始日期', type: 'date' },
+      { key: 'to', label: '结束日期', type: 'date' },
     ],
     columns: [
-      { prop: 'code', label: '备案编号', minWidth: 140 },
       { prop: 'source', label: '矿源', minWidth: 120 },
-      { prop: 'originCountry', label: '原产国', width: 100 },
-      { prop: 'qty', label: '备案数量', width: 110 },
-      { prop: 'usedQty', label: '核销', width: 90 },
-      { prop: 'remain', label: '剩余', width: 90 },
-      { prop: 'usage', label: '用量%', width: 90 },
-      { prop: 'prodBatches', label: '生产批次号', minWidth: 140 },
+      { prop: 'originCountry', label: '备案原产国', width: 120 },
+      { prop: 'code', label: '矿源备案编号', minWidth: 150 },
       { prop: 'filingDate', label: '备案日期', width: 120 },
-      { prop: 'status', label: '状态', width: 90, tag: true },
+      { prop: 'status', label: '状态', width: 100, tag: true },
+      { prop: 'qty', label: '备案数量(DMT)', width: 140 },
+      { prop: 'usedQty', label: '核销吨数', width: 110 },
+      { prop: 'remain', label: '剩余吨数', width: 110 },
+      { prop: 'usage', label: '用量%', width: 100 },
+      { prop: 'attachmentText', label: '附件', width: 90 },
     ],
     form: [
-      { key: 'code', label: '备案编号', required: true },
-      { key: 'source', label: '矿源', required: true },
-      { key: 'originCountry', label: '原产国', required: true },
-      { key: 'qty', label: '备案数量', type: 'number', required: true },
+      { key: 'source', label: '矿源', type: 'select', options: ['智利精矿', '澳洲精矿'], required: true },
+      { key: 'originCountry', label: '备案原产国', required: true },
+      { key: 'code', label: '矿源备案编号', required: true, disabled: () => true },
       { key: 'filingDate', label: '备案日期', type: 'date', required: true },
-      { key: 'prodBatches', label: '生产批次号' },
-      { key: 'attachment', label: '附件', type: 'file' },
-      { key: 'status', label: '状态', type: 'select', options: ['有效', '停用'], required: true },
+      { key: 'qty', label: '备案数量(DMT)', type: 'number', required: true, disabled: (_f, isEdit) => isEdit },
+      { key: 'status', label: '状态', disabled: () => true },
+      { key: 'usedQty', label: '核销吨数', type: 'number', disabled: () => true },
+      { key: 'remain', label: '剩余吨数', type: 'number', disabled: () => true },
+      { key: 'usage', label: '用量%', disabled: () => true },
+      { key: 'prodBatches', label: '生产批次号', span: 24, disabled: () => true },
+      { key: 'attachment', label: '附件资料', type: 'file', span: 24 },
     ],
+    onFormChange(form, key) {
+      if (key !== 'qty' && key !== 'source') return
+      const qty = Number(form.qty) || 0
+      const used = Number(form.usedQty) || 0
+      form.remain = Math.max(0, Math.round((qty - used) * 100) / 100)
+      form.usage = qty ? `${((used / qty) * 100).toFixed(2)}%` : '0.00%'
+    },
     list: materialApi.filings,
     create: materialApi.createFiling,
-    exportRows: materialApi.exportFilings,
+    update: materialApi.updateFiling,
+    exportRows: (query) => materialApi.exportFilings(query),
     showDetail: true,
     detailColumn: 'code',
     async detail(row) {
       const res = await materialApi.lots(String(row.code))
       const blocks: DetailBlock[] = [{
-        title: '备案票货',
+        title: `备案票货 · ${row.code || ''}`,
         table: {
           columns: [
-            { prop: 'customsNo', label: '报关单号', minWidth: 160 },
+            { prop: 'customsNo', label: '报关单号', minWidth: 150 },
             { prop: 'prodBatch', label: '生产批次号', minWidth: 120 },
-            { prop: 'consignor', label: '委托方' },
-            { prop: 'wet', label: '湿吨', width: 80 },
-            { prop: 'dry', label: '干吨', width: 80 },
-            { prop: 'stack', label: '堆位' },
-            { prop: 'status', label: '状态', tag: true },
+            { prop: 'consignor', label: '委托方', minWidth: 100 },
+            { prop: 'material', label: '物料', minWidth: 110 },
+            { prop: 'cargoType', label: '货物类型', width: 100, tag: true },
+            { prop: 'stack', label: '堆位', width: 90 },
+            { prop: 'wet', label: '湿重', width: 80 },
+            { prop: 'dry', label: '干重(DMT)', width: 110 },
+            { prop: 'inAt', label: '入库时间', minWidth: 140 },
+            { prop: 'status', label: '状态', width: 90, tag: true },
           ],
           rows: res.success ? res.data : [],
         },
       }]
       return blocks
     },
-    actions: [{
-      label: '导出 Excel',
-      inDetail: true,
-      request: async (row) => materialApi.exportLots(String(row.code)),
-    }],
+    actions: [
+      { label: '票货', opensDetail: true },
+      {
+        label: '查看附件',
+        notice: (row) => (row.attachment ? String(row.attachment) : '该备案暂无附件'),
+      },
+      {
+        label: '导出 Excel',
+        inDetail: true,
+        request: async (row) => materialApi.exportLots(String(row.code)),
+      },
+    ],
   },
   partners: {
     key: 'partners',
     createLabel: '新建主体',
+    formWidth: 520,
+    defaults: () => ({ status: '启用' }),
     filters: [
       { key: 'keyword', label: '编码/名称' },
-      { key: 'role', label: '角色', type: 'select', options: ['委托方', '物流账册主体', '流向企业'] },
+      { key: 'role', label: '角色', type: 'select', dict: 'wms_merchant_type' },
     ],
     columns: [
       { prop: 'code', label: '编码', width: 120 },
@@ -177,16 +291,26 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'status', label: '状态', width: 90, tag: true },
     ],
     form: [
-      { key: 'code', label: '编码', required: true, disabled: (_f, isEdit) => isEdit },
-      { key: 'name', label: '名称', required: true },
-      { key: 'role', label: '角色', type: 'select', options: ['委托方', '物流账册主体'], required: true },
-      { key: 'phone', label: '联系电话' },
-      { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true },
+      { key: 'code', label: '编码', required: true, disabled: (_f, isEdit) => isEdit, span: 24 },
+      { key: 'name', label: '名称', required: true, span: 24 },
+      { key: 'role', label: '角色', type: 'select', dict: 'wms_merchant_type', required: true, span: 24, options: (_form, labels =  []) => labels.filter((item) => item !== '流向企业') },
+      { key: 'phone', label: '联系电话', span: 24 },
+      { key: 'status', label: '状态', when: () => false },
     ],
     canEdit: (row) => row.source !== '出库识别',
     list: partnerApi.list,
     create: partnerApi.create,
     update: partnerApi.update,
+    actions: [
+      ...statusActions('主体', partnerApi.setStatus),
+      {
+        label: '删除',
+        confirm: '确认删除该主体？',
+        danger: true,
+        when: (row) => row.source !== '出库识别',
+        request: (row) => partnerApi.remove(String(row.id)),
+      },
+    ],
   },
   bonded: {
     key: 'bonded',
@@ -208,11 +332,6 @@ export const schemas: Record<string, ModuleSchema> = {
     form: [
       { key: 'code', label: '账册编号', required: true, disabled: (_f, isEdit) => isEdit },
       { key: 'name', label: '名称', required: true },
-      { key: 'operator', label: '经营单位', required: true },
-      { key: 'value', label: '货值', type: 'number', required: true },
-      { key: 'customsNo', label: '报关单号', required: true },
-      { key: 'status', label: '状态', type: 'select', options: ['新账', '旧账'], required: true },
-      { key: 'prevBook', label: '衔接旧账' },
       { key: 'warnDate', label: '旧账预警日', type: 'date' },
     ],
     list: bondedApi.list,
@@ -227,9 +346,15 @@ export const schemas: Record<string, ModuleSchema> = {
     }],
     async detail(row) {
       const res = await bondedApi.lots(String(row.code))
+      if (!res.success) {
+        return [{
+          title: `${row.code} 出入库票矿`,
+          fields: [{ label: '说明', value: res.message || '后端未提供账册票矿接口' }],
+        }]
+      }
       return [{
         title: `${row.code} 出入库票矿`,
-        fields: [{ label: '规则', value: '新账须填旧账预警日；旧账只出不进；超预警未出库的入库数据转入新账。' }],
+        fields: [{ label: '规则', value: '备案默认衔接在用账册；旧账册停用，只结转在册未出库票货。' }],
         table: {
           columns: [
             { prop: 'direction', label: '方向', width: 80 },
@@ -245,6 +370,27 @@ export const schemas: Record<string, ModuleSchema> = {
       }]
     },
   },
+  ledgerMonthly: {
+    key: 'ledgerMonthly',
+    filters: [
+      { key: 'month', label: '月份', placeholder: '如 2026-08' },
+      { key: 'status', label: '出清', type: 'select', options: ['已出清', '未出清'] },
+      { key: 'keyword', label: '票次/报关单号', placeholder: '票次或报关单号' },
+    ],
+    columns: [
+      { prop: 'month', label: '入库账期', width: 110 },
+      { prop: 'seq', label: '票次', width: 100 },
+      { prop: 'customsNo', label: '报关单号', minWidth: 170 },
+      { prop: 'inboundTons', label: '入库(吨)', width: 110 },
+      { prop: 'monthConsume', label: '当月耗用(吨)', width: 130 },
+      { prop: 'monthlyStatus', label: '出清', width: 100, tag: true },
+      { prop: 'nextStock', label: '次月库存', width: 110, tag: true },
+    ],
+    list: ledgerApi.monthly,
+    exportRows: ledgerApi.exportMonthly,
+    showDetail: true,
+    detail: ledgerDetail,
+  },
   users: {
     key: 'users',
     createLabel: '注册账号',
@@ -256,21 +402,23 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'phone', label: '电话', width: 140 },
       { prop: 'status', label: '状态', width: 90, tag: true },
     ],
+    formWidth: 520,
     form: [
-      { key: 'username', label: '账号', required: true, disabled: (_f, isEdit) => isEdit },
-      { key: 'name', label: '姓名', required: true },
-      { key: 'password', label: '密码', required: true, when: (form) => !form.__isEdit },
-      { key: 'roleKey', label: '角色', type: 'select', required: true, options: [
+      { key: 'username', label: '账号', required: true, disabled: (_f, isEdit) => isEdit, span: 24 },
+      { key: 'name', label: '姓名', required: true, span: 24 },
+      { key: 'password', label: '密码', type: 'password', required: true, when: (form) => !form.__isEdit, span: 24 },
+      { key: 'roleKey', label: '角色', type: 'select', required: true, span: 24, options: [
         { label: '系统管理员', value: 'admin' },
         { label: '仓管员', value: 'warehouse' },
         { label: '关务员', value: 'customs' },
       ] },
-      { key: 'phone', label: '电话' },
-      { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true },
+      { key: 'phone', label: '电话', span: 24 },
+      { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true, span: 24 },
     ],
     list: authApi.users,
     create: authApi.createUser,
     update: authApi.updateUser,
+    actions: statusActions('账号', authApi.setUserStatus),
   },
   inbound: {
     key: 'inbound',
@@ -278,7 +426,7 @@ export const schemas: Record<string, ModuleSchema> = {
     filters: [
       { key: 'from', label: '开始日期', type: 'date' },
       { key: 'to', label: '结束日期', type: 'date' },
-      { key: 'shipMode', label: '货运方式', type: 'select', options: ['集装箱', '散货'] },
+      { key: 'shipMode', label: '货运方式', type: 'select', optionsFrom: 'shipping' },
       { key: 'oreType', label: '矿种' },
       { key: 'status', label: '状态', type: 'select', options: ['暂存码头', '待收货', '已入库', '混成品'] },
     ],
@@ -300,20 +448,25 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'status', label: '状态', width: 110, tag: true },
     ],
     form: [
+      { key: 'orcId', label: 'OCR任务', placeholder: '先识别入库报关单，填写任务编号', required: import.meta.env.VITE_USE_MOCK === 'false' },
+      { key: 'material', label: '物料', type: 'select', optionsFrom: 'materials', required: import.meta.env.VITE_USE_MOCK === 'false' },
       { key: 'shipName', label: '船名', required: true },
       { key: 'voyage', label: '航次' },
       { key: 'blNo', label: '提单号', required: true },
       { key: 'customsNo', label: '报关单号', required: true },
       { key: 'checklistNo', label: '核注清单', required: true },
       { key: 'amount', label: '金额', type: 'number', required: true },
-      { key: 'oreType', label: '矿种', required: true },
-      { key: 'shipMode', label: '装运方式', type: 'select', options: ['集装箱', '散货'], required: true },
+      { key: 'oreType', label: '矿种', required: true, placeholder: '字典编码或名称' },
+      { key: 'shipMode', label: '装运方式', type: 'select', optionsFrom: 'shipping', required: true },
       { key: 'containerCount', label: '集装箱柜数', type: 'number', when: (form) => form.shipMode === '集装箱', required: true },
-      { key: 'consignor', label: '委托方', type: 'select', options: consignors, required: true },
+      { key: 'consignor', label: '委托方', type: 'select', optionsFrom: 'consignors', required: true },
       { key: 'stackCode', label: '预定堆位', type: 'select', required: true, optionsFrom: 'stacks' },
       { key: 'cells', label: '存放格子', type: 'cells', stackKey: 'stackCode', span: 24, required: true },
       { key: 'time', label: '时间', type: 'datetime', required: true },
       { key: 'status', label: '状态', type: 'select', options: ['暂存码头', '待收货', '已入库', '混成品'], required: true },
+      { key: 'wetWeight', label: '湿重(吨)', type: 'number', required: true, when: (form) => Boolean(form.__isEdit) && form.status === '待收货' },
+      { key: 'dryWeight', label: '干重(吨)', type: 'number', required: true, when: (form) => Boolean(form.__isEdit) && form.status === '待收货' },
+      { key: 'moistureContent', label: '水分', type: 'number', required: true, when: (form) => Boolean(form.__isEdit) && form.status === '待收货' },
     ],
     onFormChange(form, key) {
       if (key === 'stackCode') form.cells = ''
@@ -422,7 +575,7 @@ export const schemas: Record<string, ModuleSchema> = {
     ],
     form: [
       { key: 'month', label: '月份', required: true, placeholder: '2026-09' },
-      { key: 'warehouses', label: '仓库', type: 'multi', options: houses, required: true, span: 24 },
+      { key: 'warehouses', label: '仓库', type: 'multi', optionsFrom: 'warehouses', required: true, span: 24 },
       { key: 'stacks', label: '堆位', type: 'multi', options: stackCodes, required: true, span: 24 },
       { key: 'attachment', label: '附件', type: 'file' },
       { key: 'remark', label: '备注', type: 'textarea', span: 24 },
@@ -523,6 +676,8 @@ export const schemas: Record<string, ModuleSchema> = {
       { key: 'wet', label: '投料干吨', type: 'number', required: true },
       { key: 'process', label: '工序', type: 'select', options: ['混矿', '筛分'], required: true },
       { key: 'time', label: '时间', type: 'datetime', required: true },
+      { key: 'operator', label: '操作人', required: true },
+      { key: 'exception', label: '异常说明', type: 'textarea', span: 24 },
       { key: 'material', label: '物料' },
       { key: 'voyage', label: '船名/航次' },
       { key: 'blNo', label: '提单号' },
@@ -539,6 +694,8 @@ export const schemas: Record<string, ModuleSchema> = {
         { label: '挂接报关单', value: text(row.customsNos) },
         { label: '出库报关单号', value: text(row.outCustomsNo) },
         { label: '堆位', value: text(row.stackCode) },
+        { label: '操作人', value: text(row.operator) },
+        { label: '异常说明', value: text(row.exception) },
       ],
     }],
     list: productionApi.list,
@@ -643,27 +800,32 @@ export const schemas: Record<string, ModuleSchema> = {
   audit: {
     key: 'audit',
     filters: [
+      { key: 'operator', label: '操作人', placeholder: '姓名/账号' },
+      { key: 'module', label: '模块', type: 'select', options: ['入库', '出库', '移库', '生产', '堆位', '关务', '基础数据', '权限'] },
+      { key: 'bizNo', label: '业务单号', placeholder: '如 WO- / JG- / YK-' },
+      { key: 'customsNo', label: '报关单号', placeholder: '如 BG20260728041' },
+      { key: 'prodBatch', label: '生产批次', placeholder: '如 FL-20260803' },
+      { key: 'customsOnly', label: '仅关务', type: 'select', options: ['是'] },
       { key: 'from', label: '开始日期', type: 'date' },
       { key: 'to', label: '结束日期', type: 'date' },
-      { key: 'module', label: '模块', type: 'select', options: ['仓位管理', '堆位管理', '物料档案', '矿源备案', '往来主体', '保税账册', '入库管理', '库内移库', '盘点管理', '出库管理', '生产/完工', 'OCR识别', '系统设置', '平面图设置'] },
-      { key: 'keyword', label: '操作人/单号' },
     ],
     columns: [
       { prop: 'time', label: '时间', minWidth: 150 },
       { prop: 'operator', label: '操作人', width: 110 },
-      { prop: 'module', label: '模块', width: 120 },
-      { prop: 'action', label: '动作', width: 120 },
-      { prop: 'bizNo', label: '业务单号', minWidth: 160 },
-      { prop: 'customsAccount', label: '关务账号', width: 100 },
+      { prop: 'module', label: '模块', width: 100 },
+      { prop: 'action', label: '业务类型', width: 130 },
+      { prop: 'bizNo', label: '业务单号', minWidth: 150 },
+      { prop: 'content', label: '操作内容', minWidth: 220 },
+      { prop: 'detail', label: '留痕详情', minWidth: 220 },
     ],
     showDetail: true,
     detail: (row) => [{
-      title: '留痕详情',
+      title: '操作审计详情',
       fields: [
-        { label: '操作人', value: text(row.operator) },
-        { label: '来源地址', value: text(row.ip) },
-        { label: '关务专用账号', value: text(row.customsAccount) },
-        { label: '业务单号', value: text(row.bizNo) },
+        { label: '操作人 / 账号类型', value: `${text(row.operator)} / ${text(row.accountType)}` },
+        { label: '操作时间 / 来源地址', value: `${text(row.time)} / ${text(row.ip)}` },
+        { label: '模块 / 关联单号', value: `${text(row.module)} / ${text(row.bizNo)}` },
+        { label: '操作结果', value: text(row.result) },
         { label: '修改前', value: text(row.before) },
         { label: '修改后', value: text(row.after) },
       ],
