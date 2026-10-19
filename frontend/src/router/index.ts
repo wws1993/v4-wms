@@ -16,11 +16,10 @@ import ProductionView from '@/views/ProductionView.vue'
 import OutboundView from '@/views/OutboundView.vue'
 import OcrView from '@/views/OcrView.vue'
 import CustomsView from '@/views/CustomsView.vue'
-import AlertsView from '@/views/AlertsView.vue'
 import StacksView from '@/views/StacksView.vue'
 import ResourceView from '@/views/ResourceView.vue'
 import AuditView from '@/views/AuditView.vue'
-import AlertLogView from '@/views/AlertLogView.vue'
+import WarningLogView from '@/views/WarningLogView.vue'
 import DictView from '@/views/DictView.vue'
 import BondedView from '@/views/BondedView.vue'
 
@@ -33,13 +32,12 @@ const pages: Record<string, RouteRecordRaw['component']> = {
   transfer: TransferView,
   inventory: InventoryView,
   stocktake: StocktakeView,
-  alerts: AlertsView,
   outbound: OutboundView,
   production: ProductionView,
   customs: CustomsView,
   ocr: OcrView,
+  warningLogs: WarningLogView,
   audit: AuditView,
-  alertLogs: AlertLogView,
   dicts: DictView,
   bonded: BondedView,
 }

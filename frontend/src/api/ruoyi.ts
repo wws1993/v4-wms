@@ -11,9 +11,63 @@ export function writeToken(token: string) {
   else sessionStorage.removeItem(TOKEN_KEY)
 }
 
+/** 雪花 id 超过 JS 安全整数。只给 JSON 数值加引号，字符串里的编号（如逗号拼接的账册 id）保持原样。 */
+function quoteBigInts(data: string) {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (let index = 0; index < data.length; index += 1) {
+    const char = data[index]
+    if (inString) {
+      out += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      out += char
+      continue
+    }
+    if (char === '-' || (char >= '0' && char <= '9')) {
+      let end = index
+      if (data[end] === '-') end += 1
+      const digitsAt = end
+      while (end < data.length && data[end] >= '0' && data[end] <= '9') end += 1
+      const digits = end - digitsAt
+      const next = data[end] || ''
+      let prev = index - 1
+      while (prev >= 0 && /\s/.test(data[prev])) prev -= 1
+      const boundary = prev < 0 ? '' : data[prev]
+      const value = boundary === ':' || boundary === '[' || boundary === ','
+      if (value && digits >= 16 && next !== '.' && next.toLowerCase() !== 'e') out += `"${data.slice(index, end)}"`
+      else out += data.slice(index, end)
+      index = end - 1
+      continue
+    }
+    out += char
+  }
+  return out
+}
+
+function parseJson(data: unknown) {
+  if (typeof data !== 'string' || !data) return data
+  try {
+    return JSON.parse(quoteBigInts(data))
+  } catch {
+    try {
+      return JSON.parse(data)
+    } catch {
+      return data
+    }
+  }
+}
+
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '/api',
   timeout: 30000,
+  transformResponse: [parseJson],
 })
 
 http.interceptors.request.use((config) => {
@@ -65,7 +119,10 @@ export function parseBody(body: RuoyiBody, path: string): RuoyiResult {
     sessionStorage.removeItem('wms_session_at')
     if (!window.location.pathname.endsWith('/login')) window.location.assign('/login?reason=expired')
   }
-  const rows = asRows(body.rows ?? (Array.isArray(body.data) ? body.data : undefined))
+  const nested = body.data && typeof body.data === 'object' && !Array.isArray(body.data)
+    ? body.data as { rows?: unknown; records?: unknown; list?: unknown }
+    : undefined
+  const rows = asRows(body.rows ?? (Array.isArray(body.data) ? body.data : undefined) ?? nested?.rows ?? nested?.records ?? nested?.list)
   return {
     ok: successCode(code),
     message,

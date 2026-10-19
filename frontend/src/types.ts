@@ -25,7 +25,7 @@ export interface AuthUser {
 export interface FieldSchema {
   key: string
   label: string
-  type?: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea' | 'multi' | 'file' | 'cells' | 'password'
+  type?: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea' | 'multi' | 'file' | 'image' | 'cells' | 'password'
   optionsFrom?: 'stacks' | 'materials' | 'shipping' | 'consignors' | 'warehouses'
   /** 选项来自字典类型，值为字典标签。 */
   dict?: string
@@ -47,6 +47,10 @@ export interface ColumnSchema {
   minWidth?: number
   tag?: boolean
   usage?: boolean
+  /** 单元格为报关单号，点击打开票货详情。 */
+  lot?: boolean
+  /** 单元格为图片地址，点击后用图片查看器打开。 */
+  image?: boolean
 }
 
 export interface DetailBlock {
@@ -74,6 +78,8 @@ export interface RowAction {
   opensDetail?: boolean
   /** 弹出只读说明，例如查看附件名称。 */
   notice?: (row: Record<string, unknown>) => string
+  /** 用图片查看器打开该行图片。返回空字符串时提示暂无图片。 */
+  image?: (row: Record<string, unknown>) => string
   request?: (row: Record<string, unknown>, extra: Record<string, unknown>) => Promise<ApiResult>
   path?: string
   queryKey?: string
@@ -87,6 +93,7 @@ export interface ModuleSchema {
   columns: ColumnSchema[]
   form?: FieldSchema[]
   formWidth?: number
+  labelWidth?: string
   list: (query: Record<string, unknown>) => Promise<ApiResult<PageResult>>
   create?: (body: Record<string, unknown>) => Promise<ApiResult>
   update?: (id: string, body: Record<string, unknown>) => Promise<ApiResult>
@@ -133,6 +140,8 @@ export interface PlanItem {
   areaLabel?: string
   /** 仓库或堆位档案状态：启用 / 停用。 */
   status?: string
+  /** 档案排序。数字越小越靠前。平面图保存时原样带回，避免把排序清空。 */
+  orderNum?: number
   /** 标成仓库或堆位后，保存平面图时写入档案。 */
   archive?: boolean
 }

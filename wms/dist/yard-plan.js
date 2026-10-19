@@ -2271,7 +2271,7 @@ function renderParkYard() {
   if (parkYardView.focusId && !(plan.items || []).some((it) => it.id === parkYardView.focusId)) {
     parkYardResetView();
   }
-  const sat = !!parkYardView.sat;
+  const sat = false;
   const focused = !!parkYardView.focusId;
   const isolate = !!parkYardView.isolate;
   const planFrame = isolate
@@ -2280,10 +2280,6 @@ function renderParkYard() {
   if (!parkYardView.cam) parkYardView.cam = planFrame;
   root.className = `yard-plan-wrap${sat ? ' is-sat' : ''}${focused ? ' is-zoomed' : ' is-overview'}${parkYardView.fly ? ' is-flying' : ''}`;
   root.innerHTML = `<button type="button" class="yard-plan-back" ${focused ? '' : 'hidden'}>回退</button>
-    <label class="ck-sat-toggle yard-sat-toggle" title="叠加卫星影像">
-      <input type="checkbox" id="yardSatToggle" ${sat ? 'checked' : ''} />
-      卫星图
-    </label>
     <div class="yard-plan-stage" id="yardPlanStage">${renderParkMarkup(plan, {
       theme: 'cockpit',
       overlayCargo: true,

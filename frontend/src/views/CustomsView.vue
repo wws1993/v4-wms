@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { customsApi } from '@/api'
-import { downloadText } from '@/mock/util'
+import { downloadText } from '@/api/result'
 
 const rows = ref<Record<string, unknown>[]>([])
 const loading = ref(false)

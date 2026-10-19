@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ocrApi } from '@/api'
-import { isLiveModule } from '@/api/http'
-import { OCR_BL, OCR_OUT, OCR_QUALITY, OCR_WEIGHT } from './ops/samples'
 
+const route = useRoute()
+const keyword = ref('')
 const docType = ref('入库报关单')
 const fileName = ref('')
 const pickedFile = ref<File | null>(null)
@@ -23,22 +24,33 @@ function labelOf(key: string) {
   return labels[key] || key
 }
 
-const samples: Record<string, Record<string, string>> = {
-  入库报关单: { customsNo: OCR_BL.customsNo, checklistNo: OCR_BL.checklistNo, shipName: OCR_BL.shipName, blNo: OCR_BL.blNo, amount: String(OCR_BL.amount), currency: OCR_BL.currency },
-  提单: { customsNo: OCR_BL.customsNo, checklistNo: OCR_BL.checklistNo, shipName: OCR_BL.shipName, blNo: OCR_BL.blNo, amount: String(OCR_BL.amount), currency: OCR_BL.currency },
-  出库报关单: { customsNo: OCR_OUT.customsNo, checklistNo: OCR_OUT.checklistNo, consignee: OCR_OUT.consignee, consumer: OCR_OUT.consumer, amount: String(OCR_OUT.amount), currency: OCR_OUT.currency, wet: String(OCR_OUT.wet) },
-  品质单: { qualityNo: OCR_QUALITY.qualityNo, moisture: String(OCR_QUALITY.moisture), cu: OCR_QUALITY.cu, ag: OCR_QUALITY.ag, au: OCR_QUALITY.au },
-  重量单: { wet: String(OCR_WEIGHT.wet), dry: String(OCR_WEIGHT.dry), moisture: String(OCR_WEIGHT.moisture) },
+function applyKeyword() {
+  if (route.name !== 'ocr') return false
+  const next = typeof route.query.keyword === 'string' ? route.query.keyword : ''
+  if (keyword.value === next) return false
+  keyword.value = next
+  return true
 }
 
 async function load() {
   loading.value = true
-  const res = await ocrApi.list({ page: 1, pageSize: 20 })
+  const res = await ocrApi.list({ page: 1, pageSize: keyword.value ? 100 : 20, keyword: keyword.value || undefined })
   loading.value = false
   if (res.success && res.data) rows.value = res.data.list
 }
 
-onMounted(load)
+watch(() => route.query.keyword, () => {
+  if (applyKeyword()) load()
+})
+
+onActivated(() => {
+  if (applyKeyword()) load()
+})
+
+onMounted(() => {
+  applyKeyword()
+  load()
+})
 
 function onFile(event: Event) {
   const input = event.target as HTMLInputElement
@@ -47,11 +59,7 @@ function onFile(event: Event) {
 }
 
 async function start() {
-  if (docType.value === '提单') {
-    ElMessage.warning('后端暂不支持提单识别')
-    return
-  }
-  if (isLiveModule('ocr') && !pickedFile.value) {
+  if (!pickedFile.value) {
     ElMessage.warning('请选择要识别的文件')
     return
   }
@@ -72,12 +80,9 @@ async function start() {
 function openFix(row: Record<string, unknown>) {
   current.value = row
   Object.keys(form).forEach((key) => delete form[key])
-  const sample = samples[String(row.docType)] || samples['入库报关单']
-  Object.assign(form, sample, {
-    customsNo: String(row.customsNo || sample.customsNo || ''),
-    checklistNo: String(row.checklistNo || sample.checklistNo || ''),
-    consignee: String(row.consignee || sample.consignee || ''),
-  })
+  for (const key of Object.keys(labels)) {
+    if (row[key] != null && row[key] !== '') form[key] = String(row[key])
+  }
   open.value = true
 }
 
@@ -111,7 +116,7 @@ async function save(archiveOnly: boolean) {
             </el-form-item>
             <el-form-item label="扫描件">
               <input type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onFile" />
-              <p class="hint">支持 PDF / JPG / PNG。对接后必须选择原始文件。</p>
+              <p class="hint">支持 PDF / JPG / PNG。当前按写死样例回填。</p>
             </el-form-item>
             <el-button type="primary" @click="start">开始识别</el-button>
           </el-form>
@@ -119,6 +124,7 @@ async function save(archiveOnly: boolean) {
       </el-col>
       <el-col :span="16">
         <el-card header="最近识别任务">
+          <p v-if="keyword" class="hint">当前按 {{ keyword }} 筛选</p>
           <el-table v-loading="loading" :data="rows" border stripe>
             <el-table-column prop="id" label="任务号" width="140" />
             <el-table-column prop="docType" label="类型" width="120" />

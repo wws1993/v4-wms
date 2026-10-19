@@ -20,20 +20,24 @@
 | `GET/POST /api/auth/users` | `/system/user`、`PUT /system/user/changeStatus` | 账号增改。列表启停走 changeStatus，不走整单编辑 |
 | `GET/POST/DELETE /api/warehouses` | `/wms/warehouse` | 含 `list`、`listNoPage`、`export`、`DELETE /{id}` |
 | `GET/POST/DELETE /api/warehouses/stacks` | `/wms/area` | 堆位；`DELETE /{id}`；网格仍来自平面图 |
-| `GET/POST/DELETE /api/materials` | `/wms/item` | 丰联响应无矿源；原料矿源按物料编码记在浏览器，列表和导出带回，保存不提交。`DELETE /{id}` 删除物料 |
+| `GET/POST/DELETE /api/materials` | `/wms/item` | 矿源对应 `mineralSource`。列表和详情回读该字段；新增、修改一并提交。本机仍留一份，只在服务器没带回时补显示。`DELETE /{id}` 删除物料 |
+| `GET/POST /api/material-sources/filings` | `/wms/mineralSourceFiling` | 列表 `list`，新建 `POST`，修改 `PUT`。矿源字典 `wms_mineral_source`，状态字典 `wms_filing_status`。附件为同一路径的 `multipart` 字段 `file`。导出 `POST /export`。票货走 `GET /wms/inventory/list` 的 `filingNo` |
 | `GET/POST /api/partners` | `/wms/merchant` | `source`：0 手工、1 入库自动、2 出库自动；删除 `DELETE /wms/merchant/{id}` |
 | `GET/POST /api/bonded-books` | `/wms/accountBook` | 备案默认衔接在用账册并停用旧账；无票矿结转 |
 | （入库筛选项写死集装箱/散货） | `/wms/shippingMethod` | 货运方式档案，柜数在 `areaNumber` |
 | `GET/PUT /api/settings/params` | `GET /wms/system/params/{id}`、`PUT /wms/system/params` | 库容、库龄、码头、备案用量、品质参数。本地 `qualityItems` 含是否有害、是否报税；丰联 `elements` 仅有元素编码与名称 |
 | `GET/POST /api/inbound` | `/wms/receiptOrder` | `POST` 新建预约，`PUT` 到货收货。状态 `wms_receipt_status`，矿种 `wms_mineral_type`，币制 `wms_currency_type` |
+| `GET /api/inventory` | `/wms/inventory/list` | 库存本票，按页查询。条件含委托方、堆位、仓库、单号、货物类型和起止时间；报关单号从关联入库单带回 |
+| `GET /api/inventory/batches/{batchNo}` | `/wms/inventory/list` + `/wms/receiptOrder/{id}` + `/wms/ocr/{id}` | 本票详情。入库单上的报关单、重量单、品质证书 OCR 带回 `sourceUrl` 作为识别影像。台账先记入库一行。成品去向后端未提供 |
+| `GET/POST /api/transfers` | `/wms/movementOrder` | `POST` 提交移库，必填移库单号和 `inventoryId`。列表只展示带目标堆位或移库单号的记录 |
 | `POST /api/ocr/recognize`、`GET/PUT /api/ocr/tasks` | `/wms/ocr` | `POST` 为文件上传；类型 0–3 不含提单 |
-| `GET/POST/PUT/DELETE /api/dicts` | `/system/dict/type`、`/system/dict/data` | 类型与字典值分开维护。状态 1 正常、0 停用。刷新缓存 `DELETE /system/dict/type/refreshCache`。`GET /dicts/labels?type=` 给堆位片区标识、物料货物类型和类型、往来主体角色提供下拉，只返回未停用的标签 |
+| `GET/POST/PUT/DELETE /api/dicts` | `/system/dict/type`、`/system/dict/data` | 类型与字典值分开维护。状态 1 正常、0 停用。刷新缓存 `DELETE /system/dict/type/refreshCache`，同时清除浏览器 `sessionStorage` 中的字典枚举缓存。按类型读取 `/system/dict/data/type/{dictType}` 的结果按类型写入该缓存，同一会话内复用。`GET /dicts/labels?type=` 给堆位片区标识、物料货物类型和类型、往来主体角色提供下拉，只返回未停用的标签 |
 | `GET /api/audit-logs` | `GET /monitor/operlog/list` | `operContent` 为字段原值到新值；不对接清理 |
 | `GET/PUT /api/floor-plans` | `GET /wms/floorPlan/listNoPage`、`POST/PUT /wms/floorPlan` | 整图放在 `jsonData` 字符串。已有记录走修改并带 `id`，没有记录走新增。列表没有 JSON 时再读 `GET /wms/floorPlan/{id}` |
 
 ### 缺口（继续 mock）
 
-OpenAPI 未提供，适配开关保持本地 mock：矿源备案及票货、驾驶舱汇总、移库与批量移库、库存查询与本票台账、盘点与按月在库导出、库存预警、生产投料/完工/查验、出库单与审核、关务对账/申报/核销、账册票矿结转、月度账册。园区平面图已对接。部门、公告、缓存、在线用户不进业务菜单。字典管理已进系统菜单，各业务页暂不改现有字典读取。
+OpenAPI 未单列路径、开发环境已实测可用：库存查询 `/wms/inventory/list`，移库 `/wms/movementOrder`。仍保持本地 mock：驾驶舱汇总、盘点与按月在库导出、库存预警、生产投料/完工/查验、出库单与审核、关务对账/申报/核销、账册票矿结转、月度账册。矿源备案走 `/wms/mineralSourceFiling`，票货用库存列表的备案号。入库预约与到货收货走 `/wms/receiptOrder`。园区平面图已对接。部门、公告、缓存、在线用户不进业务菜单。字典管理已进系统菜单，各业务页暂不改现有字典读取。
 
 ## 认证
 
@@ -46,17 +50,17 @@ OpenAPI 未提供，适配开关保持本地 mock：矿源备案及票货、驾�
 
 ## 基础数据
 
-- `GET/POST /api/warehouses` — 仓库档案（编号 1/2/4/5/6 及**码头仓库**，总库容，**面积㎡仅展示可编辑**）。列表启停走 `PUT /warehouses/{id}/status`，丰联侧为编辑接口 `PUT /wms/warehouse`
-- `GET/POST /api/warehouses/stacks` — 堆位（隶属于仓库；编码如 1#A1；含库容、片区标识；网格 rows/cols **由园区平面图该堆位占格计算**，不在堆位档案单独维护；档案页不展示报关单号/生产批次/占用率/查验状态/状态，操作列无启用停用）。新建默认启用，编辑不提交状态
+- `GET/POST /api/warehouses` — 仓库档案（编号 1/2/4/5/6 及**码头仓库**，总库容，**面积㎡仅展示可编辑**，**排序 `orderNum`，数字越小越靠前**）。列表启停走 `PUT /warehouses/{id}/status`，丰联侧为编辑接口 `PUT /wms/warehouse`
+- `GET/POST /api/warehouses/stacks` — 堆位（隶属于仓库；编码如 1#A1；含库容、片区标识、**排序 `orderNum`**；列表按排序号从小到大；网格 rows/cols **由园区平面图该堆位占格计算**，不在堆位档案单独维护；档案页不展示报关单号/生产批次/占用率/查验状态/状态，操作列无启用停用）。新建默认启用，编辑不提交状态
 - `PUT /api/warehouses/stacks/{id}/area-label` — 更新片区标识（三类：**原料区 / 待检区 / 成品区**；完工入库写入待检区，查验完成改为成品区，留痕）
-- `GET/PUT /api/floor-plans` — 园区平面图。`data` 为 `{ id, gridPx, gridCols, gridRows, items[] }`。`items[]` 含 `id/type/name/col/row/cols/rows/color?/stackId?/warehouseId?/capacity?/area?/archiveCode?/areaLabel?/status?/archive?`。点击保存时，已标为仓库的区块写入 `POST/PUT /warehouses`（新建须带库容、面积），仓库内堆位写入 `POST/PUT /warehouses/stacks`（堆位画笔在仓库内绘制即标为堆位；库容按所占格子占仓库的百分比，对仓库库容向下取整；改堆位大小或仓库库容后重算）。只提交这次打开后改过或删过的仓库和堆位，保存过程不再查询仓库或堆位列表。刷新后直接保存只写平面图，图上还没有编号的旧堆位不会再次新建。从图上删除的仓库、堆位在保存时调用对应 `DELETE`，先删除已记录的堆位，全部成功后再删除仓库。门、过道、设备、生产线不写入档案。门（`type=door`）固定一格长、三分之一格宽，设置里可绕中心旋转 90 度，不强制吸附网格，边线距网格线 2 像素内时自动贴上，坐标可为小数。普通区域同样不强制吸附，边线靠近网格线 2 像素时贴上，不设初始长宽。仓库和堆位不能改成普通区域或门。右上角「初始化」先清空平面图，再读取全部仓库和堆位，按库容占用画板约 70% 格子（留白 30%），堆位按库容平分所在仓库，不保留道路、办公楼等默认区块。右键仓库「初始化堆位」读取 `GET /warehouses/stacks`，按库容把该仓剩余空位（扣除过道、设备、门等占用）画成堆位。丰联侧把整图 `JSON.stringify` 后放在 `jsonData`：`GET /wms/floorPlan/listNoPage` 取最新一条，没有 JSON 时再 `GET /wms/floorPlan/{id}`；已有 `id` 时 `PUT /wms/floorPlan`，否则 `POST /wms/floorPlan`。平面图设置和驾驶舱都读这一份。服务器还没有记录、浏览器里仍有图块时，第一次读取会把本机 JSON 上传。`localStorage` 键 `wws.floor-plan` 只保留最近一次成功读回或上传的缓存。0 期原型文件存储见下文「原型平面图」
-- `DELETE /api/materials/{id}` — 删除物料。丰联对应 `DELETE /wms/item/{id}`。本机记下的矿源一并去掉
-- `GET/POST /api/materials` — 物料档案（原料：达标矿/报备矿；成品：混成品；原料选择矿源；可按货物类型、类型、编码/名称筛选；可导入 CSV。档案仅基础信息，不含原产国、备案号、商品编码、品质参数、附件、干湿重规则、默认账册、单证样例。丰联保存不提交矿源，原料矿源记在浏览器）
+- `GET/PUT /api/floor-plans` — 园区平面图。`data` 为 `{ id, gridPx, gridCols, gridRows, items[] }`。`items[]` 含 `id/type/name/col/row/cols/rows/color?/stackId?/warehouseId?/capacity?/area?/archiveCode?/areaLabel?/status?/archive?`。点击保存时，已标为仓库的区块写入 `POST/PUT /warehouses`（新建须带库容、面积），仓库内堆位写入 `POST/PUT /warehouses/stacks`（堆位画笔在仓库内绘制即标为堆位；库容按所占格子占仓库的百分比，对仓库库容向下取整；改堆位大小或仓库库容后重算）。只提交这次打开后改过或删过的仓库和堆位，保存过程不再查询仓库或堆位列表。刷新后直接保存只写平面图，图上还没有编号的旧堆位不会再次新建。从图上删除的仓库、堆位在保存时调用对应 `DELETE`，先删除已记录的堆位，全部成功后再删除仓库。门、过道、设备、生产线不写入档案。门（`type=door`）固定一格长、三分之一格宽，设置里可绕中心旋转 90 度，不强制吸附网格，边线距网格线 2 像素内时自动贴上，坐标可为小数。普通区域同样不强制吸附，边线靠近网格线 2 像素时贴上，不设初始长宽。仓库和堆位不能改成普通区域或门。右上角「初始化」先清空平面图，再读取全部仓库和堆位，按面积估算占用画板约 70% 格子（留白 30%），堆位按库容平分所在仓库，不保留道路、办公楼等默认区块。右键仓库「初始化堆位」读取 `GET /warehouses/stacks`，按库容把该仓剩余空位（扣除过道、设备、门等占用）画成堆位。丰联侧把整图 `JSON.stringify` 后放在 `jsonData`：`GET /wms/floorPlan/listNoPage` 取最新一条，没有 JSON 时再 `GET /wms/floorPlan/{id}`；已有 `id` 时 `PUT /wms/floorPlan`，否则 `POST /wms/floorPlan`。平面图设置和驾驶舱都读这一份。服务器还没有记录、浏览器里仍有图块时，第一次读取会把本机 JSON 上传。`localStorage` 键 `wws.floor-plan` 只保留最近一次成功读回或上传的缓存。0 期原型文件存储见下文「原型平面图」
+- `DELETE /api/materials/{id}` — 删除物料。丰联对应 `DELETE /wms/item/{id}`。本机补显示用的矿源一并去掉
+- `GET/POST /api/materials` — 物料档案（原料：达标矿/报备矿；成品：混成品；原料手填矿源；可按货物类型、类型、编码/名称筛选；可导入 CSV。档案仅基础信息，不含原产国、备案号、商品编码、品质参数、附件、干湿重规则、默认账册、单证样例。矿源读写丰联字段 `mineralSource`）
 - `GET /api/materials/export` — 物料档案导出（物料编码、名称、货物类型、类型、矿源；跟随当前筛选）
-- `GET/POST /api/material-sources/filings` — 矿源备案（报备矿；列含备案原产国、备案数量/核销/剩余/用量%、附件；状态按用量计算为有效、即将用尽、已用尽；生产批次号在编辑弹窗只读；一矿源多备案号；入库按矿源自动匹配；列表查询支持矿源、编号、状态、**备案日期起止**）
-- `GET /api/material-sources/filings/export` — 矿源备案列表导出 Excel
-- `GET /api/material-sources/filings/{code}/lots` — 该备案下全部票货（报关单/**生产批次号**/委托方/重量/堆位/状态）
-- `GET /api/material-sources/filings/{code}/lots/export` — 备案票货导出 Excel
+- `GET/POST /api/material-sources/filings` — 矿源备案。丰联为 `GET/POST/PUT /wms/mineralSourceFiling`。列含备案原产国、备案数量/核销/剩余/用量%、附件。状态字典 `wms_filing_status`（1 有效、2 即将用尽、3 已用尽）。弹窗单列手填矿源和备案编号，矿源按字典 `wms_mineral_source` 存编码，矿源种类选自 `wms_mineral_type` 并按名称写入 `category`。不展示状态、核销、剩余、用量和生产批次号。列表查询支持矿源、编号、状态、备案日期起止；矿源种类在页面上过滤。附件先以图片或 PDF 上传，路径写入 `fileUrl`
+- `GET /api/material-sources/filings/export` — 矿源备案列表导出。未选矿源种类时为丰联 `POST /wms/mineralSourceFiling/export` 的 Excel；选了种类时按过滤结果导出 CSV
+- `GET /api/material-sources/filings/{code}/lots` — 该备案下票货。丰联无单独路径，用 `GET /wms/inventory/list?filingNo=`（报关单、生产批次号、委托方、重量、堆位、状态）
+- `GET /api/material-sources/filings/{code}/lots/export` — 备案票货导出 CSV，数据与上一接口相同
 - `GET/POST /api/partners` — 往来主体（编码、名称、角色、联系电话、来源；弹窗不含状态，新建默认启用；委托方/物流账册主体手工维护；**流向企业由出库报关单字段自动识别写入**，不能改档、不能删除，列表可启停；**不含统一社会信用代码**）。启停走 `PUT /partners/{id}/status`，丰联侧为 `PUT /wms/merchant`。删除走 `DELETE /partners/{id}`，丰联侧为 `DELETE /wms/merchant/{id}`
 - `GET /api/partners/consignors` — 委托方列表（五矿有色、广西金川、广西南国）
 - `GET/POST /api/bonded-books` — 保税账册（编号、名称、旧账预警日；**默认衔接当前在用账册**；保存后旧账册改为**停用**，只把在册未出库票货转入新账册；列表查询支持关键字、**旧账预警起止日期**）
@@ -72,13 +76,13 @@ OpenAPI 未提供，适配开关保持本地 mock：矿源备案及票货、驾�
 
 ## 业务单据
 
-- `GET/POST /api/inbound` — 入库。状态来自 `wms_receipt_status`（待收货、暂存码头、已入库、混成品、作废）。矿种来自 `wms_mineral_type`（精铜矿、冰铜）。币制来自 `wms_currency_type`。装运方式取货运方式档案，柜数只展示。预约与到货登记不提交五项有害元素。查询支持时间范围、委托方、货运方式、矿种；关键字先按报关单号再按提单号。预约须提交预定堆位及堆位内存放格子（`stackCode` + `cells[{r,c}]`）。到货收货提交湿重、干重、水分，以及原料/成品分类和账册
-- `GET/POST /api/transfers` — 移库（先选原堆位再选批次；委托方/报关单号/生产批次/物料/船名/柜数由批次带出只读；列表查询支持委托方、时间范围；`timeFrom`/`timeTo` 精确到时）
+- `GET/POST /api/inbound` — 入库。状态来自 `wms_receipt_status`（待收货、暂存码头、已入库、混成品、作废）。矿种来自 `wms_mineral_type`（精铜矿、冰铜）。币制来自 `wms_currency_type`。装运方式取货运方式档案，柜数只展示。预约与到货登记不提交五项有害元素。查询支持时间范围、委托方、货运方式、矿种；关键字先按报关单号再按提单号。预约须提交预定堆位及堆位内存放格子（`stackCode` + `cells[{r,c}]`）。堆位按档案 id 或编码对应 `areaId`；图上 `1#B1` 与档案 `B1` 按所属仓库对齐。到货收货提交湿重、干重、水分，以及原料/成品分类和账册
+- `GET/POST /api/transfers` — 移库（先选原堆位再选批次；委托方/报关单号/生产批次/物料/船名/柜数由批次带出只读；列表查询支持委托方、时间范围；`timeFrom`/`timeTo` 精确到时）。列表原堆位、目标堆位为堆位编号 `areaCode`（如 `1#A1`）
 - `POST /api/transfers/batch` — 批量移库，可跨仓库勾选多票（支持仓库/堆位/委托方/关键字查询）后**各生成一条移库单**（不合并）
-- `GET/POST /api/inventory` — 库存查询（时间维度 `timeMode=month|range`，`range` 时 `from`/`to` 精确到小时；品质八项；成品 `cargoType=混成品`、`originCountry` 为空；已出库 `stackCode` 为空；响应不含类型列）
-- `GET /api/inventory/batches/{batchNo}` — 本票详情。原料：报关单、重量证书、品质证书及八项品质参数，以及本票投入后的**成品/库存/出库**；成品：出库报关单、品质证书，以及本批次库存与出库（未出库时出库报关单为空）。`batchNo` 为报关单号或生产批次号
+- `GET/POST /api/inventory` — 库存查询。查询先按单号、委托方、货物类型、堆位和时间，更多条件含物料类型、原产国、矿源备案号、保税账册、仓库。时间不限、本月，或自定义起止精确到时。列表按 `page` / `pageSize` 分页。品质八项；成品 `cargoType=混成品`、`originCountry` 为空；已出库堆位为空；响应不含类型列。丰联列表走 `/wms/inventory/list` 的 `pageNum` / `pageSize`
+- `GET /api/inventory/batches/{batchNo}` — 本票详情。原料：报关单、重量证书、品质证书及八项品质参数，以及本票投入后的**成品/库存/出库**；成品：出库报关单、品质证书，以及本批次库存与出库（未出库时出库报关单为空）。`docs.customs` / `docs.weight` / `docs.quality` 为识别影像，`image` 指向 `/api` 下的 `sourceUrl`。`batchNo` 为报关单号或生产批次号
 - `GET /api/inventory/batches/{batchNo}/ledger` — 干湿重及业务流水穿透；出库行含 `consignee`（流向企业）；`batchNo` 为**报关单号**或**生产批次号**（query `type=customs|production`）
-- `GET /api/inventory/alerts` — 库容、库龄、**码头仓库超期（默认 7 天）**、备案用量预警。系统菜单「预警日志」使用该列表，查询支持 `type`、`level`、`keyword`、`from`/`to`。只读，`link` 为查看跳转地址
+- `GET /api/inventory/alerts` — 库容、库龄、**码头仓库超期（默认 7 天）**、备案用量预警。仓储菜单「库存预警」和驾驶舱预警使用该列表，查询支持 `type`、`level`、`keyword`、`from`/`to`。只读，`link` 为查看跳转地址。系统菜单不再提供预警日志
 - `GET/POST /api/stocktakes` — 盘点（无类型字段；范围可多选仓库与堆位；创建可上传附件；不回写库存重量、不生成账实差异）
 - `GET /api/stocktakes/onhand-export` — 按月份导出各委托方在库（数量湿/干重、堆位、货物类型、提单号、报关单号；`month=YYYY-MM`，取月末在库快照）
 - `GET/POST /api/production` — 生产流转。单据 `docType` 为投料出库、加工过程或完工入库，投料与加工留在同一列表，完工另成单据。投料 `feedLines` 一票一行，`feedDry` 不得超过该报关单可用干吨；加工提交工序、起止时间和备注；完工入库提交成品物料、产量和待检区堆位。查询支持委托方、起止日期。完工入库库存批次取该生产批次号

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { floorApi, inventoryApi, warehouseApi } from '@/api'
+import { floorApi, inventoryApi, settingsApi, warehouseApi } from '@/api'
 import PlanSvg from '@/components/PlanSvg.vue'
 import PulseDot from '@/components/PulseDot.vue'
+import YardIso from '@/components/YardIso.vue'
 import YardMapLoading from '@/components/YardMapLoading.vue'
-import { contentFrame, defaultPlan, hostOf, isWarehouseItem, stackCode, warehouseCodeOf } from '@/plan/model'
+import { archiveForStack, contentFrame, defaultPlan, hostOf, isWarehouseItem, lotsOnStack, stackCellAt, stackCellGrid, stackCode, warehouseCodeOf } from '@/plan/model'
 import type { CargoLot } from '@/plan/model'
 import type { FloorPlan, PlanItem } from '@/types'
 
@@ -14,45 +15,68 @@ const plan = reactive<FloorPlan>(defaultPlan())
 const lots = ref<CargoLot[]>([])
 const houses = ref<Record<string, unknown>[]>([])
 const stacks = ref<Record<string, unknown>[]>([])
-const satellite = ref(false)
+const alertRows = ref<Record<string, unknown>[]>([])
+const capacityWarn = ref(70)
+const warnCodes = computed(() => {
+  const codes = new Set<string>()
+  const threshold = capacityWarn.value > 0 ? capacityWarn.value : 70
+  for (const house of houses.value) {
+    const code = warehouseCodeOf(String(house.code || ''))
+    if (code && Number(house.rate) >= threshold) codes.add(code)
+  }
+  for (const row of alertRows.value) {
+    const type = String(row.type || '')
+    const target = String(row.target || '')
+    const detail = String(row.detail || '')
+    if (type === '码头超期' || detail.includes('码头仓库')) codes.add('码头仓库')
+    if (type !== '库容') continue
+    const code = warehouseCodeOf(target)
+    const house = houses.value.find((item) => warehouseCodeOf(String(item.code || '')) === code)
+    if (house && Number(house.rate) < threshold) continue
+    if (code) codes.add(code)
+  }
+  return [...codes]
+})
 const loading = ref(true)
+const mode = ref<'iso' | 'plan'>('iso')
+const enteredFrom = ref<'iso' | 'plan'>('plan')
 const planError = ref('')
 const LOAD_MIN_MS = 2000
 const tip = ref<{ title: string; rate: string; line: string; hint: string; x: number; y: number } | null>(null)
 let hideTip = 0
 const focusId = ref('')
 const stageRef = ref<HTMLElement>()
+const mapRef = ref<InstanceType<typeof PlanSvg>>()
 const view = reactive({ x: 0, y: 0, w: defaultPlan().gridCols, h: defaultPlan().gridRows })
-const ground = reactive({ x: 0, y: 0, w: defaultPlan().gridCols, h: defaultPlan().gridRows })
+const blend = ref(0)
+const fading = ref(false)
 let fly = 0
+let blendFrame = 0
 let observer: ResizeObserver | undefined
 let alive = true
 
 onMounted(async () => {
-  satellite.value = false
   focusId.value = ''
   const started = Date.now()
-  const [planRes, stockRes, houseRes, stackRes] = await Promise.all([
+  const [planRes, stockRes, houseRes, stackRes, paramRes, alertRes] = await Promise.all([
     floorApi.get(),
-    inventoryApi.list({ page: 1, pageSize: 50 }),
-    warehouseApi.list({ page: 1, pageSize: 50 }),
+    inventoryApi.home(),
+    warehouseApi.catalog(),
     warehouseApi.stacks({ page: 1, pageSize: 500 }),
+    settingsApi.get(),
+    inventoryApi.alerts({ page: 1, pageSize: 100 }),
   ])
   if (!alive) return
   if (planRes.success && planRes.data) Object.assign(plan, planRes.data)
   else planError.value = planRes.message || '平面图读取失败'
   if (houseRes.success && houseRes.data) houses.value = houseRes.data.list
   if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
-  if (stockRes.success && stockRes.data) {
-    lots.value = stockRes.data.list.map((row) => ({
-      stackText: String(row.stackText || ''),
-      warehouse: String(row.warehouse || ''),
-      consignor: String(row.consignor || row.owner || ''),
-      cargoType: String(row.cargoType || ''),
-      wet: Number(row.wet || 0),
-      status: String(row.status || ''),
-    }))
+  if (paramRes.success && paramRes.data) {
+    const value = Number(paramRes.data.capacityWarn)
+    if (value > 0) capacityWarn.value = value
   }
+  if (alertRes.success && alertRes.data) alertRows.value = alertRes.data.list
+  if (stockRes.success && Array.isArray(stockRes.data)) lots.value = stockRes.data
   const remain = LOAD_MIN_MS - (Date.now() - started)
   if (remain > 0) await new Promise((resolve) => window.setTimeout(resolve, remain))
   if (!alive) return
@@ -67,6 +91,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   alive = false
+  cancelAnimationFrame(fly)
+  cancelAnimationFrame(blendFrame)
   observer?.disconnect()
   window.clearTimeout(hideTip)
 })
@@ -88,6 +114,25 @@ function screenBox(item: PlanItem) {
   const a = point(item.col, item.row)
   const b = point(item.col + item.cols, item.row + item.rows)
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }
+}
+
+function placeCursorTip(
+  x: number,
+  y: number,
+  body: { title: string; rate: string; line: string; hint: string },
+  size = { width: 260, height: 128 },
+) {
+  const { width, height } = size
+  let left = x + 14
+  let top = y + 12
+  if (left + width > window.innerWidth - 8) left = x - width - 14
+  if (top + height > window.innerHeight - 8) top = Math.max(8, y - height - 12)
+  tip.value = { ...body, x: left, y: top }
+}
+
+function onIsoHover(body: { title: string; rate: string; line: string; hint: string; x: number; y: number }) {
+  window.clearTimeout(hideTip)
+  placeCursorTip(body.x, body.y, body)
 }
 
 function placeTip(item: PlanItem, body: { title: string; rate: string; line: string; hint: string }) {
@@ -113,37 +158,69 @@ function placeTip(item: PlanItem, body: { title: string; rate: string; line: str
 function warehouseCard(item: PlanItem) {
   const code = warehouseCodeOf(item.name)
   const house = houses.value.find((row) => String(row.code) === code)
-  const tons = stockTons((lot) => warehouseCodeOf(lot.warehouse) === code) || Number(house?.used) || 0
+  const fromLots = stockTons((lot) => warehouseCodeOf(lot.warehouse) === code)
+  const tons = lots.value.length ? fromLots : (fromLots || Number(house?.used) || 0)
   const rate = house ? Number(house.rate) || 0 : 0
   const count = Number(house?.stackCount) || plan.items.filter((entry) => entry.type === 'stack' && hostOf(entry, plan.items)?.id === item.id).length
   return {
     title: code,
     rate: `${rate}%`,
-    line: `堆位${count}个 · 库存${tons}吨`,
+    line: `堆位${count}个 · 干重${tons}吨`,
     hint: focusId.value ? '移入堆位查看堆位信息' : '点击放大至本仓库',
   }
 }
 
-function stackCard(item: PlanItem) {
+function stackRef(item: PlanItem) {
   const host = hostOf(item, plan.items)
   const slot = item.name.replace(/^\d+#/, '').trim() || item.name
-  const code = host ? stackCode(host.name, slot) : slot
+  const built = host ? stackCode(host.name, slot) : slot
+  const row = stacks.value.find((entry) => String(entry.id) === item.stackId || String(entry.code) === built || (item.archiveCode != null && String(entry.code) === item.archiveCode))
+  const code = String(row?.code || item.archiveCode || built)
+  return { host, slot, code, row }
+}
+
+function stackLots(item: PlanItem) {
+  return lotsOnStack(item, plan.items, lots.value)
+}
+
+function namesOf(rows: CargoLot[]) {
+  return [...new Set(rows.map((lot) => lot.consignor).filter(Boolean))]
+}
+
+function stackCard(item: PlanItem, event?: PointerEvent) {
+  const { host, slot, code, row } = stackRef(item)
   const houseName = host ? warehouseCodeOf(host.name) : ''
-  const row = stacks.value.find((entry) => String(entry.id) === item.stackId || String(entry.code) === code)
-  const tons = stockTons((lot) => lot.stackText === code)
+  const here = stackLots(item)
+  const tons = Math.round(here.reduce((sum, lot) => sum + lot.wet, 0))
   const capacity = Number(row?.capacity) || 0
   const rate = capacity > 0 ? Math.min(100, Math.round((tons / capacity) * 100)) : 0
   const area = String(row?.areaLabel || '')
-  const state = tons > 0 ? '在库' : '空闲'
-  return {
-    title: houseName ? `${houseName}-${slot}` : code,
+  const occupied = new Set(here.flatMap((lot) => lot.cells || []))
+  const state = occupied.size ? `占用${occupied.size}格` : tons > 0 ? '在库' : '空闲'
+  const title = houseName ? `${houseName}-${slot}` : code
+  const base = {
+    title,
     rate: `${rate}%`,
-    line: [area, state, `库存${tons}吨`].filter(Boolean).join(' · '),
-    hint: '点击进入堆位管理',
+    line: [area, state, tons ? `干重${tons}吨` : '', namesOf(here).join('、')].filter(Boolean).join(' · '),
+    hint: '点击查询本堆位库存',
+  }
+  if (!event) return base
+  const key = stackCellAt(item, mapRef.value?.locate(event) || { x: 0, y: 0 }, stackCellGrid(item, archiveForStack(item, plan.items, stacks.value)))
+  if (!key) return base
+  const placed = here.filter((lot) => lot.cells?.length)
+  const onCell = placed.length ? placed.filter((lot) => lot.cells?.includes(key)) : here
+  if (!onCell.length) return base
+  const [cellRow, cellCol] = key.split('-')
+  const cellTons = Math.round(onCell.reduce((sum, lot) => sum + lot.wet, 0))
+  return {
+    title: `${title} · ${cellRow}行${cellCol}列`,
+    rate: `${rate}%`,
+    line: [namesOf(onCell).join('、') || '在库', cellTons ? `干重${cellTons}吨` : '', placed.length ? '' : '整堆'].filter(Boolean).join(' · '),
+    hint: '点击查询本堆位库存',
   }
 }
 
-function onEnter(_event: PointerEvent, item: PlanItem) {
+function onEnter(event: PointerEvent, item: PlanItem) {
   window.clearTimeout(hideTip)
   if (!focusId.value) {
     const host = isWarehouseItem(item) ? item : hostOf(item, plan.items)
@@ -155,7 +232,7 @@ function onEnter(_event: PointerEvent, item: PlanItem) {
     return
   }
   if (item.type === 'stack') {
-    placeTip(item, stackCard(item))
+    placeCursorTip(event.clientX, event.clientY, stackCard(item, event), { width: 280, height: 120 })
     return
   }
   if (isWarehouseItem(item)) {
@@ -184,24 +261,8 @@ function applyFrame(frame: { x: number; y: number; w: number; h: number }) {
 }
 
 function layoutBoard() {
-  const frames = [coverFrame(contentFrame(plan))]
-  for (const item of plan.items) {
-    if (item.type === 'warehouse' || item.type === 'idle') frames.push(frameOf(item))
-  }
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const frame of frames) {
-    minX = Math.min(minX, frame.x)
-    minY = Math.min(minY, frame.y)
-    maxX = Math.max(maxX, frame.x + frame.w)
-    maxY = Math.max(maxY, frame.y + frame.h)
-  }
-  ground.x = minX
-  ground.y = minY
-  ground.w = Math.max(1, maxX - minX)
-  ground.h = Math.max(1, maxY - minY)
+  const el = stageRef.value
+  if (el && el.clientHeight < 2) return
   if (!focusId.value) applyFrame(contentFrame(plan))
 }
 
@@ -248,6 +309,74 @@ function flyTo(next: { x: number; y: number; w: number; h: number }) {
   fly = requestAnimationFrame(tick)
 }
 
+function fadeMode(next: 'iso' | 'plan') {
+  if (mode.value === next && !fading.value) return
+  mode.value = next
+  const target = next === 'plan' ? 1 : 0
+  cancelAnimationFrame(blendFrame)
+  const from = blend.value
+  if (Math.abs(from - target) < 0.001) {
+    blend.value = target
+    fading.value = false
+    return
+  }
+  fading.value = true
+  const started = performance.now()
+  const tick = (now: number) => {
+    const t = Math.min(1, (now - started) / 420)
+    const e = 1 - (1 - t) ** 3
+    blend.value = from + (target - from) * e
+    if (t < 1) blendFrame = requestAnimationFrame(tick)
+    else {
+      blend.value = target
+      fading.value = false
+    }
+  }
+  blendFrame = requestAnimationFrame(tick)
+}
+
+function layerStyle(kind: 'iso' | 'plan') {
+  const incoming = mode.value === kind
+  const opacity = incoming ? (kind === 'plan' ? blend.value : 1 - blend.value) : fading.value ? 1 : 0
+  return {
+    opacity: String(opacity),
+    visibility: opacity > 0.01 ? 'visible' : 'hidden',
+    pointerEvents: !fading.value && incoming ? 'auto' : 'none',
+    zIndex: incoming ? 1 : 0,
+  }
+}
+
+async function openHouse(item: PlanItem) {
+  tip.value = null
+  enteredFrom.value = 'iso'
+  focusId.value = item.id
+  fadeMode('plan')
+  await nextTick()
+  flyTo(frameOf(item))
+}
+
+function openIso(item: PlanItem | null) {
+  if (!item) {
+    showPlan()
+    return
+  }
+  openHouse(item)
+}
+
+function showPlan() {
+  tip.value = null
+  if (mode.value !== 'plan') {
+    focusId.value = ''
+    applyFrame(contentFrame(plan))
+  }
+  fadeMode('plan')
+}
+
+function showIso() {
+  tip.value = null
+  fadeMode('iso')
+}
+
 function onItem(item: PlanItem) {
   tip.value = null
   if (!focusId.value) {
@@ -257,16 +386,27 @@ function onItem(item: PlanItem) {
         ? hostOf(item, plan.items)
         : undefined
     if (!host) return
+    enteredFrom.value = 'plan'
     focusId.value = host.id
     flyTo(frameOf(host))
     return
   }
-  if (item.type === 'stack') router.push('/stacks')
+  if (item.type === 'stack') {
+    const code = stackRef(item).code
+    if (!code) return
+    router.push({ path: '/inventory', query: { stack: code } })
+  }
 }
 
 function back() {
   tip.value = null
+  const fromIso = enteredFrom.value === 'iso'
   focusId.value = ''
+  if (fromIso) {
+    applyFrame(contentFrame(plan))
+    fadeMode('iso')
+    return
+  }
   flyTo(frameOf())
 }
 
@@ -276,19 +416,36 @@ function back() {
   <section class="yard">
     <div class="card-head">
       <h3><PulseDot />仓库堆位示意图</h3>
-      <label class="sat">卫星图 <el-switch v-model="satellite" /></label>
+      <div class="view-switch" role="tablist" aria-label="示意图视图">
+        <button type="button" role="tab" :aria-selected="mode === 'iso'" :class="{ on: mode === 'iso' }" @click="showIso">立体图</button>
+        <button type="button" role="tab" :aria-selected="mode === 'plan'" :class="{ on: mode === 'plan' }" @click="showPlan">平面图</button>
+      </div>
     </div>
     <div class="body">
       <div ref="stageRef" class="stage" :class="{ 'is-loading': loading }">
         <YardMapLoading v-if="loading" />
         <template v-else>
         <p v-if="planError" class="plan-miss">{{ planError }}</p>
+        <YardIso
+          class="view-layer"
+          :style="layerStyle('iso')"
+          :plan="plan"
+          :houses="houses"
+          :stacks="stacks"
+          :lots="lots"
+          :warn-codes="warnCodes"
+          @open="openIso"
+          @hover="onIsoHover"
+          @leave="onLeave"
+        />
         <PlanSvg
+          ref="mapRef"
+          class="view-layer"
+          :style="layerStyle('plan')"
           :plan="plan"
           theme="cockpit"
-          :satellite="satellite"
-          :ground="ground"
           :lots="lots"
+          :stacks="stacks"
           :only-host-id="focusId"
           :view="view"
           @item-down="(_event, item) => onItem(item)"
@@ -298,7 +455,7 @@ function back() {
         />
         </template>
       </div>
-      <button v-if="focusId" class="back" type="button" @click="back">返回总览</button>
+      <button v-if="mode === 'plan' && focusId" class="back" type="button" @click="back">返回总览</button>
       <div v-if="tip" class="yard-tip" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">
         <i class="bar" />
         <div class="tip-body">
@@ -310,7 +467,13 @@ function back() {
           <em>{{ tip.hint }}</em>
         </div>
       </div>
-      <ul v-if="!loading && !focusId" class="legend">
+      <ul v-if="!loading && mode === 'iso'" class="legend occ">
+        <li><span>低占用</span><i class="lv low" /></li>
+        <li><span>中占用</span><i class="lv mid" /></li>
+        <li><span>高占用</span><i class="lv high" /></li>
+        <li><span>预警</span><i class="lv crit" /></li>
+      </ul>
+      <ul v-else-if="!loading && !focusId" class="legend">
         <li><span>五矿有色达标/报备</span><i class="ore std" /><i class="ore" /></li>
         <li><span>南国铜业达标/报备</span><i class="ng std" /><i class="ng" /></li>
         <li><span>广西金川达标/报备</span><i class="jc std" /><i class="jc filed" /></li>
@@ -358,8 +521,17 @@ function back() {
   font-size: 16px;
   font-weight: 600;
 }
-.sat { display: flex; align-items: center; gap: 8px; color: #c5d0dc; font-size: 13px; }
-.sat :deep(.el-switch.is-checked .el-switch__core) { background: #e7c98a; border-color: #e7c98a; }
+.view-switch { display: flex; border: 1px solid rgba(231, 201, 138, .55); }
+.view-switch button {
+  min-width: 64px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: #c5d0dc;
+  font-size: 13px;
+  cursor: pointer;
+}
+.view-switch button.on { background: #e7c98a; color: #1a140c; font-weight: 600; }
 .body { position: relative; flex: 1; min-height: 0; margin: 0 10px 10px; }
 .plan-miss {
   position: absolute;
@@ -372,6 +544,7 @@ function back() {
 }
 .stage { position: absolute; inset: 0; }
 .stage.is-loading { cursor: default; }
+.stage :deep(.view-layer) { position: absolute; inset: 0; }
 .stage :deep(.plan-svg) { width: 100%; height: 100%; }
 .back {
   position: absolute;
@@ -396,6 +569,20 @@ function back() {
   font-size: 12px;
   line-height: 1;
 }
+.legend.occ {
+  top: auto;
+  right: 10px;
+  bottom: 6px;
+  left: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+}
+.legend.occ li { justify-content: flex-start; height: 18px; }
+.lv.low { background: #4a8fa8; }
+.lv.mid { background: #5a8fd4; }
+.lv.high { background: #c49a48; }
+.lv.crit { background: #c45868; }
 .legend li { display: flex; align-items: center; justify-content: flex-end; gap: 6px; height: 22px; }
 .legend i { width: 10px; height: 10px; display: block; box-sizing: border-box; }
 .ore { background: rgba(200, 115, 72, .7); }
@@ -409,7 +596,7 @@ function back() {
 .yard-tip {
   position: fixed;
   z-index: 40;
-  width: 232px;
+  width: 280px;
   pointer-events: none;
   background: #3c3828;
   color: #f4f0e6;

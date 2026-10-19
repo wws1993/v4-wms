@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { authApi } from '@/api'
-import { useLiveAuth } from '@/api/http'
 import { lockHintText, noteLoginFailure, noteLoginSuccess } from '@/security/lockout'
 import { touchSession } from '@/security/session'
 import { useAuthStore } from '@/stores/auth'
@@ -13,27 +12,11 @@ const route = useRoute()
 const auth = useAuthStore()
 const loading = ref(false)
 const clock = ref(Date.now())
-const live = useLiveAuth()
 let clockTimer = 0
-const form = reactive({ username: 'admin', password: 'admin123', code: '', uuid: '' })
+const form = reactive({ username: '', password: '', code: '', uuid: '' })
 const captchaImg = ref('')
-const role = ref('admin')
-
-const demos = [
-  { role: 'admin', username: 'admin', password: 'admin123', label: '系统管理员' },
-  { role: 'warehouse', username: 'warehouse', password: 'wh123', label: '仓管员' },
-  { role: 'customs', username: 'customs', password: 'cus123', label: '关务员' },
-]
-
-function onRole(value: string) {
-  const item = demos.find((demo) => demo.role === value)
-  if (!item) return
-  form.username = item.username
-  form.password = item.password
-}
 
 async function loadCaptcha() {
-  if (!live) return
   const res = await authApi.captcha()
   if (!res.success || !res.data) return
   captchaImg.value = res.data.enabled ? res.data.img : ''
@@ -66,7 +49,7 @@ async function submit() {
   if (!res.success || !res.data) {
     ElMessage.error(noteLoginFailure(form.username, res.message))
     clock.value = Date.now()
-    if (live) loadCaptcha()
+    loadCaptcha()
     return
   }
   noteLoginSuccess(form.username)
@@ -93,11 +76,6 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <h1>欢迎使用WWS系统</h1>
       <p>保税仓储管理系统</p>
       <el-form @submit.prevent="submit">
-        <el-form-item v-if="!live">
-          <el-select v-model="role" size="large" placeholder="账号类型" @change="onRole">
-            <el-option v-for="item in demos" :key="item.role" :label="item.label" :value="item.role" />
-          </el-select>
-        </el-form-item>
         <el-form-item>
           <el-input v-model="form.username" placeholder="账号" size="large" />
         </el-form-item>

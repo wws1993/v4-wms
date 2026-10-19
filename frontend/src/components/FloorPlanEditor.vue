@@ -62,6 +62,7 @@ let action: {
   origins: { id: string; col: number; row: number; cols: number; rows: number; hostId?: string }[]
 } | null = null
 let saveTimer = 0
+let restoreProps = false
 
 const current = computed(() => selectedIds.value.length === 1
   ? plan.items.find((item) => item.id === selectedIds.value[0])
@@ -172,8 +173,9 @@ function redo() {
 function layout(anchor?: { x: number; y: number; sx: number; sy: number }) {
   const board = boardRef.value
   if (!board) return
-  const width = board.clientWidth || 800
-  const height = board.clientHeight || 640
+  const width = board.clientWidth
+  const height = board.clientHeight
+  if (width < 2 || height < 2) return
   const px = cellPx()
   const focus = anchor || {
     x: view.x + view.w / 2,
@@ -213,6 +215,7 @@ onMounted(async () => {
     removedStacks.value = [...(plan.removedStackIds || [])]
     removedStackCodes.value = [...(plan.removedStackCodes || [])]
     planReady.value = true
+    await rememberOrderNums()
     noteLoadedArchives()
   } else {
     ElMessage.error(res.message || '平面图读取失败')
@@ -422,6 +425,8 @@ function dragIds() {
 
 function beginMove(event: PointerEvent) {
   capture(event)
+  restoreProps = menu.value?.kind === 'props' && selectedIds.value.length === 1
+  menu.value = null
   remember()
   const p = point(event)
   action = {
@@ -696,24 +701,50 @@ function onMove(event: PointerEvent) {
   syncResizeCapacity()
 }
 
-function nextDoorName() {
-  const used = new Set(plan.items.filter((item) => item.type === 'door').map((item) => item.name.trim()))
-  for (let index = 1; index < 500; index += 1) {
-    const name = `${index}号门`
-    if (!used.has(name)) return name
+function plainName(name: string) {
+  return name.replace(/[\r\n]+/g, '').trim()
+}
+
+/** 名称末尾数字加一，保留前后文字。3号门 → 4号门，B1 → B2。 */
+function bumpLabel(name: string) {
+  const matched = /^(.*?)(\d+)(\D*)$/.exec(plainName(name))
+  if (!matched) return ''
+  const digits = matched[2]
+  const value = Number(digits) + 1
+  if (!Number.isFinite(value)) return ''
+  const next = String(value)
+  const padded = next.length < digits.length ? next.padStart(digits.length, '0') : next
+  return `${matched[1]}${padded}${matched[3]}`
+}
+
+/** 跟上一个带编号的同类名称顺延；已被占用时继续加，直到空出。 */
+function nextLabeled(peers: PlanItem[], fallback: string) {
+  const used = new Set(peers.map((item) => plainName(item.name)).filter(Boolean))
+  const take = (start: string) => {
+    let name = start
+    for (let guard = 0; guard < 500 && used.has(name); guard += 1) {
+      const next = bumpLabel(name)
+      if (!next || next === name) return ''
+      name = next
+    }
+    return used.has(name) ? '' : name
   }
-  return `${used.size + 1}号门`
+  for (let index = peers.length - 1; index >= 0; index -= 1) {
+    const bumped = bumpLabel(peers[index].name)
+    if (!bumped) continue
+    const name = take(bumped)
+    if (name) return name
+  }
+  return take(fallback) || fallback
+}
+
+function nextDoorName() {
+  return nextLabeled(plan.items.filter((item) => item.type === 'door'), '1号门')
 }
 
 function nextSlot(host: PlanItem) {
-  const used = new Set(plan.items.filter((item) => item.type === 'stack' && capacityHost(item)?.id === host.id).map((item) => item.name))
-  for (const letter of 'ABCDEFGH') {
-    for (let index = 1; index <= 9; index += 1) {
-      const name = `${letter}${index}`
-      if (!used.has(name)) return name
-    }
-  }
-  return 'A1'
+  const stacks = plan.items.filter((item) => item.type === 'stack' && capacityHost(item)?.id === host.id)
+  return nextLabeled(stacks, 'A1')
 }
 
 function holdDoor(item: PlanItem, hostId?: string) {
@@ -799,6 +830,8 @@ function pickColor(color: string) {
 }
 
 function onUp() {
+  const followMove = action?.kind === 'move' && restoreProps
+  restoreProps = false
   if (action?.kind === 'pick') {
     const item = plan.items.find((entry) => entry.id === action?.itemId)
     action = null
@@ -884,6 +917,10 @@ function onUp() {
       }
     }
     queueSave()
+    if (followMove && selectedIds.value.length === 1) {
+      const item = plan.items.find((entry) => entry.id === selectedIds.value[0])
+      if (item) placeBeside(item, false)
+    }
   }
   action = null
 }
@@ -973,12 +1010,12 @@ async function removeSelected() {
   if (!selectedIds.value.length || deleteAsking) return
   const ids = new Set(selectedIds.value)
   const houses = plan.items.filter((item) => ids.has(item.id) && isWarehouseItem(item))
-  const stacks = plan.items.filter((item) => ids.has(item.id) && item.type === 'stack')
-  if (houses.length || stacks.length) {
+  if (houses.length) {
+    const stacks = plan.items.filter((item) => ids.has(item.id) && item.type === 'stack')
     const houseText = houses.length === 1 ? `仓库「${houses[0].name || '未命名'}」` : `${houses.length} 个仓库`
     const stackText = stacks.length === 1 ? `堆位「${stacks[0].name || '未命名'}」` : `${stacks.length} 个堆位`
-    const what = [houses.length ? houseText : '', stacks.length ? stackText : ''].filter(Boolean).join('和')
-    const extra = houses.length ? '仓内堆位会一并去掉。' : ''
+    const what = [houseText, stacks.length ? stackText : ''].filter(Boolean).join('和')
+    const extra = '仓内堆位会一并去掉。'
     deleteAsking = true
     try {
       await ElMessageBox.confirm(`确定删除${what}？${extra}保存后才会从档案中去掉。`, '删除', {
@@ -1173,6 +1210,7 @@ async function initStacks() {
         capacity: Number(source?.capacity) || 0,
         areaLabel: String(source?.areaLabel || '原料区'),
         status: String(source?.status || '启用'),
+        orderNum: readOrder(source || {}),
         archive: true,
         col: block.col,
         row: block.row,
@@ -1237,7 +1275,7 @@ async function loadRows(kind: 'warehouses' | 'stacks') {
   const seen = new Set<string>()
   for (let page = 1; page <= 20; page += 1) {
     const res = kind === 'warehouses'
-      ? await warehouseApi.list({ page, pageSize })
+      ? await warehouseApi.catalog()
       : await warehouseApi.stacks({ page, pageSize })
     if (!res.success || !res.data) return { ok: false as const, message: res.message || '读取失败', rows }
     const fresh = (res.data.list as ArchiveRow[]).filter((row) => {
@@ -1282,13 +1320,20 @@ function archiveKey(item: PlanItem) {
   return ''
 }
 
+function keptOrder(value: number | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : undefined
+}
+
 function housePayload(item: PlanItem) {
-  return {
+  const body: Record<string, unknown> = {
     code: item.name.replace(/[\r\n]+/g, '').trim(),
     capacity: Number(item.capacity),
     area: Number(item.area),
     status: item.status || '启用',
   }
+  const orderNum = keptOrder(item.orderNum)
+  if (orderNum != null) body.orderNum = orderNum
+  return body
 }
 
 function stackPayload(item: PlanItem, host: PlanItem) {
@@ -1299,6 +1344,7 @@ function stackPayload(item: PlanItem, host: PlanItem) {
     areaLabel: item.areaLabel || '原料区',
     capacity: Number(item.capacity ?? 0),
     status: item.status || '启用',
+    orderNum: keptOrder(item.orderNum) ?? 0,
   }
 }
 
@@ -1311,6 +1357,32 @@ function archiveChanged(item: PlanItem, body: Record<string, unknown>) {
   const key = archiveKey(item)
   if (!key) return true
   return archiveNotes.get(key) !== JSON.stringify(body)
+}
+
+function readOrder(row: { orderNum?: unknown }) {
+  const value = Number(row.orderNum)
+  return Number.isFinite(value) ? Math.trunc(value) : undefined
+}
+
+async function rememberOrderNums() {
+  const houses = await loadRows('warehouses')
+  const stacks = await loadRows('stacks')
+  if (houses.ok) {
+    const byId = new Map(houses.rows.map((row) => [textOf(row.id), readOrder(row)]))
+    for (const item of plan.items) {
+      if (!isWarehouseItem(item) || !item.warehouseId) continue
+      const orderNum = byId.get(item.warehouseId)
+      if (orderNum != null) item.orderNum = orderNum
+    }
+  }
+  if (stacks.ok) {
+    const byId = new Map(stacks.rows.map((row) => [textOf(row.id), readOrder(row)]))
+    for (const item of plan.items) {
+      if (item.type !== 'stack' || !item.stackId) continue
+      const orderNum = byId.get(item.stackId)
+      if (orderNum != null) item.orderNum = orderNum
+    }
+  }
 }
 
 function noteLoadedArchives() {
@@ -1457,7 +1529,7 @@ async function initPark() {
   if (initBusy.value || saveBusy.value) return
   if (plan.items.length) {
     try {
-      await ElMessageBox.confirm('将清空平面图，只按当前仓库和堆位档案重新绘制。', '初始化', {
+      await ElMessageBox.confirm('将清空平面图，按仓库面积估算并重新绘制。', '初始化', {
         type: 'warning',
         confirmButtonText: '初始化',
         cancelButtonText: '取消',
@@ -1533,6 +1605,7 @@ async function initPark() {
         capacity: metric(meta?.capacity),
         area: metric(meta?.area),
         status: textOf(meta?.status) || '启用',
+        orderNum: readOrder(meta || {}),
         archive: true,
         col: house.col,
         row: house.row,
@@ -1553,6 +1626,7 @@ async function initPark() {
           capacity: Number(source?.capacity) || 0,
           areaLabel: textOf(source?.areaLabel) || '原料区',
           status: textOf(source?.status) || '启用',
+          orderNum: readOrder(source || {}),
           archive: true,
           col: block.col,
           row: block.row,
@@ -1843,7 +1917,7 @@ function openSettings() {
             <li>仓库和堆位：左键拖拽，松开后按网格生成。</li>
             <li>普通区域和门不强制吸附网格，位置可以是小数。边线距离网格线 2 像素以内时自动贴上。</li>
             <li>单击区块即选中。设置出现在外侧，并聚焦名称。</li>
-            <li>选中后再拖动是移动。拖动仓库时，仓内区块一起移动。</li>
+            <li>选中后再拖动是移动。拖动时设置先收起，松开后按新位置重新弹出。拖动仓库时，仓内区块一起移动。</li>
             <li>画布与驾驶舱同一套暗色。背景色快捷项取驾驶舱里的实色和斜纹。</li>
             <li>选中区块后四角出现金色折角，拖动折角可改大小。</li>
             <li>右键也能打开设置。仓库、堆位、普通区域可改宽高和背景色。</li>
@@ -1855,6 +1929,7 @@ function openSettings() {
           <ul>
             <li>用仓库画笔绘制后填写库容和面积。仓库不能改成普通区域或门。</li>
             <li>用堆位画笔在仓库里绘制、大部分格子落在仓内、且小于仓库时，直接标为堆位。库容按所占格子百分比向下取整，以小字水印标在堆位右下角。堆位不能改成普通区域或门。</li>
+            <li>同仓堆位按上一块名称顺延。上一块是 B1，下一块是 B2。</li>
             <li>改堆位大小、角点，或改仓库库容和大小，都会重算。</li>
             <li>保存时播放扫描动画。刷新后直接保存只提交平面图。这次改过或删过的仓库、堆位才提交档案。门、过道、设备、生产线不写入。删除后先删堆位档案，再删仓库档案。</li>
           </ul>
@@ -1863,7 +1938,7 @@ function openSettings() {
           <h3>门</h3>
           <ul>
             <li>固定一格长、三分之一格宽。横向拖为横门，纵向拖为竖门，单击为横门。设置里点旋转，绕中心转 90 度。</li>
-            <li>默认名称按 1号门、2号门 顺延。</li>
+            <li>新门按上一扇名称顺延。上一扇是 3号门，下一扇是 4号门。</li>
             <li>不强制吸附网格。靠近网格线 2 像素时自动贴上。靠在仓库上时，允许溢出一个门宽。</li>
             <li>名称写在门内。扁门横排，窄门竖排，字号随宽高缩小。</li>
           </ul>
@@ -1871,7 +1946,7 @@ function openSettings() {
         <section>
           <h3>初始化</h3>
           <ul>
-            <li>工具条「初始化」先清空平面图，再按库容铺仓库，留白 30%，堆位平分所在仓库。</li>
+            <li>工具条「初始化」先清空平面图，再按面积估算铺仓库，留白 30%。没填面积的仓库按同样的最小一块。堆位仍按库容平分所在仓库。</li>
             <li>右键某个仓库点「初始化堆位」，只重排该仓，并避开过道和设备。</li>
           </ul>
         </section>
@@ -1880,7 +1955,7 @@ function openSettings() {
           <ul>
             <li>左键拉框，松开后高亮相交区块。</li>
             <li>右键可选拖拽、缩放或删除。选中仓库时也可初始化堆位。</li>
-            <li>Del 删除选中区块。删除仓库或堆位前会再确认一次。</li>
+            <li>Del 删除选中区块。删除仓库前会再确认一次，删除堆位直接去掉。</li>
             <li>菜单靠近底部或右侧时，改向展开。</li>
           </ul>
         </section>

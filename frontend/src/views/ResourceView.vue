@@ -2,9 +2,9 @@
 import { useRoute } from 'vue-router'
 import DataPage from '@/components/DataPage.vue'
 
-const route = useRoute()
+const name = String(useRoute().meta.schema || '')
 </script>
 
 <template>
-  <DataPage :name="String(route.meta.schema)" />
+  <DataPage :name="name" />
 </template>

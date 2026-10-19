@@ -1,3 +1,5 @@
+import type { CargoLot } from '@/plan/model'
+import { clearDictCache } from './fenglian'
 import { request } from './http'
 import type { AuthUser, FloorPlan, PageResult } from '@/types'
 
@@ -27,6 +29,7 @@ export const settingsApi = {
 
 export const warehouseApi = {
   list: (params: Q) => request<Page>('GET', '/warehouses', { params }),
+  catalog: () => request<Page>('GET', '/warehouses/catalog'),
   create: (body: B) => request('POST', '/warehouses', { body }),
   update: (id: string, body: B) => request('PUT', `/warehouses/${id}`, { body }),
   setStatus: (id: string, body: B) => request('PUT', `/warehouses/${id}/status`, { body }),
@@ -44,7 +47,10 @@ export const dictApi = {
   createType: (body: B) => request('POST', '/dicts/types', { body }),
   updateType: (id: string, body: B) => request('PUT', `/dicts/types/${id}`, { body }),
   removeType: (id: string) => request('DELETE', `/dicts/types/${id}`),
-  refresh: () => request('DELETE', '/dicts/cache'),
+  refresh: () => {
+    clearDictCache()
+    return request('DELETE', '/dicts/cache')
+  },
   data: (params: Q) => request<Page>('GET', '/dicts/data', { params }),
   labels: (type: string) => request<string[]>('GET', '/dicts/labels', { params: { type } }),
   createData: (body: B) => request('POST', '/dicts/data', { body }),
@@ -194,6 +200,7 @@ export const dashboardApi = {
 
 export const inboundApi = {
   list: (params: Q) => request<Page>('GET', '/inbound', { params }),
+  get: (id: string) => request<Record<string, unknown>>('GET', `/inbound/${encodeURIComponent(id)}`),
   create: (body: B) => request('POST', '/inbound', { body }),
   update: (id: string, body: B) => request('PUT', `/inbound/${id}`, { body }),
 }
@@ -206,22 +213,23 @@ export const transferApi = {
 
 export const inventoryApi = {
   list: (params: Q) => request<Page>('GET', '/inventory', { params }),
-  detail: (batchNo: string) => request<Record<string, unknown>>('GET', `/inventory/batches/${encodeURIComponent(batchNo)}`),
+  home: () => request<CargoLot[]>('GET', '/inventory/home'),
+  detail: (batchNo: string, params?: Q) => request<Record<string, unknown>>('GET', `/inventory/batches/${encodeURIComponent(batchNo)}`, { params }),
   alerts: (params: Q) => request<Page>('GET', '/inventory/alerts', { params }),
 }
 
 export const stocktakeApi = {
   list: (params: Q) => request<Page>('GET', '/stocktakes', { params }),
   create: (body: B) => request('POST', '/stocktakes', { body }),
-  exportMonth: (month: string) => request<FilePayload>('GET', '/stocktakes/onhand-export', { params: { month } }),
+  exportRows: (params: Q = {}) => request<FilePayload>('GET', '/stocktakes/export', { params }),
 }
 
 export const productionApi = {
   list: (params: Q) => request<Page>('GET', '/production', { params }),
   create: (body: B) => request('POST', '/production', { body }),
-  detail: (batchNo: string) => request<Record<string, unknown>>('GET', `/production/${encodeURIComponent(batchNo)}`),
-  complete: (id: string, stackCode: string) => request('POST', `/production/${id}/complete`, { body: { stackCode } }),
-  inspect: (id: string) => request('POST', `/production/${id}/inspect`),
+  process: (id: string, body: B) => request('POST', `/production/${encodeURIComponent(id)}/process`, { body }),
+  finish: (id: string, body: B) => request('POST', `/production/${encodeURIComponent(id)}/finish`, { body }),
+  detail: (batchNo: string) => request<{ list: Record<string, unknown>[] }>('GET', `/production/${encodeURIComponent(batchNo)}`),
 }
 
 export const outboundApi = {
@@ -243,6 +251,10 @@ export const ocrApi = {
   list: (params: Q) => request<Page>('GET', '/ocr/tasks', { params }),
   recognize: (body: B) => request('POST', '/ocr/recognize', { body }),
   update: (id: string, body: B) => request('PUT', `/ocr/tasks/${id}`, { body }),
+}
+
+export const warningApi = {
+  list: (params: Q) => request<Page>('GET', '/warning-records', { params }),
 }
 
 export const auditApi = {

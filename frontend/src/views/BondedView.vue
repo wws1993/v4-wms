@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { bondedApi } from '@/api'
-import { downloadText } from '@/mock/util'
+import { downloadText } from '@/api/result'
 
 type Row = Record<string, unknown>
 

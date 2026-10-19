@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { bondedApi, inventoryApi, ocrApi, outboundApi, partnerApi } from '@/api'
-import { isLiveModule } from '@/api/http'
-import { dash, money, OCR_OUT } from './ops/samples'
+import { dash, money } from './ops/samples'
 
-const filters = reactive({ consignor: '', status: '', from: '', to: '' })
+const route = useRoute()
+const filters = reactive({ consignor: '', status: '', from: '', to: '', keyword: '' })
 const consignors = ref<string[]>([])
 const books = ref<Record<string, unknown>[]>([])
 const batches = ref<Record<string, unknown>[]>([])
@@ -30,6 +31,23 @@ async function load() {
   total.value = res.data.total
 }
 
+function applyKeyword() {
+  if (route.name !== 'outbound') return false
+  const keyword = typeof route.query.keyword === 'string' ? route.query.keyword : ''
+  if (filters.keyword === keyword) return false
+  filters.keyword = keyword
+  page.value = 1
+  return true
+}
+
+watch(() => route.query.keyword, () => {
+  if (applyKeyword()) load()
+})
+
+onActivated(() => {
+  if (applyKeyword()) load()
+})
+
 onMounted(async () => {
   const [who, bookRes, lotRes] = await Promise.all([
     partnerApi.consignors(),
@@ -41,6 +59,7 @@ onMounted(async () => {
     books.value = bookRes.data.list.filter((row) => row.status === '在用' || row.status === '新账' || row.status === '有效')
   }
   if (lotRes.success && lotRes.data) batches.value = lotRes.data.list.filter((row) => row.cargoType === '混成品')
+  applyKeyword()
   load()
 })
 
@@ -61,12 +80,11 @@ async function runOcr(file?: File) {
     ElMessage.warning('请选择出库报关单文件')
     return
   }
-  if (!isLiveModule('ocr')) Object.assign(form, OCR_OUT)
   if (!form.batchNo) form.batchNo = batches.value[0]?.batchNo || ''
   const res = await ocrApi.recognize({ docType: '出库报关单', fileName: file.name, __file: file, customsNo: form.customsNo })
   if (res.success && res.data) {
     const data = res.data as Record<string, unknown>
-    for (const key of ['customsNo', 'checklistNo', 'consignee', 'amount', 'currency']) {
+    for (const key of ['customsNo', 'checklistNo', 'consignee', 'consumer', 'wet', 'amount', 'currency']) {
       if (data[key] != null && data[key] !== '') form[key] = data[key]
     }
     recognized.value = true
@@ -122,6 +140,7 @@ async function complete(row: Record<string, unknown>) {
   <div>
     <div class="toolbar"><el-button type="primary" @click="reset">新建出库单</el-button></div>
     <el-form :inline="true">
+      <el-form-item label="单号"><el-input v-model="filters.keyword" clearable placeholder="报关单 / 批次 / 出库单" style="width: 200px" /></el-form-item>
       <el-form-item label="委托方"><el-select v-model="filters.consignor" clearable style="width: 140px"><el-option v-for="name in consignors" :key="name" :label="name" :value="name" /></el-select></el-form-item>
       <el-form-item label="状态">
         <el-select v-model="filters.status" clearable style="width: 120px">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { authApi, dashboardApi } from '@/api'
@@ -40,6 +40,7 @@ const tagColor: Record<string, string> = {
 let observer: ResizeObserver | null = null
 const num = (value: number) => value.toLocaleString('zh-CN')
 function resizeCharts() {
+  if ((boardRef.value?.clientWidth || 0) < 2) return
   barChart?.resize()
   lineChart?.resize()
 }
@@ -221,6 +222,10 @@ onMounted(async () => {
   renderCharts()
   observer = new ResizeObserver(() => resizeCharts())
   if (boardRef.value) observer.observe(boardRef.value)
+})
+
+onActivated(() => {
+  nextTick(() => resizeCharts())
 })
 
 onBeforeUnmount(() => {

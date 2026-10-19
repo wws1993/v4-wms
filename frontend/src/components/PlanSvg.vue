@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { FloorPlan, PlanItem, PlanType } from '@/types'
-import { cargoStyle, hostOf, isWarehouseItem, labelClearOf, lotsOnStack, planLabel, planPaint, sortPlanItems, type CargoLot } from '@/plan/model'
+import { archiveForStack, cargoStyle, hostOf, isWarehouseItem, labelClearOf, lotsOnStack, planLabel, planPaint, sortPlanItems, stackCellGrid, stackCellRect, type CargoLot } from '@/plan/model'
 
 const props = defineProps<{
   plan: FloorPlan
   theme: 'editor' | 'cockpit'
-  satellite?: boolean
-  /** 卫星贴图在平面图坐标里的范围，需盖住当前可视区域。 */
-  ground?: { x: number; y: number; w: number; h: number } | null
   selectedId?: string
   selectedIds?: string[]
   draft?: { type: PlanType; col: number; row: number; cols: number; rows: number } | null
   marquee?: { col: number; row: number; cols: number; rows: number } | null
   handles?: { col: number; row: number; cols: number; rows: number } | null
   lots?: CargoLot[]
+  stacks?: Record<string, unknown>[]
   onlyHostId?: string
   view: { x: number; y: number; w: number; h: number }
 }>()
@@ -59,15 +57,51 @@ function cargo(item: PlanItem) {
   return lotsOnStack(item, props.plan.items, props.lots || [])
 }
 
+function cargoBands(item: PlanItem) {
+  const rows = cargo(item)
+  if (rows.some((lot) => lot.cells?.length)) return []
+  return rows
+}
+
+function cargoCells(item: PlanItem) {
+  const rows = cargo(item).filter((lot) => lot.cells?.length)
+  if (!rows.length) return []
+  const grid = stackCellGrid(item, archiveForStack(item, props.plan.items, props.stacks || []))
+  const groups = new Map<string, CargoLot[]>()
+  for (const lot of rows) {
+    for (const key of lot.cells || []) {
+      if (!stackCellRect(item, key, grid)) continue
+      const list = groups.get(key) || []
+      list.push(lot)
+      groups.set(key, list)
+    }
+  }
+  const marks: { key: string; x: number; y: number; w: number; h: number; consignor: string; cargoType: string }[] = []
+  for (const [key, list] of groups) {
+    const rect = stackCellRect(item, key, grid)
+    if (!rect) continue
+    list.forEach((lot, index) => {
+      const slice = rect.h / list.length
+      marks.push({
+        key: `${item.id}-${key}-${index}`,
+        x: rect.x + rect.w * 0.08,
+        y: rect.y + slice * index + slice * 0.08,
+        w: rect.w * 0.84,
+        h: Math.max(0.02, slice * 0.84),
+        consignor: lot.consignor,
+        cargoType: lot.cargoType,
+      })
+    })
+  }
+  return marks
+}
+
 function paint(item: PlanItem) {
   return planPaint(item, props.theme)
 }
 
 function shapeOpacity(item: PlanItem) {
-  const row = paint(item)
-  const baked = row.fill.startsWith('#') && row.fill.length > 7
-  if (props.satellite && !baked) return 0.72
-  return row.opacity
+  return paint(item).opacity
 }
 
 function markY(item: PlanItem) {
@@ -257,18 +291,9 @@ const borders = computed(() => {
       :y="view.y - 2"
       :width="view.w + 4"
       :height="view.h + 4"
-        :fill="satellite ? '#1a2420' : '#1c2126'"
+      fill="#1c2126"
     />
-    <image
-      v-if="satellite"
-      href="/yard-satellite.jpg"
-      :x="ground?.x ?? view.x"
-      :y="ground?.y ?? view.y"
-      :width="ground?.w ?? view.w"
-      :height="ground?.h ?? view.h"
-      preserveAspectRatio="xMidYMid slice"
-    />
-    <g v-if="!satellite" stroke="rgba(255,255,255,0.08)" stroke-width="0.03">
+    <g stroke="rgba(255,255,255,0.08)" stroke-width="0.03">
       <line v-for="col in gridX" :key="'c' + col" :x1="col" :y1="view.y - 2" :x2="col" :y2="view.y + view.h + 2" />
       <line v-for="row in gridY" :key="'r' + row" :x1="view.x - 2" :y1="row" :x2="view.x + view.w + 2" :y2="row" />
     </g>
@@ -291,14 +316,28 @@ const borders = computed(() => {
         :fill-opacity="shapeOpacity(item)"
         :stroke="'none'"
       />
-      <g v-if="cargo(item).length">
+      <g v-if="cargoCells(item).length">
         <rect
-          v-for="(lot, index) in cargo(item)"
+          v-for="cell in cargoCells(item)"
+          :key="cell.key"
+          :x="cell.x"
+          :y="cell.y"
+          :width="cell.w"
+          :height="cell.h"
+          :fill="cargoStyle(cell.consignor, cell.cargoType).fill"
+          :fill-opacity="cargoStyle(cell.consignor, cell.cargoType).opacity"
+          :stroke="cargoStyle(cell.consignor, cell.cargoType).stroke"
+          stroke-width="0.04"
+        />
+      </g>
+      <g v-else-if="cargoBands(item).length">
+        <rect
+          v-for="(lot, index) in cargoBands(item)"
           :key="lot.stackText + index"
           :x="item.col + 0.15"
-          :y="item.row + 0.15 + index * ((item.rows - 0.3) / cargo(item).length)"
+          :y="item.row + 0.15 + index * ((item.rows - 0.3) / cargoBands(item).length)"
           :width="item.cols - 0.3"
-          :height="(item.rows - 0.3) / cargo(item).length - 0.08"
+          :height="(item.rows - 0.3) / cargoBands(item).length - 0.08"
           :fill="cargoStyle(lot.consignor, lot.cargoType).fill"
           :fill-opacity="cargoStyle(lot.consignor, lot.cargoType).opacity"
           :stroke="cargoStyle(lot.consignor, lot.cargoType).stroke"

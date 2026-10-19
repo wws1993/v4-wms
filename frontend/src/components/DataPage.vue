@@ -3,15 +3,19 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormItemRule, type FormRules } from 'element-plus'
 import { passwordIssue, passwordRuleText } from '@/security/policy'
-import { materialApi, partnerApi, shippingApi, warehouseApi, dictApi } from '@/api'
-import { isLiveModule } from '@/api/http'
+import { inventoryApi, materialApi, partnerApi, shippingApi, warehouseApi, dictApi } from '@/api'
+import ImageUpload from '@/components/ImageUpload.vue'
+import ImageViewer from '@/components/ImageViewer.vue'
+import LotDetailDialog from '@/components/LotDetailDialog.vue'
+import { isMediaPath, mediaUrl } from '@/api/media'
+import { downloadBlob, downloadText } from '@/api/result'
 import { getSchema } from '@/modules/schemas'
-import { downloadBlob, downloadText } from '@/mock/util'
 import type { ColumnSchema, DetailBlock, FieldSchema, RowAction } from '@/types'
 
 const props = defineProps<{ name: string; initialFilters?: Record<string, string> }>()
 const route = useRoute()
 const router = useRouter()
+const host = String(route.name || '')
 
 const schema = computed(() => getSchema(props.name))
 const importInput = ref<HTMLInputElement>()
@@ -30,6 +34,11 @@ const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailRow = ref<Record<string, unknown> | null>(null)
 const detailBlocks = ref<DetailBlock[]>([])
+const lotOpen = ref(false)
+const lotLoading = ref(false)
+const lotLedger = ref(false)
+const lotFocus = ref('inbound')
+const lotCurrent = ref<Record<string, unknown> | null>(null)
 const actionOpen = ref(false)
 const actionSaving = ref(false)
 const actionDef = ref<RowAction | null>(null)
@@ -109,13 +118,7 @@ function fieldOptions(field: FieldSchema) {
     }))
   }
   if (field.optionsFrom === 'materials') return materialOptions.value
-  if (field.optionsFrom === 'shipping') {
-    if (shippingOptions.value.length || isLiveModule('shipping')) return shippingOptions.value
-    return [
-      { label: '集装箱', value: '集装箱' },
-      { label: '散货', value: '散货' },
-    ]
-  }
+  if (field.optionsFrom === 'shipping') return shippingOptions.value
   if (field.optionsFrom === 'consignors') return consignorOptions.value
   if (field.optionsFrom === 'warehouses') return warehouseOptions.value
   if (field.dict) {
@@ -182,11 +185,10 @@ async function loadLookups() {
   if (uses('consignors')) {
     const res = await partnerApi.consignors()
     const names = res.success && Array.isArray(res.data) ? res.data : []
-    const fallback = isLiveModule('partners') || names.length ? names : ['五矿有色', '广西金川', '广西南国']
-    consignorOptions.value = fallback.map((name) => ({ label: name, value: name }))
+    consignorOptions.value = names.map((name) => ({ label: name, value: name }))
   }
   if (uses('warehouses')) {
-    const res = await warehouseApi.list({ page: 1, pageSize: 200 })
+    const res = await warehouseApi.catalog()
     warehouseOptions.value = res.success && res.data
       ? res.data.list.map((row) => ({ label: String(row.code), value: String(row.code) }))
       : []
@@ -431,6 +433,24 @@ function bindFile(key: string) {
   }
 }
 
+function imageFieldFile() {
+  return form.__file instanceof File ? form.__file : null
+}
+
+function imageFieldSrc(key: string) {
+  if (imageFieldFile()) return ''
+  const value = form[key]
+  return isMediaPath(value) ? mediaUrl(value) : ''
+}
+
+function onImageFile(file: File | File[] | null) {
+  form.__file = file instanceof File ? file : undefined
+}
+
+function fileNameOf(value: unknown) {
+  return String(value || '').split('?')[0].split('/').filter(Boolean).pop() || ''
+}
+
 function applyAssist() {
   const fill = schema.value?.assist?.fill()
   if (!fill) return
@@ -465,6 +485,7 @@ watch(() => [form.warehouse, form.stackName], () => {
 })
 
 watch(() => [props.name, route.query.warehouse, route.query.keyword] as const, () => {
+  if (String(route.name || '') !== host) return
   page.value = 1
   resetFilters()
   loadLookups()
@@ -473,6 +494,32 @@ watch(() => [props.name, route.query.warehouse, route.query.keyword] as const, (
 
 const usageText = (row: Record<string, unknown>) => row.occupyText ? String(row.occupyText) : `${row.used ?? 0} / ${row.rate ?? 0}%`
 const columnBind = (column: ColumnSchema) => ({ prop: column.prop, label: column.label, width: column.width, minWidth: column.minWidth })
+function lotText(value: unknown) {
+  const text = String(value ?? '').trim()
+  return text && text !== '—' && text !== '-' ? text : ''
+}
+
+async function openLot(row: Record<string, unknown>, section = 'inbound') {
+  const customsNo = lotText(row.customsNo)
+  const batchNo = customsNo || lotText(row.batchNo) || lotText(row.prodBatch)
+  lotFocus.value = section
+  lotOpen.value = true
+  lotLoading.value = true
+  lotCurrent.value = {
+    ...row,
+    batchNo,
+    customsNo,
+    batchKind: customsNo ? '报关单号' : '生产批次号',
+    stackText: row.stackText || row.stack,
+    inDate: row.inDate || row.inAt,
+  }
+  if (batchNo) {
+    const res = await inventoryApi.detail(batchNo)
+    if (lotOpen.value && res.success && res.data) lotCurrent.value = res.data
+  }
+  lotLoading.value = false
+}
+
 const detailTitle = computed(() => detailBlocks.value[0]?.title || '详情')
 const detailWidth = computed(() => (detailBlocks.value.some((block) => block.table) ? 920 : 640))
 </script>
@@ -510,6 +557,8 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
           </template>
           <el-button v-else-if="schema.detailColumn === column.prop" link type="primary" @click="openDetail(row)">{{ row[column.prop] || '—' }}</el-button>
           <el-tag v-else-if="column.tag" :type="tagType(row[column.prop])" effect="light">{{ row[column.prop] || '—' }}</el-tag>
+          <ImageViewer v-else-if="column.image && row[column.prop]" variant="link" :src="String(row[column.prop])" :name="fileNameOf(row[column.prop])" title="附件" />
+          <span v-else-if="column.image">—</span>
           <span v-else>{{ row[column.prop] === '' || row[column.prop] == null ? '—' : row[column.prop] }}</span>
         </template>
       </el-table-column>
@@ -517,7 +566,10 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
         <template #default="{ row }">
           <el-button v-if="showEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button v-if="canShowDetail(row) && !schema.detailColumn" link type="primary" @click="openDetail(row)">详情</el-button>
-          <el-button v-for="action in visibleActions(row)" :key="action.label" link :type="action.danger ? 'danger' : 'primary'" @click="runAction(action, row)">{{ action.label }}</el-button>
+          <template v-for="action in visibleActions(row)" :key="action.label">
+            <ImageViewer v-if="action.image" variant="link" :label="action.label" :src="action.image(row)" title="附件" />
+            <el-button v-else link :type="action.danger ? 'danger' : 'primary'" @click="runAction(action, row)">{{ action.label }}</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -537,7 +589,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
 
     <el-dialog v-model="dialog" :title="schema.dialogTitle || (editingId ? '编辑' : (schema.createLabel || '新建'))" :width="schema.formWidth || 720" destroy-on-close>
       <el-button v-if="schema.assist && !editingId" class="assist" @click="applyAssist">{{ schema.assist.label }}</el-button>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
+      <el-form ref="formRef" class="edit-form" :model="form" :rules="rules" :label-width="schema.labelWidth || '120px'">
         <el-row :gutter="16">
           <el-col v-for="field in schema.form" v-show="!field.when || field.when(form)" :key="field.key" :span="field.span || (field.type === 'textarea' ? 24 : 12)">
             <el-form-item :label="field.label" :prop="field.key">
@@ -545,7 +597,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
                 <el-option v-for="opt in fieldOptions(field)" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-select>
               <div v-else-if="field.type === 'number'" class="number-field">
-                <el-input-number v-model="form[field.key]" :disabled="isDisabled(field)" :min="0" />
+                <el-input-number v-model="form[field.key]" :disabled="isDisabled(field)" :min="0" :placeholder="field.placeholder" />
                 <span v-if="field.unit" class="unit">{{ field.unit }}</span>
               </div>
               <el-date-picker v-else-if="field.type === 'date'" v-model="form[field.key]" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -555,6 +607,14 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
                 <el-button>选择文件</el-button>
                 <span class="file-name">{{ form[field.key] }}</span>
               </el-upload>
+              <ImageUpload
+                v-else-if="field.type === 'image'"
+                :src="imageFieldSrc(field.key)"
+                :model-value="imageFieldFile()"
+                :disabled="isDisabled(field)"
+                @update:model-value="onImageFile"
+                @clear="form[field.key] = ''"
+              />
               <div v-else-if="field.type === 'cells'" class="cells">
                 <template v-if="cellKeys(String(form[field.stackKey || ''] || '')).length">
                   <button
@@ -590,7 +650,12 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
             <el-descriptions-item v-for="item in block.fields" :key="item.label" :label="item.label">{{ item.value }}</el-descriptions-item>
           </el-descriptions>
           <el-table v-if="block.table" :data="block.table.rows" border size="small" class="detail-table">
-            <el-table-column v-for="column in block.table.columns" :key="column.prop" :prop="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth" />
+            <el-table-column v-for="column in block.table.columns" :key="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth">
+              <template #default="{ row }">
+                <el-button v-if="column.lot && lotText(row[column.prop])" link type="primary" @click="openLot(row, 'inbound')">{{ row[column.prop] }}</el-button>
+                <span v-else>{{ row[column.prop] || '—' }}</span>
+              </template>
+            </el-table-column>
           </el-table>
         </section>
       </div>
@@ -599,6 +664,15 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
         <el-button @click="detailOpen = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <LotDetailDialog
+      v-model="lotOpen"
+      v-model:ledger="lotLedger"
+      :lot="lotCurrent"
+      :loading="lotLoading"
+      :focus="lotFocus"
+      @open-batch="(batch, section) => openLot({ batchNo: batch, customsNo: batch }, section || 'inbound')"
+    />
 
     <el-dialog v-if="actionDef?.dialog" v-model="actionOpen" :title="actionDef.dialog.title" width="720px" align-center destroy-on-close>
       <p v-if="actionDef.dialog.message" class="action-note">{{ actionDef.dialog.message }}</p>
@@ -637,6 +711,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
 .pager { display: flex; justify-content: flex-end; margin-top: 16px; }
 .usage { margin-bottom: 4px; font-size: 13px; }
 .assist { margin-bottom: 12px; }
+.edit-form :deep(.el-form-item__label) { white-space: nowrap; }
 .file-name { margin-left: 8px; color: #5a6a7e; }
 .password-field { width: 100%; }
 .field-hint { margin: 6px 0 0; color: #5a6a7e; font-size: 12px; line-height: 1.5; }

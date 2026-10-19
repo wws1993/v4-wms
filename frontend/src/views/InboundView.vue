@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { dictApi, inboundApi, inventoryApi, materialApi, partnerApi, shippingApi, warehouseApi } from '@/api'
-import { isLiveModule } from '@/api/http'
-import { dash, money, qualityLine } from './ops/samples'
+import { dictApi, inboundApi, inventoryApi, materialApi, partnerApi, warehouseApi } from '@/api'
+import LotDetailDialog from '@/components/LotDetailDialog.vue'
+import { dash, money } from './ops/samples'
 import InboundWizard from './inbound/InboundWizard.vue'
 
+const route = useRoute()
 const filters = reactive({ consignor: '', status: '', shipMode: '', oreType: '', from: '', to: '', keyword: '' })
 const rows = ref<Record<string, unknown>[]>([])
 const total = ref(0)
@@ -15,22 +17,18 @@ const consignors = ref<string[]>([])
 const materials = ref<Record<string, unknown>[]>([])
 const filings = ref<Record<string, unknown>[]>([])
 const stacks = ref<Record<string, unknown>[]>([])
-const methods = ref<{ name: string; containers: number }[]>([])
+const shipModes = ref<string[]>([])
 const minerals = ref<string[]>([])
 const statuses = ref<string[]>(['暂存码头', '待收货', '已入库', '混成品'])
 const currencies = ref<{ label: string; value: string }[]>([{ label: '人民币 ¥', value: 'CNY' }, { label: '美元 $', value: 'USD' }])
-
 const wizard = ref<{ start: number; seed: Record<string, unknown> | null; key: number } | null>(null)
 const detailOpen = ref(false)
-const detailTab = ref('customs')
-const detailRow = ref<Record<string, unknown> | null>(null)
-const products = ref<Record<string, unknown>[]>([])
+const detailLoading = ref(false)
+const ledgerOpen = ref(false)
+const focus = ref('inbound')
+const current = ref<Record<string, unknown> | null>(null)
 
-const shipOptions = computed(() => {
-  if (methods.value.length) return methods.value
-  if (isLiveModule('shipping')) return []
-  return [{ name: '散货', containers: 0 }, { name: '集装箱', containers: 0 }]
-})
+const shipOptions = computed(() => shipModes.value)
 
 async function load() {
   loading.value = true
@@ -47,37 +45,60 @@ async function load() {
   total.value = res.data.total
 }
 
+async function loadAllStacks() {
+  const rows: Record<string, unknown>[] = []
+  for (let page = 1; page <= 20; page += 1) {
+    const res = await warehouseApi.stacks({ page, pageSize: 200 })
+    if (!res.success || !res.data?.list.length) break
+    rows.push(...res.data.list)
+    if (rows.length >= Number(res.data.total || rows.length)) break
+  }
+  return rows
+}
+
+function applyKeyword() {
+  if (route.name !== 'inbound') return false
+  const keyword = typeof route.query.keyword === 'string' ? route.query.keyword : ''
+  if (filters.keyword === keyword) return false
+  filters.keyword = keyword
+  page.value = 1
+  return true
+}
+
+watch(() => route.query.keyword, () => {
+  if (applyKeyword()) load()
+})
+
+onActivated(() => {
+  if (applyKeyword()) load()
+})
+
 onMounted(async () => {
-  const [who, materialRes, filingRes, stackRes, shipRes] = await Promise.all([
+  const [who, materialRes, filingRes, stackRes] = await Promise.all([
     partnerApi.consignors(),
     materialApi.list({ page: 1, pageSize: 100 }),
-    materialApi.filings({ page: 1, pageSize: 100 }),
-    warehouseApi.stacks({ page: 1, pageSize: 200 }),
-    shippingApi.list(),
+    materialApi.filings({ page: 1, pageSize: 500 }),
+    loadAllStacks(),
   ])
   if (who.success && who.data) consignors.value = who.data
   if (materialRes.success && materialRes.data) materials.value = materialRes.data.list
   if (filingRes.success && filingRes.data) filings.value = filingRes.data.list
-  if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
-  if (shipRes.success && shipRes.data) {
-    methods.value = shipRes.data.list.map((row) => ({ name: String(row.name), containers: Number(row.containers || 0) }))
+  if (stackRes.length) stacks.value = stackRes
+  const [mineralRes, statusRes, currencyRes, shipRes] = await Promise.all([
+    dictApi.labels('wms_mineral_type'),
+    dictApi.labels('wms_receipt_status'),
+    dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 }),
+    dictApi.labels('wms_translate_type'),
+  ])
+  if (mineralRes.success && mineralRes.data?.length) minerals.value = mineralRes.data
+  if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
+  if (currencyRes.success && currencyRes.data?.list.length) {
+    currencies.value = currencyRes.data.list
+      .filter((row) => String(row.status || '正常') !== '停用')
+      .map((row) => ({ label: String(row.label), value: String(row.value) }))
   }
-  if (isLiveModule('inbound')) {
-    const [mineralRes, statusRes, currencyRes] = await Promise.all([
-      dictApi.labels('wms_mineral_type'),
-      dictApi.labels('wms_receipt_status'),
-      dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 }),
-    ])
-    if (mineralRes.success && mineralRes.data?.length) minerals.value = mineralRes.data
-    if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
-    if (currencyRes.success && currencyRes.data?.list.length) {
-      currencies.value = currencyRes.data.list
-        .filter((row) => String(row.status || '正常') !== '停用')
-        .map((row) => ({ label: String(row.label), value: String(row.value) }))
-    }
-  } else {
-    minerals.value = ['铜精矿', '冰铜']
-  }
+  if (shipRes.success && shipRes.data?.length) shipModes.value = shipRes.data
+  applyKeyword()
   load()
 })
 
@@ -85,8 +106,23 @@ function openCreate() {
   wizard.value = { start: 0, seed: null, key: Date.now() }
 }
 
-function openReceive(row: Record<string, unknown>) {
-  wizard.value = { start: 2, seed: { ...row, category: '原料' }, key: Date.now() }
+async function receiptOf(row: Record<string, unknown>) {
+  const id = String(row.id || '')
+  if (!id) return row
+  const res = await inboundApi.get(id)
+  if (!res.success || !res.data) {
+    ElMessage.error(res.message || '入库单详情加载失败')
+    return null
+  }
+  return res.data
+}
+
+async function openReceive(row: Record<string, unknown>) {
+  loading.value = true
+  const detail = await receiptOf(row)
+  loading.value = false
+  if (!detail) return
+  wizard.value = { start: 2, seed: { ...detail, category: '原料' }, key: Date.now() }
 }
 
 function closeWizard() {
@@ -98,16 +134,36 @@ function finishWizard() {
   load()
 }
 
-async function openDetail(row: Record<string, unknown>) {
-  detailRow.value = row
-  detailTab.value = 'customs'
-  products.value = []
-  const batchNo = String(row.customsNo || '')
+function lotFromInbound(row: Record<string, unknown>) {
+  return {
+    ...row,
+    batchNo: row.batchNo || row.customsNo || row.orderNo,
+    batchKind: row.customsNo ? '报关单号' : '入库单号',
+    stackText: row.stackCode,
+    docs: {
+      customs: { image: '', name: '' },
+      weight: { image: '', name: '' },
+      quality: { image: '', name: '' },
+    },
+    products: [],
+    ledger: row.time ? [{ time: row.time, action: '入库', wet: row.wet, dry: row.dry, stack: row.stackCode, consignee: '' }] : [],
+  }
+}
+
+async function openDetail(row: Record<string, unknown>, section = 'inbound') {
+  focus.value = section
+  detailOpen.value = true
+  detailLoading.value = true
+  const detail = String(row.id || '') ? await receiptOf(row) : row
+  if (!detailOpen.value) return
+  const base = lotFromInbound(detail || row)
+  current.value = base
+  const batchNo = String(base.batchNo || base.customsNo || row.batchNo || row.customsNo || '')
   if (batchNo) {
     const res = await inventoryApi.detail(batchNo)
-    if (res.success && res.data) products.value = (res.data.products as Record<string, unknown>[]) || []
+    if (detailOpen.value && res.success && res.data) current.value = res.data
   }
-  detailOpen.value = true
+  detailLoading.value = false
 }
 
 function canReceive(row: Record<string, unknown>) {
@@ -124,7 +180,7 @@ function canReceive(row: Record<string, unknown>) {
     :materials="materials"
     :filings="filings"
     :stacks="stacks"
-    :methods="shipOptions"
+    :ship-modes="shipOptions"
     :minerals="minerals"
     :currencies="currencies"
     :start="wizard.start"
@@ -133,7 +189,7 @@ function canReceive(row: Record<string, unknown>) {
     @done="finishWizard"
   />
     <div class="toolbar">
-      <el-button type="primary" @click="openCreate">新建入库</el-button>
+      <el-button type="primary" @click="openCreate">新建入库预约</el-button>
     </div>
     <el-form :inline="true">
       <el-form-item label="委托方">
@@ -146,9 +202,9 @@ function canReceive(row: Record<string, unknown>) {
           <el-option v-for="item in statuses" :key="item" :label="item" :value="item" />
         </el-select>
       </el-form-item>
-      <el-form-item label="装运">
+      <el-form-item label="货运方式">
         <el-select v-model="filters.shipMode" clearable style="width: 140px">
-          <el-option v-for="item in shipOptions" :key="item.name" :label="item.name" :value="item.name" />
+          <el-option v-for="item in shipOptions" :key="item" :label="item" :value="item" />
         </el-select>
       </el-form-item>
       <el-form-item label="矿种">
@@ -162,51 +218,43 @@ function canReceive(row: Record<string, unknown>) {
       <el-form-item><el-button type="primary" @click="page = 1; load()">查询</el-button></el-form-item>
     </el-form>
     <el-table v-loading="loading" :data="rows" border stripe>
-      <el-table-column label="单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column>
-      <el-table-column prop="consignor" label="委托方" width="110" />
+      <!-- <el-table-column label="单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column> -->
+      <el-table-column label="报关单号" min-width="150">
+        <template #default="{ row }">
+          <el-button v-if="row.customsNo" link type="primary" @click="openDetail(row, 'inbound')">{{ row.customsNo }}</el-button>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="consignor" label="委托方" width="200" />
+      <el-table-column prop="material" label="物料" min-width="120" />
       <el-table-column prop="oreType" label="矿种" width="90" />
       <el-table-column prop="shipName" label="船名" width="110" />
-      <el-table-column prop="blNo" label="提单" min-width="140" />
-      <el-table-column prop="customsNo" label="报关单" min-width="150" />
-      <el-table-column prop="checklistNo" label="核注" width="120" />
+      <el-table-column prop="blNo" label="提单号" min-width="140" />
+      <el-table-column prop="checklistNo" label="核注清单号" width="200" />
       <el-table-column label="金额" width="130"><template #default="{ row }">{{ money(row.amount, row.currency) }}</template></el-table-column>
-      <el-table-column label="湿/干" width="110"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
-      <el-table-column prop="shipMode" label="装运" width="90" />
+      <el-table-column label="湿/干" width="200"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
+      <el-table-column prop="shipMode" label="货运方式" width="100" />
       <el-table-column prop="containerCount" label="柜数" width="70" />
       <el-table-column prop="stackCode" label="堆位" width="100" />
       <el-table-column prop="status" label="状态" width="100" />
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作时间" width="170" fixed="right"><template #default="{ row }">{{ dash(row.operateTime || row.time) }}</template></el-table-column>
+      <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canReceive(row)" link type="primary" @click="openReceive(row)">收货</el-button>
-          <el-button v-else link type="primary" @click="openDetail(row)">详情</el-button>
+          <el-button v-else link type="primary" @click="openDetail(row, 'inbound')">详情</el-button>
         </template>
       </el-table-column>
     </el-table>
     <div class="pager"><el-pagination v-model:current-page="page" :total="total" layout="total, prev, pager, next" background @current-change="load" /></div>
 
-    <el-dialog v-model="detailOpen" :title="`本票详情 · ${dash(detailRow?.customsNo || detailRow?.orderNo)}`" width="760px" align-center>
-      <el-tabs v-model="detailTab">
-        <el-tab-pane label="报关单" name="customs">
-          <p>船名 {{ dash(detailRow?.shipName) }} · 提单 {{ dash(detailRow?.blNo) }} · 核注 {{ dash(detailRow?.checklistNo) }}</p>
-          <p>金额 {{ money(detailRow?.amount, detailRow?.currency) }} · 堆位 {{ dash(detailRow?.stackCode) }} · 格子 {{ dash(detailRow?.cells) }}</p>
-        </el-tab-pane>
-        <el-tab-pane label="重量证书" name="weight">
-          <p>湿重 {{ dash(detailRow?.wet) }} 吨 · 干重 {{ dash(detailRow?.dry) }} 吨 · 水分 {{ dash(detailRow?.moisture) }}</p>
-        </el-tab-pane>
-        <el-tab-pane label="品质证书" name="quality">
-          <p>证书号 {{ dash(detailRow?.qualityNo) }}</p>
-          <p>{{ detailRow ? qualityLine(detailRow) : '—' }}</p>
-        </el-tab-pane>
-        <el-tab-pane label="成品" name="product">
-          <el-table :data="products" border>
-            <el-table-column prop="prodBatch" label="成品批次" />
-            <el-table-column prop="output" label="产量" />
-            <el-table-column prop="stock" label="库存" />
-            <el-table-column prop="outbound" label="出库" />
-          </el-table>
-        </el-tab-pane>
-      </el-tabs>
-    </el-dialog>
+    <LotDetailDialog
+      v-model="detailOpen"
+      v-model:ledger="ledgerOpen"
+      :lot="current"
+      :loading="detailLoading"
+      :focus="focus"
+      @open-batch="(batch, section) => openDetail({ batchNo: batch, customsNo: batch }, section || 'inbound')"
+    />
   </div>
 </template>
 

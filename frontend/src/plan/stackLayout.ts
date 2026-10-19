@@ -118,7 +118,7 @@ export interface PlacedWarehouse {
   stacks: PlacedStack[]
 }
 
-/** 仓库按库容占格时，画板留出的空白比例。 */
+/** 仓库按面积占格时，画板留出的空白比例。 */
 const PARK_BLANK = 0.3
 
 function blockSize(cells: number, boardCols: number, boardRows: number) {
@@ -158,7 +158,8 @@ function flowPlace(
 }
 
 /**
- * 按库容把仓库铺进画板。仓库合计占用约 70% 格子，其余 30% 留白。
+ * 按面积把仓库铺进画板。仓库合计占用约 70% 格子，其余 30% 留白。
+ * 每座仓库的格子数按面积估算；没填面积的仓库按同样的最小一块。
  * 每个仓库里的堆位再按库容平分该仓库。
  */
 export function layoutPark(boardCols: number, boardRows: number, houses: ParkSeed[]): PlacedWarehouse[] {
@@ -166,7 +167,7 @@ export function layoutPark(boardCols: number, boardRows: number, houses: ParkSee
   const cols = Math.max(4, Math.round(boardCols) || 4)
   const rows = Math.max(4, Math.round(boardRows) || 4)
   const ordered = houses
-    .map((house, index) => ({ house, index, weight: Math.max(Number(house.capacity) || 0, 1) }))
+    .map((house, index) => ({ house, index, weight: Math.max(Number(house.area) || 0, 1) }))
     .sort((a, b) => b.weight - a.weight || a.index - b.index)
   const total = ordered.reduce((sum, item) => sum + item.weight, 0)
   const usable = Math.max(ordered.length * 4, Math.floor(cols * rows * (1 - PARK_BLANK)))

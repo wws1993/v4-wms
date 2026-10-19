@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       dedupe: ['vue', 'vue-router'],
     },
     optimizeDeps: {
-      include: ['vue', 'vue-router', 'element-plus', 'mockjs'],
+      include: ['vue', 'vue-router', 'element-plus'],
     },
     server: {
       port: 5173,

@@ -7,7 +7,7 @@ withDefaults(defineProps<{
   tone?: 'cockpit' | 'theme'
 }>(), {
   kicker: 'SYS // YARD-MAP',
-  title: '平面图同步中',
+  title: '仓库示意图加载中',
   hint: '读取已保存园区布局',
   tone: 'cockpit',
 })

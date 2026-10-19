@@ -498,13 +498,87 @@ export interface CargoLot {
   cargoType: string
   wet: number
   status: string
+  /** 堆位档案 id，用来和平面图上的堆位对齐。 */
+  areaId?: string
+  /** 该票占用的格子，形如 `行-列`。没有格子时表示整堆。 */
+  cells?: string[]
+}
+
+export function slotName(name: string) {
+  const flat = name.replace(/[\r\n]+/g, '').trim()
+  return flat.replace(/^\d+#/, '').trim() || flat
+}
+
+function sameArchiveHouse(warehouse: string, warehouseId: string, host: PlanItem | undefined) {
+  if (!host) return false
+  if (host.warehouseId && warehouseId && host.warehouseId === warehouseId) return true
+  if (!warehouse) return false
+  return warehouse === host.name || warehouseCodeOf(warehouse) === warehouseCodeOf(host.name)
+}
+
+/** 平面图堆位对应的堆位档案。网格行列以档案为准，没有档案时用图上占格取整。 */
+export function archiveForStack(item: PlanItem, items: PlanItem[], stacks: Record<string, unknown>[]) {
+  const host = hostOf(item, items)
+  const slot = slotName(item.name)
+  const code = host ? stackCode(host.name, slot) : slot
+  return stacks.find((row) => {
+    if (item.stackId && String(row.id ?? '') === item.stackId) return true
+    if (item.archiveCode && String(row.code ?? '') === item.archiveCode) return true
+    const rowCode = String(row.code || '')
+    if (rowCode && rowCode === code) return true
+    const rowSlot = rowCode.includes('#') ? rowCode.slice(rowCode.lastIndexOf('#') + 1) : rowCode
+    return (rowSlot === slot || rowCode === slot) && sameArchiveHouse(String(row.warehouse || ''), String(row.warehouseId || ''), host)
+  })
+}
+
+export function stackCellGrid(item: PlanItem, archive?: Record<string, unknown>) {
+  const cols = Number(archive?.gridCols || 0)
+  const rows = Number(archive?.gridRows || 0)
+  if (cols > 0 && rows > 0) return { cols, rows }
+  const matched = String(archive?.grid || '').match(/(\d+)\s*[×xX]\s*(\d+)/)
+  if (matched) return { cols: Number(matched[1]), rows: Number(matched[2]) }
+  return {
+    cols: Math.max(1, Math.round(item.cols)),
+    rows: Math.max(1, Math.round(item.rows)),
+  }
+}
+
+export function stackCellRect(item: PlanItem, key: string, grid: { cols: number; rows: number }) {
+  const [row, col] = key.split('-').map(Number)
+  if (!grid.cols || !grid.rows || !row || !col || row > grid.rows || col > grid.cols) return null
+  return {
+    x: item.col + ((col - 1) * item.cols) / grid.cols,
+    y: item.row + ((row - 1) * item.rows) / grid.rows,
+    w: item.cols / grid.cols,
+    h: item.rows / grid.rows,
+  }
+}
+
+export function stackCellAt(item: PlanItem, spot: { x: number; y: number }, grid: { cols: number; rows: number }) {
+  if (!grid.cols || !grid.rows) return ''
+  if (spot.x < item.col || spot.y < item.row || spot.x > item.col + item.cols || spot.y > item.row + item.rows) return ''
+  const col = Math.min(grid.cols, Math.max(1, Math.floor(((spot.x - item.col) / item.cols) * grid.cols) + 1))
+  const row = Math.min(grid.rows, Math.max(1, Math.floor(((spot.y - item.row) / item.rows) * grid.rows) + 1))
+  return `${row}-${col}`
 }
 
 export function lotsOnStack(item: PlanItem, items: PlanItem[], lots: CargoLot[]) {
   const host = hostOf(item, items)
   if (!host || item.type !== 'stack') return []
-  const key = `${host.name.replace(/仓库|仓/g, '')}#${item.name.replace(/^\d+#/, '')}`
-  return lots.filter((lot) => lot.status === '在库' && lot.stackText === key)
+  const slot = slotName(item.name)
+  const key = stackCode(host.name, slot)
+  const id = item.stackId || ''
+  return lots.filter((lot) => {
+    if (lot.status && lot.status !== '在库') return false
+    if (id && lot.areaId && lot.areaId === id) return true
+    const label = lot.stackText.trim()
+    if (!label) return false
+    if (label === key || label === item.name || label === item.archiveCode) return true
+    const lotSlot = label.includes('#') ? label.slice(label.lastIndexOf('#') + 1) : label
+    if (lotSlot !== slot && label !== slot) return false
+    if (!lot.warehouse) return false
+    return warehouseCodeOf(lot.warehouse) === warehouseCodeOf(host.name) || lot.warehouse === host.name
+  })
 }
 
 /** 空白画板。没有保存过、或保存后没有任何区块时都用这一张，不再回填示例园区。 */

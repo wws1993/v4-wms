@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { authApi } from '@/api'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
@@ -7,17 +7,18 @@ import SessionGuard from '@/components/SessionGuard.vue'
 import { NAV, NAV_GROUPS, pageIdsFor } from '@/nav'
 import { useAuthStore } from '@/stores/auth'
 import {
-  ArrowDown, Calendar, Collection, Document, Download, Files, Finished, Grid, Medal, Notebook, Odometer,
-  OfficeBuilding, Search, Setting, SetUp, Sort, Tickets, Upload, User, Warning,
+  ArrowDown, Bell, Calendar, Collection, Document, Download, Files, Finished, Grid, Medal, Notebook, Odometer,
+  OfficeBuilding, Search, Setting, SetUp, Sort, Tickets, Upload, User,
 } from '@element-plus/icons-vue'
 
 const icons: Record<string, unknown> = {
-  ArrowDown, Calendar, Collection, Document, Download, Files, Finished, Grid, Medal, Notebook, Odometer,
-  OfficeBuilding, Search, Setting, SetUp, Sort, Tickets, Upload, User, Warning,
+  ArrowDown, Bell, Calendar, Collection, Document, Download, Files, Finished, Grid, Medal, Notebook, Odometer,
+  OfficeBuilding, Search, Setting, SetUp, Sort, Tickets, Upload, User,
 }
 const groupIcons: Record<string, string> = {
   基础数据: 'Grid',
   仓储作业: 'Download',
+  '生产与关务': 'Document',
   账务: 'Notebook',
   系统: 'Setting',
 }
@@ -25,6 +26,20 @@ const groupIcons: Record<string, string> = {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const contentRef = ref<HTMLElement>()
+const scrollTops = new Map<string, number>()
+
+function viewKey(view: { name?: unknown; path: string }) {
+  return String(view.name || view.path)
+}
+
+watch(() => route.name, async (_name, previous) => {
+  const el = contentRef.value
+  if (el && previous) scrollTops.set(String(previous), el.scrollTop)
+  await nextTick()
+  if (!contentRef.value) return
+  contentRef.value.scrollTop = scrollTops.get(String(route.name || '')) || 0
+})
 const isDash = computed(() => route.name === 'dashboard')
 const title = computed(() => String(route.meta.title || ''))
 const folded = ref<string[]>([])
@@ -107,8 +122,12 @@ async function logout() {
           </template>
         </el-dropdown>
       </header>
-      <div class="content">
-        <router-view />
+      <div ref="contentRef" class="content">
+        <router-view v-slot="{ Component, route: viewRoute }">
+          <keep-alive>
+            <component :is="Component" :key="viewKey(viewRoute)" />
+          </keep-alive>
+        </router-view>
       </div>
     </section>
     <SessionGuard />
