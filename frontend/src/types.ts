@@ -29,6 +29,8 @@ export interface FieldSchema {
   optionsFrom?: 'stacks' | 'materials' | 'shipping' | 'consignors' | 'warehouses' | 'roles'
   /** 选项来自字典类型，值为字典标签。 */
   dict?: string
+  /** 物料下拉排除的矿种类型，如 混成品、达标矿。 */
+  excludeCargoTypes?: string[]
   stackKey?: string
   required?: boolean
   options?: Array<string | { label: string; value: string }> | ((form: Record<string, unknown>, labels?: string[]) => Array<string | { label: string; value: string }>)

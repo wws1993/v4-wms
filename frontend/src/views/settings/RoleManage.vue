@@ -198,7 +198,7 @@ async function loadRoles(preferKey = '') {
 
 async function loadMenus() {
   const res = await menuApi.tree()
-  tree.value = res.success && Array.isArray(res.data) ? res.data as MenuNode[] : []
+  tree.value = res.success && Array.isArray(res.data) ? res.data as unknown as MenuNode[] : []
   if (!res.success) ElMessage.error(res.message)
 }
 

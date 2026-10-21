@@ -175,14 +175,8 @@ async function submitSingle() {
     ElMessage.warning('请选择要移动的票货')
     return
   }
-  const source = stacks.value.find((item) => String(item.id) === form.stackId)
-  const sameStack = (form.toAreaId && form.toAreaId === form.stackId) || (source && form.toStack === String(source.code))
   if ((!form.toAreaId && !form.toStack) || !form.cells) {
     ElMessage.warning('请在平面图上框选目标堆位格子')
-    return
-  }
-  if (sameStack) {
-    ElMessage.warning('目标堆位不能与原堆位相同')
     return
   }
   if (!wholeLot.value) {
@@ -249,20 +243,31 @@ function targetLabel(value?: BatchPick) {
   return `${value.toStack} · ${count} 格`
 }
 
+function findBatchLot(key: string) {
+  return lots.value.find((row) => lotKey(row) === key)
+}
+
+function lotLabel(row: Record<string, unknown> | undefined, key?: string) {
+  if (!row) return key || '所选库存'
+  const batch = String(row.batchNo || '—')
+  const stack = String(row.stackText || '')
+  return stack ? `${batch} · ${stack}` : batch
+}
+
 function focusBatchLot(row: Record<string, unknown>) {
-  const key = String(row.batchNo)
+  const key = lotKey(row)
   if (!picked.value[key]) picked.value[key] = emptyPick()
   batchFocus.value = key
 }
 
-function toggleLot(batchNo: string, on: boolean) {
+function toggleLot(key: string, on: boolean) {
   if (on) {
-    picked.value[batchNo] = picked.value[batchNo] || emptyPick()
-    batchFocus.value = batchNo
+    picked.value[key] = picked.value[key] || emptyPick()
+    batchFocus.value = key
     return
   }
-  delete picked.value[batchNo]
-  if (batchFocus.value === batchNo) batchFocus.value = Object.keys(picked.value)[0] || ''
+  delete picked.value[key]
+  if (batchFocus.value === key) batchFocus.value = Object.keys(picked.value)[0] || ''
 }
 
 function toggleAll(on: boolean) {
@@ -273,7 +278,7 @@ function toggleAll(on: boolean) {
   }
   const next = { ...picked.value }
   for (const row of batchLots.value) {
-    const key = String(row.batchNo)
+    const key = lotKey(row)
     next[key] = next[key] || emptyPick()
   }
   picked.value = next
@@ -281,7 +286,7 @@ function toggleAll(on: boolean) {
 }
 
 function batchRowClass({ row }: { row: Record<string, unknown> }) {
-  return String(row.batchNo) === batchFocus.value ? 'is-picked' : ''
+  return lotKey(row) === batchFocus.value ? 'is-picked' : ''
 }
 
 function openBatch() {
@@ -296,33 +301,34 @@ async function submitBatch() {
     ElMessage.warning('请勾选矿批次')
     return
   }
-  for (const [batchNo, value] of items) {
+  for (const [key, value] of items) {
+    const source = findBatchLot(key)
+    const label = lotLabel(source, key)
     if (!value.toStack || !value.cells) {
-      ElMessage.warning(`请为 ${batchNo} 在平面图上框选目标堆位格子`)
-      batchFocus.value = batchNo
+      ElMessage.warning(`请为 ${label} 在平面图上框选目标堆位格子`)
+      batchFocus.value = key
       return
     }
-    const source = lots.value.find((row) => String(row.batchNo) === batchNo)
-    if (source && value.toStack === String(source.stackText || '')) {
-      ElMessage.warning(`${batchNo}：目标堆位不能与原堆位相同`)
-      batchFocus.value = batchNo
+    if (!source || !String(source.id || source.inventoryId || '')) {
+      ElMessage.warning(`${label}：缺少库存 ID，无法提交`)
+      batchFocus.value = key
       return
     }
   }
   saving.value = true
   try {
     const res = await transferApi.batch({
-      items: items.map(([batchNo, value]) => {
-        const source = lots.value.find((row) => String(row.batchNo) === batchNo)
+      items: items.map(([key, value]) => {
+        const source = findBatchLot(key)!
         return {
-          batchNo,
-          inventoryId: source ? String(source.id || source.inventoryId || '') : undefined,
+          batchNo: String(source.batchNo || ''),
+          inventoryId: String(source.id || source.inventoryId || ''),
           toStack: value.toStack,
           areaId: value.toAreaId,
           cells: value.cells,
           scene: value.scene || '批量移库',
-          shipName: source?.shipName || '—',
-          containerCount: Number(source?.containerCount || 0),
+          shipName: source.shipName || '—',
+          containerCount: Number(source.containerCount || 0),
           timeFrom: '',
           timeTo: '',
         }
@@ -369,7 +375,7 @@ async function submitBatch() {
       <el-button @click="openBatch">批量移库</el-button>
     </div>
     <el-table v-loading="loading" :data="rows" border stripe>
-      <el-table-column prop="orderNo" label="移库单号" min-width="150" />
+      <el-table-column prop="orderNo" label="移库单号" width="150" />
       <el-table-column prop="consignor" label="委托方" width="110" />
       <el-table-column prop="scene" label="场景" width="110" />
       <el-table-column label="报关单号" min-width="160">
@@ -379,7 +385,7 @@ async function submitBatch() {
         </template>
       </el-table-column>
       <el-table-column prop="prodBatch" label="生产批次" min-width="130" />
-      <el-table-column prop="material" label="物料" width="100" />
+      <el-table-column prop="material" label="矿区" width="150" />
       <el-table-column label="船名" width="90"><template #default="{ row }">{{ dash(row.shipName) }}</template></el-table-column>
       <el-table-column label="柜数" width="70"><template #default="{ row }">{{ row.containerCount || '—' }}</template></el-table-column>
       <el-table-column prop="weight" label="重量" width="80" />
@@ -479,7 +485,7 @@ async function submitBatch() {
             <el-form-item label="委托方"><el-select v-model="batchQuery.consignor" clearable style="width: 120px"><el-option v-for="name in consignors" :key="name" :label="name" :value="name" /></el-select></el-form-item>
             <el-form-item label="关键字"><el-input v-model="batchQuery.keyword" clearable placeholder="报关单 / 批次 / 物料" style="width: 160px" /></el-form-item>
             <el-form-item><el-checkbox @change="toggleAll(Boolean($event))">全选</el-checkbox></el-form-item>
-            <el-form-item><span class="hint">已选 {{ Object.keys(picked).length }} 票 / 共 {{ batchLots.length }} 票可移</span></el-form-item>
+            <el-form-item><span class="hint">已选 {{ Object.keys(picked).length }} 条 / 共 {{ batchLots.length }} 条可移</span></el-form-item>
           </el-form>
           <el-table
             :data="batchLots"
@@ -492,9 +498,9 @@ async function submitBatch() {
             <el-table-column label="选择" width="56">
               <template #default="{ row }">
                 <el-checkbox
-                  :model-value="Boolean(picked[String(row.batchNo)])"
+                  :model-value="Boolean(picked[lotKey(row)])"
                   @click.stop
-                  @change="toggleLot(String(row.batchNo), Boolean($event))"
+                  @change="toggleLot(lotKey(row), Boolean($event))"
                 />
               </template>
             </el-table-column>
@@ -507,19 +513,19 @@ async function submitBatch() {
             <el-table-column label="目标堆位" min-width="120">
               <template #default="{ row }">
                 <button
-                  v-if="picked[String(row.batchNo)]"
+                  v-if="picked[lotKey(row)]"
                   type="button"
                   class="target-btn"
                   @click.stop="focusBatchLot(row)"
-                >{{ targetLabel(picked[String(row.batchNo)]) }}</button>
+                >{{ targetLabel(picked[lotKey(row)]) }}</button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column label="移位方式" width="120">
               <template #default="{ row }">
                 <el-select
-                  v-if="picked[String(row.batchNo)]"
-                  v-model="picked[String(row.batchNo)].scene"
+                  v-if="picked[lotKey(row)]"
+                  v-model="picked[lotKey(row)].scene"
                   size="small"
                   @click.stop
                 >
@@ -534,7 +540,7 @@ async function submitBatch() {
         <div class="map-pane">
           <div class="map-label">
             目标堆位 <span>*</span>
-            <em v-if="batchFocus">当前票 {{ batchFocus }}</em>
+            <em v-if="batchFocus">当前 {{ lotLabel(findBatchLot(batchFocus), batchFocus) }}</em>
           </div>
           <p v-if="!batchFocus || !picked[batchFocus]" class="map-empty">请先勾选并点选一票，再在平面图框选目标格子</p>
           <StackGridPicker

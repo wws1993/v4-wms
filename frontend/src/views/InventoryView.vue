@@ -258,7 +258,6 @@ async function openLedger(row: Record<string, unknown>) {
       <el-table-column label="矿源备案号" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ dash(row.filingNo) }}</template></el-table-column>
       <el-table-column label="本票品质" min-width="240" show-overflow-tooltip><template #default="{ row }">{{ qualityLine(row) }}</template></el-table-column>
       <el-table-column prop="originCountry" label="原产国" min-width="100" />
-      <el-table-column label="账册" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ dash(row.book) }}</template></el-table-column>
       <el-table-column prop="warehouse" label="仓库" min-width="120" show-overflow-tooltip />
       <el-table-column label="堆位" min-width="110"><template #default="{ row }">{{ row.status === '已出库' ? '—' : dash(row.stackText) }}</template></el-table-column>
       <el-table-column prop="areaLabel" label="片区标识" min-width="110" />

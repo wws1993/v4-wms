@@ -19637,6 +19637,9 @@ components:
         areaItems:
           type: string
           description: 网格信息
+        itemCategory:
+          type: string
+          description: 货物类型（字典 wms_item_category：达标矿 / 报备矿 / 成品）
       description: AreaInventoryDto
     SysPostVo:
       type: object

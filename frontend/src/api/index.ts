@@ -135,22 +135,20 @@ function parseMaterialCsv(text: string) {
   if (!lines.length) return []
   const head = splitCsvLine(lines[0])
   const at = (names: string[]) => head.findIndex((cell) => names.includes(cell))
-  const nameAt = at(['名称'])
-  if (nameAt < 0) return null
-  const cargoAt = at(['矿种类型', '货物类型'])
   const mineAt = at(['矿区'])
+  if (mineAt < 0) return null
+  const cargoAt = at(['矿种类型', '货物类型'])
   const originAt = at(['原产国', '备案原产国'])
   const orderAt = at(['排序'])
   return lines.slice(1).map((line) => {
     const cells = splitCsvLine(line)
     return {
-      name: cells[nameAt] || '',
+      mineArea: cells[mineAt] || '',
       cargoType: cargoAt >= 0 ? cells[cargoAt] || '' : '',
-      mineArea: mineAt >= 0 ? cells[mineAt] || '' : '',
       originCountry: originAt >= 0 ? cells[originAt] || '' : '',
       orderNum: orderAt >= 0 ? cells[orderAt] || '' : '',
     }
-  }).filter((row) => row.name)
+  }).filter((row) => row.mineArea)
 }
 
 async function importMaterials(file: File) {
@@ -158,35 +156,35 @@ async function importMaterials(file: File) {
     return { success: false, data: null, message: '请上传 CSV。可先导出，再用表格软件另存为 CSV' }
   }
   const rows = parseMaterialCsv(await file.text())
-  if (!rows) return { success: false, data: null, message: '表头需要名称、矿种类型、矿区、原产国、排序' }
+  if (!rows) return { success: false, data: null, message: '表头需要矿区、矿种类型、原产国、排序' }
   if (!rows.length) return { success: false, data: null, message: '没有可导入的物料' }
   const listed = await materialApi.list({ page: 1, pageSize: 500 })
   const existing = listed.success && listed.data ? listed.data.list : []
   let saved = 0
   const errors: string[] = []
   for (const row of rows) {
-    if (!row.name) {
-      errors.push('缺少名称')
+    if (!row.mineArea) {
+      errors.push('缺少矿区')
       continue
     }
     const cargoType = row.cargoType || '达标矿'
     if (!['报备矿', '达标矿', '混成品'].includes(cargoType)) {
-      errors.push(`${row.name} 矿种类型请填报备矿、达标矿或混成品`)
+      errors.push(`${row.mineArea} 矿种类型请填报备矿、达标矿或混成品`)
       continue
     }
     const body = {
-      name: row.name,
+      name: row.mineArea,
       cargoType,
       mineArea: row.mineArea,
       originCountry: row.originCountry,
       orderNum: row.orderNum || 1,
     }
-    const found = existing.find((item) => String(item.name) === row.name)
+    const found = existing.find((item) => String(item.mineArea || item.name) === row.mineArea)
     const res = found
       ? await materialApi.update(String(found.id), body)
       : await materialApi.create(body)
     if (res.success) saved += 1
-    else errors.push(`${row.name} ${res.message}`)
+    else errors.push(`${row.mineArea} ${res.message}`)
   }
   if (!saved) return { success: false, data: null, message: errors[0] || '导入失败' }
   if (errors.length) return { success: false, data: null, message: `已写入 ${saved} 条，其余未导入：${errors[0]}` }
@@ -201,6 +199,7 @@ export const materialApi = {
   exportRows: (params: Q = {}) => request<FilePayload>('GET', '/materials/export', { params }),
   importFile: (file: File) => importMaterials(file),
   filings: (params: Q) => request<Page>('GET', '/material-sources/filings', { params }),
+  filingsByItem: (itemId: string) => request<Record<string, unknown>[]>('GET', '/material-sources/filings/by-item', { params: { itemId } }),
   createFiling: (body: B) => request('POST', '/material-sources/filings', { body }),
   updateFiling: (id: string, body: B) => request('PUT', `/material-sources/filings/${id}`, { body }),
   exportFilings: (params: Q = {}) => request<FilePayload>('GET', '/material-sources/filings/export', { params }),

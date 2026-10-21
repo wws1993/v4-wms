@@ -148,7 +148,8 @@ export function planPaint(item: PlanItem, theme: 'editor' | 'cockpit'): PlanPain
 
 export function cargoStyle(consignor: string, cargoType: string) {
   const standard = cargoType.includes('达标')
-  if (cargoType.includes('混成')) return { fill: '#a88354', opacity: 0.7, stroke: 'none' }
+  // 字典 wms_item_category：达标矿 / 报备矿 / 成品（兼容旧称混成品）
+  if (cargoType.includes('成品')) return { fill: '#a88354', opacity: 0.7, stroke: 'none' }
   if (consignor.includes('五矿')) return { fill: '#c87348', opacity: 0.7, stroke: standard ? '#5aed95' : 'none' }
   if (consignor.includes('南国')) return { fill: '#2e80d9', opacity: 0.7, stroke: standard ? '#5aed95' : 'none' }
   if (consignor.includes('金川')) return { fill: '#30b0c7', opacity: standard ? 0.7 : 0.6, stroke: standard ? '#5aed95' : 'none' }

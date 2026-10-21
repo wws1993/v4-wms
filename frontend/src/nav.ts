@@ -18,7 +18,7 @@ export const NAV: NavItem[] = [
   // 基础数据
   { id: 'warehouses', title: '仓位管理', path: '/warehouses', group: '基础数据', icon: 'OfficeBuilding', roles: master },
   { id: 'stacks',     title: '堆位管理', path: '/stacks', group: '基础数据', icon: 'Grid', roles: master },
-  { id: 'materials',  title: '物料档案', path: '/materials', group: '基础数据', icon: 'Files', roles: master },
+  { id: 'materials',  title: '矿种档案', path: '/materials', group: '基础数据', icon: 'Files', roles: master },
   { id: 'partners',   title: '往来主体', path: '/partners', group: '基础数据', icon: 'User', roles: master },
   // 仓储作业
   { id: 'inbound',    title: '入库管理', path: '/inbound', group: '仓储作业', icon: 'Download', roles: ops },

@@ -63,7 +63,9 @@ const mapRef = ref<InstanceType<typeof PlanSvg>>()
 const view = reactive({ x: 0, y: 0, w: defaultPlan().gridCols, h: defaultPlan().gridRows })
 const rubber = ref<{ x: number; y: number; w: number; h: number } | null>(null)
 const preview = ref<{ code: string; keys: string[] } | null>(null)
-const tip = ref<{ title: string; rate: string; line: string; hint: string; x: number; y: number } | null>(null)
+type TipRow = { text: string; kind?: 'meta' | 'owner' | 'cargo' | 'tons' }
+
+const tip = ref<{ title: string; rate: string; rows: TipRow[]; hint: string; x: number; y: number } | null>(null)
 let fly = 0
 let drag: { item: PlanItem; x: number; y: number; px: number; py: number } | null = null
 let hideTip = 0
@@ -179,6 +181,28 @@ function lotsOnCell(item: PlanItem, key: string) {
 
 function namesOf(rows: CargoLot[]) {
   return [...new Set(rows.map((lot) => lot.consignor).filter(Boolean))]
+}
+
+function cargoTypesOf(rows: CargoLot[]) {
+  return [...new Set(rows.map((lot) => lot.cargoType).filter(Boolean))]
+}
+
+function cargoTone(cargoType: string) {
+  if (cargoType.includes('达标')) return '#5aed95'
+  if (cargoType.includes('报备')) return '#f0a060'
+  if (cargoType.includes('成品')) return '#e7c98a'
+  return '#c5d0dc'
+}
+
+function stockRows(rows: CargoLot[], tons: number, extras: string[] = []): TipRow[] {
+  const kinds = cargoTypesOf(rows)
+  const owner = namesOf(rows).join('、') || (tons > 0 ? '在库' : '')
+  return [
+    ...extras.filter(Boolean).map((text) => ({ text, kind: 'meta' as const })),
+    ...(owner ? [{ text: owner, kind: 'owner' as const }] : []),
+    ...kinds.map((text) => ({ text, kind: 'cargo' as const })),
+    ...(tons ? [{ text: `${tons}吨`, kind: 'tons' as const }] : []),
+  ]
 }
 
 const guides = computed(() => {
@@ -324,7 +348,7 @@ function pointOf(event: PointerEvent) {
 function placeCursorTip(
   x: number,
   y: number,
-  body: { title: string; rate: string; line: string; hint: string },
+  body: { title: string; rate: string; rows: TipRow[]; hint: string },
   size = { width: 260, height: 120 },
 ) {
   let left = x + 14
@@ -338,18 +362,31 @@ function stockTons(match: (lot: CargoLot) => boolean) {
   return Math.round(lots.value.reduce((sum, lot) => sum + (lot.status === '在库' && match(lot) ? lot.wet : 0), 0))
 }
 
+function houseOf(item: PlanItem) {
+  const code = warehouseCodeOf(item.name)
+  return props.houses.find((row) => (
+    (item.warehouseId && String(row.id) === item.warehouseId)
+    || warehouseCodeOf(String(row.code || '')) === code
+    || String(row.code || '') === code
+  ))
+}
+
 function warehouseCard(item: PlanItem) {
   const code = warehouseCodeOf(item.name)
-  const house = props.houses.find((row) => String(row.code) === code)
+  const house = houseOf(item)
   const fromLots = stockTons((lot) => warehouseCodeOf(lot.warehouse) === code)
   const tons = lots.value.length ? fromLots : (fromLots || Number(house?.used) || 0)
-  const rate = house ? Number(house.rate) || 0 : 0
+  const capacity = Number(house?.capacity ?? item.capacity) || 0
+  const rate = capacity > 0 ? Math.min(100, Math.round((tons / capacity) * 100)) : 0
   const count = Number(house?.stackCount)
     || plan.value.items.filter((entry) => entry.type === 'stack' && hostOf(entry, plan.value.items)?.id === item.id).length
   return {
     title: code,
-    rate: house ? `${rate}%` : '',
-    line: `堆位${count}个 · 干重${tons}吨`,
+    rate: capacity > 0 ? `${rate}%` : '',
+    rows: [
+      { text: `堆位 ${count} 个`, kind: 'meta' },
+      { text: `${tons}吨`, kind: 'tons' },
+    ],
     hint: focusId.value ? '移入堆位查看票货信息' : '点击放大至本仓库',
   }
 }
@@ -362,33 +399,36 @@ function stackTipBody(item: PlanItem, event?: PointerEvent) {
   const here = lotsHere(item)
   const tons = Math.round(here.reduce((sum, lot) => sum + lot.wet, 0))
   const row = archiveOf(item)
-  const capacity = Number(row?.capacity) || 0
-  const rate = capacity > 0 ? Math.min(100, Math.round((tons / capacity) * 100)) : 0
   const area = String(row?.areaLabel || '')
+  const size = gridSize(item)
+  const total = Math.max(0, size.rows * size.cols)
   const occupied = new Set(here.flatMap((lot) => lot.cells || []))
+  const placed = here.some((lot) => lot.cells?.length)
+  // 堆位占比按网格：已占用格 / 总格；无格子明细但整堆有货时按满占
+  const used = placed ? occupied.size : (tons > 0 && total > 0 ? total : 0)
+  const rate = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
   const state = occupied.size ? `占用${occupied.size}格` : tons > 0 ? '在库' : '空闲'
   const title = houseName ? `${houseName}-${slot}` : code
   const hint = selectable.value
     ? (allowed(item) ? '拖拽框选格子，单击加减一格' : (props.areaLabel ? `只可选${props.areaLabel}` : ''))
     : '点击查询本堆位库存'
+  const rateText = total > 0 ? `${rate}%` : ''
   const base = {
     title,
-    rate: capacity > 0 ? `${rate}%` : '',
-    line: [area, state, tons ? `干重${tons}吨` : '', namesOf(here).join('、')].filter(Boolean).join(' · '),
+    rate: rateText,
+    rows: stockRows(here, tons, [area, state]),
     hint,
   }
   if (!event || !focusId.value) return base
-  const key = stackCellAt(item, pointOf(event), gridSize(item))
+  const key = stackCellAt(item, pointOf(event), size)
   if (!key) return base
   const onCell = lotsOnCell(item, key)
   if (!onCell.length) return base
-  const placed = here.some((lot) => lot.cells?.length)
-  const [cellRow, cellCol] = key.split('-')
   const cellTons = Math.round(onCell.reduce((sum, lot) => sum + lot.wet, 0))
   return {
-    title: `${title} · ${cellRow}行${cellCol}列`,
-    rate: capacity > 0 ? `${rate}%` : '',
-    line: [placed ? '' : '整堆', namesOf(onCell).join('、') || '在库', cellTons ? `干重${cellTons}吨` : ''].filter(Boolean).join(' · '),
+    title,
+    rate: rateText,
+    rows: stockRows(onCell, cellTons, [placed ? '' : '整堆']),
     hint,
   }
 }
@@ -405,7 +445,7 @@ function showTip(event: PointerEvent, item: PlanItem) {
     return
   }
   if (item.type === 'stack') {
-    placeCursorTip(event.clientX, event.clientY, stackTipBody(item, event), { width: 280, height: 120 })
+    placeCursorTip(event.clientX, event.clientY, stackTipBody(item, event), { width: 280, height: 168 })
     return
   }
   if (isWarehouseItem(item)) {
@@ -603,7 +643,14 @@ defineExpose({ zoomOut, layout })
             <strong>{{ tip.title }}</strong>
             <span v-if="tip.rate">{{ tip.rate }}</span>
           </div>
-          <p>{{ tip.line }}</p>
+          <div v-if="tip.rows.length" class="tip-lines">
+            <p
+              v-for="(row, index) in tip.rows"
+              :key="`${row.kind}-${index}`"
+              :class="['tip-line', row.kind && `is-${row.kind}`]"
+              :style="row.kind === 'cargo' ? { color: cargoTone(row.text) } : undefined"
+            >{{ row.text }}</p>
+          </div>
           <em v-if="tip.hint">{{ tip.hint }}</em>
         </div>
       </div>
@@ -671,7 +718,12 @@ defineExpose({ zoomOut, layout })
 .cell-tip .tip-body { padding: 10px 12px 12px; }
 .cell-tip .tip-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cell-tip strong { color: #e7c98a; font-size: 15px; font-weight: 700; }
-.cell-tip .tip-row span { font-size: 15px; font-weight: 600; }
-.cell-tip p { margin: 6px 0 0; font-size: 13px; }
+.cell-tip .tip-row span { font-size: 15px; font-weight: 700; color: #f4f0e6; }
+.cell-tip .tip-lines { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.cell-tip .tip-line { margin: 0; font-size: 13px; line-height: 1.4; color: rgba(244, 240, 230, .88); }
+.cell-tip .tip-line.is-meta { font-size: 12px; color: rgba(244, 240, 230, .58); }
+.cell-tip .tip-line.is-owner { font-size: 13px; font-weight: 600; color: #f4f0e6; }
+.cell-tip .tip-line.is-cargo { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; }
+.cell-tip .tip-line.is-tons { font-size: 14px; font-weight: 700; color: #e7c98a; }
 .cell-tip em { display: block; margin-top: 8px; color: rgba(255, 255, 255, .55); font-style: normal; font-size: 12px; }
 </style>

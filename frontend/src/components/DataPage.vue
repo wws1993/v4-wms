@@ -48,7 +48,6 @@ const actionForm = reactive<Record<string, any>>({})
 const monthDialog = ref(false)
 const monthValue = ref('')
 const stackRows = ref<Record<string, unknown>[]>([])
-const materialOptions = ref<{ label: string; value: string }[]>([])
 const materialRows = ref<Record<string, unknown>[]>([])
 const shippingOptions = ref<{ label: string; value: string }[]>([])
 const consignorOptions = ref<{ label: string; value: string }[]>([])
@@ -120,7 +119,16 @@ function fieldOptions(field: FieldSchema) {
       value: String(row.code),
     }))
   }
-  if (field.optionsFrom === 'materials') return materialOptions.value
+  if (field.optionsFrom === 'materials') {
+    const exclude = field.excludeCargoTypes || []
+    const rows = exclude.length
+      ? materialRows.value.filter((row) => !exclude.includes(String(row.cargoType || '')))
+      : materialRows.value
+    return rows.map((row) => ({
+      label: [row.mineArea || row.name, row.originCountry].filter(Boolean).join(' · ') || String(row.id),
+      value: String(row.id),
+    }))
+  }
   if (field.optionsFrom === 'shipping') return shippingOptions.value
   if (field.optionsFrom === 'consignors') return consignorOptions.value
   if (field.optionsFrom === 'warehouses') return warehouseOptions.value
@@ -151,10 +159,6 @@ async function loadLookups() {
   if (uses('materials')) {
     const res = await materialApi.list({ page: 1, pageSize: 200 })
     materialRows.value = res.success && res.data ? res.data.list : []
-    materialOptions.value = materialRows.value.map((row) => ({
-      label: [row.name, row.originCountry, row.mineArea].filter(Boolean).join(' · ') || String(row.id),
-      value: String(row.id),
-    }))
   }
   if (uses('shipping')) {
     const res = await shippingApi.list()

@@ -346,14 +346,19 @@ async function listItems(query: Query) {
 
 function merchantRow(row: Row, types: { label: string; value: string }[]) {
   const source = Number(row.source)
+  const fileUrl = text(row.fileUrl)
   return {
     id: text(row.id),
     code: text(row.merchantCode),
     name: text(row.merchantName),
     role: labelOf(types, row.merchantType),
     phone: text(row.mobile),
+    credentialStatus: text(row.credentialStatus ?? row.CredentialStatus),
     status: flagLabel(row.status),
     source: SOURCE_LABEL[source] || text(row.source),
+    attachment: fileUrl,
+    attachmentUrl: isMediaPath(fileUrl) ? mediaUrl(fileUrl) : '',
+    attachmentText: fileUrl ? '1 个' : '—',
   }
 }
 
@@ -683,7 +688,7 @@ function receiptRow(row: Row, minerals: { label: string; value: string }[], stat
     operateTime: text(row.updateTime || row.createTime).replace('T', ' ').slice(0, 19),
     customsNo: text(row.recordNo),
     blNo: text(row.waybillNo),
-    blWeight: row.waybillWeight ?? row.blWeight ?? '',
+    blWeight: row.ladingWeight ?? row.waybillWeight ?? row.blWeight ?? '',
     shipName: text(row.shipName),
     oreType: labelOf(minerals, row.mineralType) || text(row.mineralType),
     shipMode: shipModeOf(row, translates),
@@ -744,7 +749,7 @@ function resultObject(row: Row) {
 }
 
 function blWeightOf(result: Row) {
-  const raw = result.waybillWeight ?? result.blWeight ?? result.netWeight ?? result.grossWeight
+  const raw = result.ladingWeight ?? result.waybillWeight ?? result.blWeight ?? result.netWeight ?? result.grossWeight
   if (raw == null || raw === '') return ''
   return raw
 }
@@ -1224,14 +1229,15 @@ async function removeItem(id: string) {
 }
 
 async function saveItem(id: string | undefined, body: Row) {
-  const name = text(body.name).trim()
+  const mineArea = text(body.mineArea).trim()
+  const name = text(body.name).trim() || mineArea
   const cargoType = text(body.cargoType).trim()
-  if (!name) return fail('请填写名称')
+  if (!mineArea) return fail('请填写矿区')
   if (!cargoType) return fail('请选择矿种类型')
   const payload: Row = {
     itemName: name,
     itemCategory: await dictValue('wms_item_category', cargoType),
-    mineralSource: text(body.mineArea).trim(),
+    mineralSource: mineArea,
     originCountry: text(body.originCountry).trim(),
     orderNum: orderNumOf(body.orderNum) ?? 0,
   }
@@ -1248,19 +1254,40 @@ async function removeMerchant(id: string) {
   return result.ok ? ok(true, '已删除') : fail(result.message)
 }
 
+async function uploadMerchantFile(file: Blob) {
+  const name = file instanceof File && file.name ? file.name : 'merchant.png'
+  if (!filingFileOk(file, name)) return fail('附件仅支持图片或 PDF')
+  const form = new FormData()
+  form.append('file', file, name)
+  const result = await ruoyiSend('POST', '/wms/merchant', form)
+  if (!result.ok) return fail(result.message || '附件上传失败')
+  const path = filingUploadPath(result.data) || filingUploadPath(result.message)
+  if (!path) return fail('附件上传未返回路径')
+  return ok(path)
+}
+
 async function saveMerchant(id: string | undefined, body: Row) {
   const types = await merchantTypes()
   const merchantType = codeOf(types, body.role)
   if (merchantType == null) return fail('请选择往来单位角色')
+  let fileUrl = text(body.attachment).trim()
+  const file = body.__file
+  if (file instanceof Blob) {
+    const uploaded = await uploadMerchantFile(file)
+    if (!uploaded.success || !uploaded.data) return fail(uploaded.message || '附件上传失败')
+    fileUrl = uploaded.data
+  }
   const payload: Row = {
     merchantCode: body.code,
     merchantName: body.name,
     merchantType,
     mobile: body.phone || '',
+    credentialStatus: text(body.credentialStatus),
     status: flagStatus(body.status || '启用'),
     source: SOURCE_LABEL.indexOf(text(body.source)) >= 0 ? SOURCE_LABEL.indexOf(text(body.source)) : 0,
   }
   if (id) payload.id = idOf(id)
+  if (fileUrl || id) payload.fileUrl = fileUrl
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/merchant', payload)
   if (result.ok) clearMerchantCache()
   return result.ok ? ok(true, '已保存') : fail(result.message)
@@ -1384,6 +1411,7 @@ async function createReceipt(body: Row) {
   const area = await findArea(body.areaId) || await findArea(body.stackCode)
   const item = await findItem(body.material)
   const shippingMethodId = await codeFromDict('wms_translate_type', body.shipMode)
+  const mineralType = await codeFromDict('wms_mineral_type', body.oreType || '精铜矿')
   const shipName = text(body.shipName).trim()
 
   if (!consignor) return fail('委托方在往来单位中不存在')
@@ -1394,6 +1422,7 @@ async function createReceipt(body: Row) {
   }
   if (!item) return fail('请选择物料')
   if (shippingMethodId == null) return fail('货运方式需与后端字典编码一致')
+  if (mineralType == null) return fail('矿种需与后端字典编码一致')
   if (!shipName) return fail('请填写船名')
   const amount = num(body.amount)
   if (amount == null) return fail('请填写订单金额')
@@ -1411,6 +1440,7 @@ async function createReceipt(body: Row) {
     payableAmount: amount,
     itemId: idOf(item.id),
     areaId: idOf(area.id),
+    mineralType,
     shippingMethodId,
     arrivalDate: arrivalOf(body.time),
     entityId: owner ? idOf(owner.id) : undefined,
@@ -1418,7 +1448,7 @@ async function createReceipt(body: Row) {
     areas: cellsBody(body.cells),
     shipName,
   }
-  if (blWeight != null) payload.waybillWeight = blWeight
+  if (blWeight != null) payload.ladingWeight = blWeight
   const result = await ruoyiSend('POST', '/wms/receiptOrder', payload)
   return result.ok ? ok(result.data, '入库预约已创建') : fail(result.message)
 }
@@ -1490,9 +1520,8 @@ async function exportItems(query: Query) {
   return ok({
     filename: `物料档案_${day}.csv`,
     content: toCsv([
-      { key: 'name', label: '名称' },
-      { key: 'cargoType', label: '矿种类型' },
       { key: 'mineArea', label: '矿区' },
+      { key: 'cargoType', label: '矿种类型' },
       { key: 'originCountry', label: '原产国' },
       { key: 'orderNum', label: '排序' },
     ], byOrderNum(rows)),
@@ -1520,6 +1549,7 @@ function ocrFixed(docType: string): Row | undefined {
   const dry = Math.max(1000, Math.min(9999, Math.round(wet * 0.9)))
   const samples: Record<string, Row> = {
     入库报关单: {
+      id: `9${stamp}`,
       docType: '入库报关单',
       shipName: '海豚号',
       blNo: `BL${stamp}`,
@@ -1530,7 +1560,20 @@ function ocrFixed(docType: string): Row | undefined {
       currency: '2',
       timeText: dateText,
     },
+    提单: {
+      id: `9${stamp}`,
+      docType: '提单',
+      shipName: '海豚号',
+      blNo: `BL${stamp}`,
+      blWeight: wet,
+      customsNo: `BG${stamp}`,
+      checklistNo: `HZ${stamp}`,
+      amount: 218000,
+      currency: '2',
+      timeText: dateText,
+    },
     出库报关单: {
+      id: `8${stamp}`,
       docType: '出库报关单',
       customsNo: `BGCK${stamp}`,
       checklistNo: `HZCK${stamp}`,
@@ -1541,13 +1584,14 @@ function ocrFixed(docType: string): Row | undefined {
       currency: 'USD',
     },
     重量单: {
+      id: `7${stamp}`,
       docType: '重量单',
       wet,
       dry,
       moisture: '10%',
     },
     品质单: {
-      id: '100000000000000004',
+      id: `6${stamp}`,
       docType: '品质单',
       qualityNo: `QA-${day}-${clock}`,
       moisture: '10%',
@@ -1825,7 +1869,12 @@ function homeSource(result: RuoyiResult) {
   return []
 }
 
-function homeLot(row: Row, areas: Row[], houses: Row[]): CargoLot | null {
+function homeLot(
+  row: Row,
+  areas: Row[],
+  houses: Row[],
+  categories: { label: string; value: string }[],
+): CargoLot | null {
   const area = nested(row, 'area')
   const consignor = nested(row, 'consignor')
   const areaId = text(row.areaId || area?.id)
@@ -1836,11 +1885,12 @@ function homeLot(row: Row, areas: Row[], houses: Row[]): CargoLot | null {
   const house = houses.find((item) => text(item.id) === warehouseId)
   const cells = cellsText(row).split(',').filter(Boolean)
   const dry = num(row.dryWeight ?? row.quantity ?? row.remainQuantity) ?? 0
+  const cargoType = labelOf(categories, row.itemCategory) || text(row.cargoType) || text(row.itemCategory)
   return {
     stackText: code,
     warehouse: text(house?.warehouseCode || house?.warehouseName || warehouseId),
     consignor: text(row.consignorName || consignor?.merchantName || row.merchantName),
-    cargoType: text(row.cargoType),
+    cargoType,
     wet: dry,
     status: '在库',
     areaId: areaId || undefined,
@@ -1849,13 +1899,14 @@ function homeLot(row: Row, areas: Row[], houses: Row[]): CargoLot | null {
 }
 
 async function inventoryHome() {
-  const [result, areas, houses] = await Promise.all([
+  const [result, areas, houses, categories] = await Promise.all([
     ruoyiGet('/wms/inventory/home'),
     areaRows(),
     warehouseRows(),
+    dictOf('wms_item_category'),
   ])
   if (!result.ok) return fail(brief(result.message))
-  const lots = homeSource(result).map((row) => homeLot(row, areas, houses)).filter((lot): lot is CargoLot => Boolean(lot))
+  const lots = homeSource(result).map((row) => homeLot(row, areas, houses, categories)).filter((lot): lot is CargoLot => Boolean(lot))
   return ok(lots)
 }
 
@@ -1896,13 +1947,14 @@ async function cockpitReceiptDaily() {
 }
 
 async function cockpitAreas() {
-  const [result, areas, houses] = await Promise.all([
+  const [result, areas, houses, categories] = await Promise.all([
     ruoyiGet('/wms/home/areas'),
     areaRows(),
     warehouseRows(),
+    dictOf('wms_item_category'),
   ])
   if (!result.ok) return fail(brief(result.message))
-  const lots = homeSource(result).map((row) => homeLot(row, areas, houses)).filter((lot): lot is CargoLot => Boolean(lot))
+  const lots = homeSource(result).map((row) => homeLot(row, areas, houses, categories)).filter((lot): lot is CargoLot => Boolean(lot))
   return ok(lots)
 }
 
@@ -2239,7 +2291,7 @@ async function createMovement(body: Row) {
 }
 
 async function createMovements(body: Row) {
-  const rawItems = Array.isArray(body.items) ? body.items as Row[]
+  const rawItems: Row[] = Array.isArray(body.items) ? body.items as Row[]
     : Array.isArray(body.list) ? body.list as Row[]
       : (Array.isArray(body.batchNos) ? body.batchNos.map((batchNo) => ({ ...body, batchNo: String(batchNo) })) : [])
   if (!rawItems.length) return fail('请勾选矿批次')
@@ -2408,14 +2460,18 @@ async function filingRows(rows: Row[]) {
   const materials = items.map((row) => itemRow(row, categories, typeKinds))
   return rows.map((row) => {
     const mapped = filingRow(row, sources, kinds, statuses)
-    const hit = materials.find((item) => {
-      if (mapped.originCountry && item.originCountry && mapped.originCountry !== item.originCountry) return false
-      return Boolean(mapped.source) && (item.mineArea === mapped.source || item.source === mapped.source || item.name === mapped.source)
-    })
+    const itemId = text(row.itemId)
+    const itemName = text(row.itemName)
+    const hit = itemId
+      ? materials.find((item) => String(item.id) === itemId)
+      : materials.find((item) => {
+          if (mapped.originCountry && item.originCountry && mapped.originCountry !== item.originCountry) return false
+          return Boolean(mapped.source) && (item.mineArea === mapped.source || item.source === mapped.source || item.name === mapped.source)
+        })
     return {
       ...mapped,
-      materialId: hit ? String(hit.id) : '',
-      materialName: hit ? text(hit.name) : (text(mapped.source) || '—'),
+      materialId: hit ? String(hit.id) : itemId,
+      materialName: hit ? text(hit.name) : (itemName || text(mapped.source) || '—'),
     }
   })
 }
@@ -2458,6 +2514,16 @@ async function listFilings(query: Query) {
   }
   const result = await ruoyiGet('/wms/mineralSourceFiling/list', pageParams(query, filters))
   return pageOf(result, await filingRows(result.rows), query)
+}
+
+/** 入库预约：按物料拉取可用矿源备案（listNoPage + itemId）。 */
+async function listFilingsByItem(itemId: string) {
+  const id = text(itemId).trim()
+  if (!id) return fail('缺少物料 id')
+  const result = await ruoyiGet('/wms/mineralSourceFiling/listNoPage', { itemId: idOf(id) ?? id })
+  if (!result.ok) return fail(result.message || '矿源备案查询失败')
+  const raw = Array.isArray(result.data) ? result.data as Row[] : result.rows
+  return ok(await filingRows(raw))
 }
 
 function filingFileOk(file: Blob, name: string) {
@@ -2506,6 +2572,7 @@ async function saveFiling(id: string | undefined, body: Row) {
   const qty = num(body.qty)
   if (!source || !originCountry) return fail('所选物料缺少矿区或原产国，请先在物料档案补全')
   if (!code) return fail('请填写矿源备案编号')
+  if (!id && (qty == null || qty <= 0)) return fail('请填写备案数量')
   if (qty != null && qty <= 0) return fail('备案数量须大于 0')
   let fileUrl = text(body.attachment).trim()
   const file = body.__file
@@ -3277,7 +3344,7 @@ async function saveRole(id: string | undefined, body: Row) {
     payload.menuIds = givenMenus.map((item) => idOf(item)).filter((item) => item !== undefined)
   } else if (!id) {
     const settings = await settingsMenuIds()
-    if ('message' in settings) return fail(settings.message)
+    if ('message' in settings) return fail(settings.message || '菜单读取失败')
     payload.menuIds = settings.ids.map((item) => idOf(item)).filter((item) => item !== undefined)
   }
   if (!id) payload.deptIds = []
@@ -3480,6 +3547,7 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
   if (itemId && upper === 'DELETE') return removeItem(decodeURIComponent(itemId[1]))
 
   if (upper === 'GET' && path === '/material-sources/filings/export') return exportFilings(query)
+  if (upper === 'GET' && path === '/material-sources/filings/by-item') return listFilingsByItem(text(query.itemId))
   if (upper === 'GET' && path === '/material-sources/filings') return listFilings(query)
   if (upper === 'POST' && path === '/material-sources/filings') return saveFiling(undefined, payload)
   const filingLotsExport = path.match(/^\/material-sources\/filings\/([^/]+)\/lots\/export$/)
@@ -3504,7 +3572,7 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
     const types = await merchantTypes()
     const consignor = types.find((item) => item.label === '委托方')
     const list = await merchantRows()
-    if (!list.ok) return fail(list.message)
+    if (!list.ok) return fail('往来单位读取失败')
     const names = list.rows
       .filter((row) => !consignor || text(row.merchantType) === consignor.value)
       .map((row) => text(row.merchantName))

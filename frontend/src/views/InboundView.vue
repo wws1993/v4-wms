@@ -15,9 +15,9 @@ const page = ref(1)
 const loading = ref(false)
 const consignors = ref<string[]>([])
 const materials = ref<Record<string, unknown>[]>([])
-const filings = ref<Record<string, unknown>[]>([])
 const stacks = ref<Record<string, unknown>[]>([])
 const shipModes = ref<string[]>([])
+const oreTypes = ref<string[]>([])
 const statuses = ref<string[]>(['暂存码头', '待收货', '已入库', '混成品'])
 const currencies = ref<{ label: string; value: string }[]>([{ label: '人民币 ¥', value: 'CNY' }, { label: '美元 $', value: 'USD' }])
 const wizard = ref<{ start: number; seed: Record<string, unknown> | null; key: number } | null>(null)
@@ -73,20 +73,19 @@ onActivated(() => {
 })
 
 onMounted(async () => {
-  const [who, materialRes, filingRes, stackRes] = await Promise.all([
+  const [who, materialRes, stackRes] = await Promise.all([
     partnerApi.consignors(),
     materialApi.list({ page: 1, pageSize: 100 }),
-    materialApi.filings({ page: 1, pageSize: 500 }),
     loadAllStacks(),
   ])
   if (who.success && who.data) consignors.value = who.data
   if (materialRes.success && materialRes.data) materials.value = materialRes.data.list
-  if (filingRes.success && filingRes.data) filings.value = filingRes.data.list
   if (stackRes.length) stacks.value = stackRes
-  const [statusRes, currencyRes, shipRes] = await Promise.all([
+  const [statusRes, currencyRes, shipRes, oreRes] = await Promise.all([
     dictApi.labels('wms_receipt_status'),
     dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 }),
     dictApi.labels('wms_translate_type'),
+    dictApi.labels('wms_mineral_type'),
   ])
   if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
   if (currencyRes.success && currencyRes.data?.list.length) {
@@ -95,6 +94,7 @@ onMounted(async () => {
       .map((row) => ({ label: String(row.label), value: String(row.value) }))
   }
   if (shipRes.success && shipRes.data?.length) shipModes.value = shipRes.data
+  if (oreRes.success && oreRes.data?.length) oreTypes.value = oreRes.data
   applyKeyword()
   load()
 })
@@ -155,7 +155,7 @@ async function openDetail(row: Record<string, unknown>, section = 'inbound') {
   if (!detailOpen.value) return
   const base = lotFromInbound(detail || row)
   current.value = base
-  const batchNo = String(base.batchNo || base.customsNo || row.batchNo || row.customsNo || '')
+  const batchNo = String(base.batchNo || row.customsNo || row.batchNo || '')
   if (batchNo) {
     const res = await inventoryApi.detail(batchNo)
     if (detailOpen.value && res.success && res.data) current.value = res.data
@@ -175,9 +175,9 @@ function canReceive(row: Record<string, unknown>) {
     :key="wizard.key"
     :consignors="consignors"
     :materials="materials"
-    :filings="filings"
     :stacks="stacks"
     :ship-modes="shipOptions"
+    :ore-types="oreTypes"
     :currencies="currencies"
     :start="wizard.start"
     :seed="wizard.seed"
@@ -217,7 +217,7 @@ function canReceive(row: Record<string, unknown>) {
         </template>
       </el-table-column>
       <el-table-column prop="consignor" label="委托方" width="200" />
-      <el-table-column prop="material" label="物料" min-width="120" />
+      <el-table-column prop="material" label="矿区" min-width="120" />
       <el-table-column prop="shipName" label="船名" width="110" />
       <el-table-column prop="blNo" label="提单号" min-width="140" />
       <el-table-column prop="checklistNo" label="核注清单号" width="200" />

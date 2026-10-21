@@ -26,7 +26,7 @@ const form = reactive<Record<string, string>>({})
 const types = ['入库报关单', '出库报关单', '品质单', '重量单']
 const statuses = ['待修正', '已回填', '已归档']
 const labels: Record<string, string> = {
-  customsNo: '报关单号', checklistNo: '核注清单号', shipName: '船名', blNo: '提单号', blWeight: '提单重量', amount: '金额',
+  customsNo: '报关单号', checklistNo: '核注清单号', shipName: '船名', blNo: '提单号', blWeight: '提货重量', amount: '金额',
   currency: '币种', consignee: '流向企业', consumer: '消费使用单位', wet: '湿重', dry: '干重',
   moisture: '水分', qualityNo: '证书号', cu: '铜', ag: '银', au: '金',
 }

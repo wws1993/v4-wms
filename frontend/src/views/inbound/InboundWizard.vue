@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { inboundApi, ocrApi } from '@/api'
+import { inboundApi, materialApi, ocrApi } from '@/api'
 import ImageViewer from '@/components/ImageViewer.vue'
 import StackGridPicker from '@/components/StackGridPicker.vue'
 import { cellKeys, dash } from '../ops/samples'
@@ -9,9 +9,9 @@ import { cellKeys, dash } from '../ops/samples'
 const props = defineProps<{
   consignors: string[]
   materials: Record<string, unknown>[]
-  filings: Record<string, unknown>[]
   stacks: Record<string, unknown>[]
   shipModes: string[]
+  oreTypes: string[]
   currencies: { label: string; value: string }[]
   start: number
   seed?: Record<string, unknown> | null
@@ -53,6 +53,7 @@ const form = reactive<Record<string, any>>({
   amount: '',
   currency: props.currencies[0]?.value || 'CNY',
   material: '',
+  oreType: props.oreTypes.includes('精铜矿') ? '精铜矿' : (props.oreTypes[0] || ''),
   shipMode: props.shipModes[0] || '',
   containerCount: '',
   filingNo: '',
@@ -85,6 +86,7 @@ const rawMaterials = computed(() => props.materials.filter((row) => {
   return kind !== '成品' && cargo !== '混成品'
 }))
 const containerMode = computed(() => String(form.shipMode).includes('集装箱'))
+const reportedOre = computed(() => form.cargoType === '报备矿')
 const filingText = computed(() => dash(form.filingNo))
 const pickedStack = computed(() => props.stacks.find((row) => String(row.code) === form.stackCode))
 const ocrTitle = computed(() => {
@@ -98,24 +100,94 @@ const preview = computed(() => {
   return kind ? previews[kind] : undefined
 })
 
+/** 当前矿区下可用备案（报备矿拉取后缓存，供提货重量变化时重算）。 */
+const itemFilings = ref<{ code: string; remain: number; filingDate: string }[]>([])
+const filingLoading = ref(false)
+
 function onShipMode(name: string) {
   if (!String(name).includes('集装箱')) form.containerCount = ''
 }
 
-function onMaterial(name: string) {
+function tonText(value: number) {
+  if (!Number.isFinite(value)) return '0'
+  const rounded = Math.round(value * 100) / 100
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded)
+}
+
+/** 按剩余量覆盖提单重量；单条不够则累加多条，格式如 JG-2026-BL-01(300t), JG-2027-BL-03(6700t)。 */
+function buildFilingText(rows: { code: string; remain: number; filingDate: string }[], demand: number) {
+  const usable = rows
+    .filter((row) => row.code && row.remain > 0)
+    .slice()
+    .sort((a, b) => {
+      const byDate = String(a.filingDate || '').localeCompare(String(b.filingDate || ''))
+      return byDate || a.code.localeCompare(b.code)
+    })
+  if (!usable.length) return ''
+  const need = Number.isFinite(demand) && demand > 0 ? demand : usable[0].remain
+  const picked: typeof usable = []
+  let covered = 0
+  for (const row of usable) {
+    picked.push(row)
+    covered += row.remain
+    if (covered >= need) break
+  }
+  return picked.map((row) => `${row.code}(${tonText(row.remain)}t)`).join(', ')
+}
+
+function applyFilingNo() {
+  if (!reportedOre.value) {
+    form.filingNo = ''
+    return
+  }
+  form.filingNo = buildFilingText(itemFilings.value, numberOrBlank(form.blWeight))
+}
+
+async function loadFilingsForItem(itemId: string) {
+  filingLoading.value = true
+  try {
+    const res = await materialApi.filingsByItem(itemId)
+    if (!res.success || !Array.isArray(res.data)) {
+      itemFilings.value = []
+      form.filingNo = ''
+      if (res.message) ElMessage.warning(res.message)
+      return
+    }
+    itemFilings.value = res.data
+      .filter((row) => String(row.status || '') !== '已用尽')
+      .map((row) => ({
+        code: String(row.code || ''),
+        remain: Number(row.remain) || 0,
+        filingDate: String(row.filingDate || ''),
+      }))
+      .filter((row) => row.code && row.remain > 0)
+    applyFilingNo()
+    if (!form.filingNo) ElMessage.warning('该矿区暂无可用矿源备案')
+  } finally {
+    filingLoading.value = false
+  }
+}
+
+async function onMaterial(name: string) {
   const row = rawMaterials.value.find((item) => item.name === name)
   form.cargoType = row ? String(row.cargoType || '') : form.cargoType
+  itemFilings.value = []
   if (row?.cargoType !== '报备矿') {
     form.filingNo = ''
     return
   }
-  const filing = props.filings.find((item) => {
-    if (item.status === '已用尽' || !(Number(item.remain) > 0)) return false
-    const mine = String(row.mineArea || row.source || '')
-    return Boolean(mine) && String(item.source) === mine
-  })
-  form.filingNo = filing ? String(filing.code) : ''
+  const itemId = String(row.id || '')
+  if (!itemId) {
+    form.filingNo = ''
+    ElMessage.warning('所选矿区缺少物料 id，无法带出备案号')
+    return
+  }
+  await loadFilingsForItem(itemId)
 }
+
+watch(() => form.blWeight, () => {
+  if (reportedOre.value && itemFilings.value.length) applyFilingNo()
+})
 
 const DOC_TYPE: Record<'bl' | 'customs' | 'weight' | 'quality', string> = {
   bl: '提单',
@@ -212,7 +284,11 @@ function createdId(data: unknown) {
 
 async function submitReserve() {
   if (!form.consignor || !form.shipName || !form.blNo || !form.material || !form.shipMode) {
-    ElMessage.warning('请填写委托方、船名、提单号、物料和货运方式')
+    ElMessage.warning('请填写委托方、船名、提单号、矿区和货运方式')
+    return
+  }
+  if (!String(form.oreType || '').trim()) {
+    ElMessage.warning('请选择矿种')
     return
   }
   if (form.amount === '' || form.amount == null) {
@@ -342,7 +418,7 @@ onBeforeUnmount(() => {
             <el-form-item label="委托方" required><el-select v-model="form.consignor"><el-option v-for="name in consignors" :key="name" :label="name" :value="name" /></el-select></el-form-item>
             <el-form-item label="船名" required><el-input v-model="form.shipName" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="提单号" required><el-input v-model="form.blNo" placeholder="OCR 回填" /></el-form-item>
-            <el-form-item label="提单重量"><el-input v-model="form.blWeight" type="number" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="提货重量"><el-input v-model="form.blWeight" type="number" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="预计到货日"><el-date-picker v-model="form.time" type="date" value-format="YYYY-MM-DD" placeholder="OCR 回填" style="width: 100%" /></el-form-item>
             <el-form-item label="报关单号"><el-input v-model="form.customsNo" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="核注清单号"><el-input v-model="form.checklistNo" placeholder="OCR 回填" /></el-form-item>
@@ -352,9 +428,17 @@ onBeforeUnmount(() => {
                 <el-input v-model="form.amount" type="number" placeholder="金额" />
               </div>
             </el-form-item>
-            <el-form-item label="物料" required>
+            <el-form-item label="矿区" required>
               <el-select v-model="form.material" @change="onMaterial">
                 <el-option v-for="item in rawMaterials" :key="String(item.id)" :label="String(item.name)" :value="String(item.name)" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="reportedOre" label="矿源备案号">
+              <el-input :model-value="filingText" readonly disabled :placeholder="filingLoading ? '加载备案中…' : '选择报备矿后自动带出'" />
+            </el-form-item>
+            <el-form-item label="矿种" required>
+              <el-select v-model="form.oreType" placeholder="请选择矿种" filterable>
+                <el-option v-for="item in oreTypes" :key="item" :label="item" :value="item" />
               </el-select>
             </el-form-item>
             <el-form-item label="货运方式" required><el-select v-model="form.shipMode" @change="onShipMode"><el-option v-for="item in shipModes" :key="item" :label="item" :value="item" /></el-select></el-form-item>
@@ -373,7 +457,8 @@ onBeforeUnmount(() => {
           <el-row :gutter="16">
             <el-col :span="12"><el-form-item label="入库单号" required><el-input :model-value="dash(form.orderNo || form.id)" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="委托方"><el-input :model-value="dash(form.consignor)" readonly disabled /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="物料"><el-input :model-value="dash(form.material)" readonly disabled /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="矿区"><el-input :model-value="dash(form.material)" readonly disabled /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="矿种"><el-input :model-value="dash(form.oreType)" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="货物类型"><el-input :model-value="dash(form.cargoType)" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="矿源备案号"><el-input :model-value="filingText" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="货运方式"><el-input :model-value="dash(form.shipMode)" readonly disabled /></el-form-item></el-col>
@@ -433,7 +518,7 @@ onBeforeUnmount(() => {
           <template v-if="ocrTarget === 'inbound'">
             <el-form-item label="船名"><el-input v-model="draft.shipName" /></el-form-item>
             <el-form-item label="提单号"><el-input v-model="draft.blNo" /></el-form-item>
-            <el-form-item label="提单重量"><el-input v-model="draft.blWeight" type="number" /></el-form-item>
+            <el-form-item label="提货重量"><el-input v-model="draft.blWeight" type="number" /></el-form-item>
             <el-form-item label="报关单号"><el-input v-model="draft.customsNo" /></el-form-item>
             <el-form-item label="核注清单号"><el-input v-model="draft.checklistNo" /></el-form-item>
             <el-form-item label="金额">

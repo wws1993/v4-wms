@@ -79,7 +79,7 @@ function onPick(upload: UploadFile) {
   emit('update:modelValue', raw)
 }
 
-function remove(item: { file?: File }) {
+function remove(item: { file?: File; key?: string; name?: string; url?: string }) {
   if (props.multiple) {
     const current = Array.isArray(props.modelValue) ? props.modelValue : []
     emit('update:modelValue', current.filter((file) => file !== item.file))

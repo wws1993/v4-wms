@@ -76,7 +76,7 @@ async function load() {
     tree.value = []
     return
   }
-  tree.value = res.data as MenuNode[]
+  tree.value = res.data as unknown as MenuNode[]
 }
 
 function resetForm() {
