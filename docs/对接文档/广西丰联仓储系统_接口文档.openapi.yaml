@@ -14554,6 +14554,12 @@ components:
         contactPerson:
           type: string
           description: 联系人
+        qualifications:
+          type: string
+          description: 资质状态
+        fileUrl:
+          type: string
+          description: 附件URL
         status:
           type: string
           description: 状态
@@ -16754,6 +16760,12 @@ components:
         mobile:
           type: string
           description: 联系电话
+        qualifications:
+          type: string
+          description: 资质状态
+        fileUrl:
+          type: string
+          description: 附件URL
         status:
           type: string
           description: 状态

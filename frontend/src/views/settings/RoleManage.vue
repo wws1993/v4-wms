@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { menuApi, roleApi } from '@/api'
+import { dictApi, menuApi, roleApi } from '@/api'
 import NavPane from '@/components/NavPane.vue'
 import { pageIdsFromTitles } from '@/nav'
 import { useAuthStore } from '@/stores/auth'
@@ -44,6 +44,7 @@ const creating = ref(false)
 const creatingSave = ref(false)
 const createRef = ref<FormInstance>()
 const createForm = reactive({ name: '', key: '', sort: 1, status: '启用', remark: '' })
+const statusOptions = ref<string[]>(['启用', '停用'])
 const createRules: FormRules = {
   name: [{ required: true, message: '请填写角色名称', trigger: 'blur' }],
   key: [
@@ -208,12 +209,20 @@ watch(selectedId, (id) => {
 })
 
 onMounted(async () => {
+  const statusRes = await dictApi.labels('wms_common_status')
+  if (statusRes.success && Array.isArray(statusRes.data) && statusRes.data.length) {
+    statusOptions.value = statusRes.data
+    const enabled = statusRes.data.find((item) => item === '启用') || statusRes.data[0]
+    if (!statusOptions.value.includes(draft.status)) draft.status = enabled
+    if (!statusOptions.value.includes(createForm.status)) createForm.status = enabled
+  }
   await loadMenus()
   await loadRoles()
 })
 
 function openCreate() {
-  Object.assign(createForm, { name: '', key: '', sort: roles.value.length + 1, status: '启用', remark: '' })
+  const enabled = statusOptions.value.find((item) => item === '启用') || statusOptions.value[0] || '启用'
+  Object.assign(createForm, { name: '', key: '', sort: roles.value.length + 1, status: enabled, remark: '' })
   creating.value = true
 }
 
@@ -290,8 +299,7 @@ async function remove() {
         <el-form-item label="显示顺序"><el-input-number v-model="draft.sort" :min="0" /></el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="draft.status">
-            <el-radio value="启用">启用</el-radio>
-            <el-radio value="停用">停用</el-radio>
+            <el-radio v-for="item in statusOptions" :key="item" :value="item">{{ item }}</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="draft.remark" maxlength="200" /></el-form-item>
@@ -321,8 +329,7 @@ async function remove() {
       <el-form-item label="显示顺序"><el-input-number v-model="createForm.sort" :min="0" /></el-form-item>
       <el-form-item label="状态">
         <el-radio-group v-model="createForm.status">
-          <el-radio value="启用">启用</el-radio>
-          <el-radio value="停用">停用</el-radio>
+          <el-radio v-for="item in statusOptions" :key="item" :value="item">{{ item }}</el-radio>
         </el-radio-group>
       </el-form-item>
       <el-form-item label="备注"><el-input v-model="createForm.remark" type="textarea" :rows="3" /></el-form-item>

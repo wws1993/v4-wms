@@ -2,7 +2,7 @@
 import { onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { bondedApi, inventoryApi, partnerApi, warehouseApi } from '@/api'
+import { dictApi, inventoryApi, materialApi, partnerApi, shippingApi, warehouseApi } from '@/api'
 import LotDetailDialog from '@/components/LotDetailDialog.vue'
 import { dash, HOURS, qualityLine } from './ops/samples'
 
@@ -11,21 +11,22 @@ const filters = reactive({
   keyword: '',
   consignor: '',
   cargoType: '',
+  materialId: '',
+  shipMode: '',
   stack: '',
   timeMode: '',
   from: '',
   fromHour: '00',
   to: '',
   toHour: '23',
-  kind: '',
-  originCountry: '',
   filingNo: '',
-  book: '',
   warehouse: '',
 })
 const more = ref(false)
 const consignors = ref<string[]>([])
-const books = ref<string[]>([])
+const materials = ref<Record<string, unknown>[]>([])
+const cargoTypes = ref<string[]>([])
+const shipModes = ref<string[]>(['集装箱', '散货'])
 const houses = ref<string[]>([])
 const rows = ref<Record<string, unknown>[]>([])
 const total = ref(0)
@@ -45,9 +46,9 @@ function applyRoute() {
   let changed = false
   if (typeof stack === 'string' && stack) {
     const next = {
-      keyword: '', consignor: '', cargoType: '', stack, timeMode: '',
+      keyword: '', consignor: '', cargoType: '', materialId: '', shipMode: '', stack, timeMode: '',
       from: '', fromHour: '00', to: '', toHour: '23',
-      kind: '', originCountry: '', filingNo: '', book: '', warehouse: '',
+      filingNo: '', warehouse: '',
     }
     const same = (Object.keys(next) as (keyof typeof next)[]).every((key) => filters[key] === next[key])
     if (!same) {
@@ -75,11 +76,10 @@ function queryBody() {
     keyword: filters.keyword.trim(),
     consignor: filters.consignor,
     cargoType: filters.cargoType,
+    materialId: filters.materialId,
+    shipMode: filters.shipMode,
     stack: filters.stack.trim(),
-    kind: filters.kind,
-    originCountry: filters.originCountry,
     filingNo: filters.filingNo.trim(),
-    book: filters.book,
     warehouse: filters.warehouse,
   }
   if (filters.timeMode === 'month') query.timeMode = 'month'
@@ -112,11 +112,15 @@ function search() {
 
 function reset() {
   Object.assign(filters, {
-    keyword: '', consignor: '', cargoType: '', stack: '', timeMode: '',
+    keyword: '', consignor: '', cargoType: '', materialId: '', shipMode: '', stack: '', timeMode: '',
     from: '', fromHour: '00', to: '', toHour: '23',
-    kind: '', originCountry: '', filingNo: '', book: '', warehouse: '',
+    filingNo: '', warehouse: '',
   })
   search()
+}
+
+function materialLabel(row: Record<string, unknown>) {
+  return [row.mineArea || row.name, row.originCountry].filter(Boolean).join(' · ') || String(row.id)
 }
 
 watch(() => [route.query.warehouse, route.query.keyword, route.query.batchNo, route.query.stack], () => {
@@ -130,14 +134,20 @@ onActivated(() => {
 
 onMounted(async () => {
   applyRoute()
-  const [who, bookRes, houseRes] = await Promise.all([
+  const [who, materialRes, shipRes, houseRes, categoryRes] = await Promise.all([
     partnerApi.consignors(),
-    bondedApi.list({ page: 1, pageSize: 100 }),
+    materialApi.list({ page: 1, pageSize: 500 }),
+    shippingApi.list(),
     warehouseApi.catalog(),
+    dictApi.labels('wms_item_category'),
   ])
   if (who.success && who.data) consignors.value = who.data
-  if (bookRes.success && bookRes.data) books.value = bookRes.data.list.map((row) => String(row.code))
+  if (materialRes.success && materialRes.data) materials.value = materialRes.data.list
+  if (shipRes.success && shipRes.data?.list.length) {
+    shipModes.value = shipRes.data.list.map((row) => String(row.name)).filter(Boolean)
+  }
   if (houseRes.success && houseRes.data) houses.value = houseRes.data.list.map((row) => String(row.code))
+  if (categoryRes.success && Array.isArray(categoryRes.data)) cargoTypes.value = categoryRes.data
   load()
 })
 
@@ -179,7 +189,17 @@ async function openLedger(row: Record<string, unknown>) {
       </el-form-item>
       <el-form-item label="货物类型">
         <el-select v-model="filters.cargoType" clearable style="width: 110px">
-          <el-option v-for="item in ['达标矿', '报备矿', '混成品']" :key="item" :label="item" :value="item" />
+          <el-option v-for="item in cargoTypes" :key="item" :label="item" :value="item" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="矿区">
+        <el-select v-model="filters.materialId" clearable filterable style="width: 180px">
+          <el-option v-for="row in materials" :key="String(row.id)" :label="materialLabel(row)" :value="String(row.id)" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="装运方式">
+        <el-select v-model="filters.shipMode" clearable style="width: 110px">
+          <el-option v-for="item in shipModes" :key="item" :label="item" :value="item" />
         </el-select>
       </el-form-item>
       <el-form-item label="堆位">
@@ -213,24 +233,8 @@ async function openLedger(row: Record<string, unknown>) {
           </el-select>
         </div>
       </el-form-item>
-      <el-form-item label="物料类型">
-        <el-select v-model="filters.kind" clearable style="width: 100px">
-          <el-option label="原料" value="原料" />
-          <el-option label="成品" value="成品" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="原产国">
-        <el-select v-model="filters.originCountry" clearable style="width: 110px">
-          <el-option v-for="item in ['智利', '秘鲁', '澳大利亚', '—']" :key="item" :label="item" :value="item" />
-        </el-select>
-      </el-form-item>
       <el-form-item label="矿源备案号">
         <el-input v-model="filters.filingNo" clearable placeholder="备案号" style="width: 150px" @keyup.enter="search" />
-      </el-form-item>
-      <el-form-item label="保税账册">
-        <el-select v-model="filters.book" clearable filterable style="width: 150px">
-          <el-option v-for="code in books" :key="code" :label="code" :value="code" />
-        </el-select>
       </el-form-item>
       <el-form-item label="仓库">
         <el-select v-model="filters.warehouse" clearable filterable style="width: 130px">
@@ -253,7 +257,7 @@ async function openLedger(row: Record<string, unknown>) {
         </template>
       </el-table-column>
       <el-table-column prop="consignor" label="委托方" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="material" label="物料" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="material" label="矿区" min-width="140" show-overflow-tooltip />
       <el-table-column prop="cargoType" label="货物类型" min-width="130" show-overflow-tooltip />
       <el-table-column label="矿源备案号" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ dash(row.filingNo) }}</template></el-table-column>
       <el-table-column label="本票品质" min-width="240" show-overflow-tooltip><template #default="{ row }">{{ qualityLine(row) }}</template></el-table-column>

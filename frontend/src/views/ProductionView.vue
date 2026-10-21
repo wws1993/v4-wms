@@ -2,7 +2,7 @@
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { inventoryApi, partnerApi, productionApi, warehouseApi } from '@/api'
+import { dictApi, inventoryApi, partnerApi, productionApi, warehouseApi } from '@/api'
 import StackGridPicker from '@/components/StackGridPicker.vue'
 import { usePageTab } from '@/hooks/pageTab'
 
@@ -41,6 +41,7 @@ const opsPageSize = ref(10)
 const feedLoading = ref(false)
 const feedQueried = ref(false)
 const feedCountries = ref<string[]>([])
+const feedCargoTypes = ref<string[]>([])
 const lotCache = ref<Record<string, Doc>>({})
 const loading = ref(false)
 const feedOpen = ref(false)
@@ -345,12 +346,16 @@ onActivated(() => {
 })
 
 onMounted(async () => {
-  const [who, stackRes] = await Promise.all([
+  const [who, stackRes, categoryRes] = await Promise.all([
     partnerApi.consignors(),
     warehouseApi.stacks({ page: 1, pageSize: 200 }),
+    dictApi.labels('wms_item_category'),
   ])
   if (who.success && Array.isArray(who.data) && who.data.length) consignors.value = who.data
   if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
+  if (categoryRes.success && Array.isArray(categoryRes.data)) {
+    feedCargoTypes.value = categoryRes.data.filter((item) => item !== '混成品' && item !== '成品')
+  }
   await load()
   if (!consignors.value.length) {
     consignors.value = [...new Set(docs.value.map((row) => String(row.consignor || '')).filter(Boolean))]
@@ -839,7 +844,7 @@ function openLedger(date: string) {
         <el-form-item label="报关单号"><el-input v-model="feed.keyword" clearable placeholder="报关单号" @keyup.enter="queryLots" /></el-form-item>
         <el-form-item label="货物类型">
           <el-select v-model="feed.cargoType" clearable placeholder="全部货物类型" style="width: 140px">
-            <el-option label="达标矿" value="达标矿" /><el-option label="报备矿" value="报备矿" />
+            <el-option v-for="item in feedCargoTypes" :key="item" :label="item" :value="item" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源国家">

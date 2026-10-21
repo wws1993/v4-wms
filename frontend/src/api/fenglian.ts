@@ -4,7 +4,7 @@ import { menuSeed } from '@/system/menuSeed'
 import { defaultPlan, hostOf, stackCode, warehouseCodeOf, type CargoLot } from '@/plan/model'
 import { loadFloorPlan, parseFloorPlan, saveFloorPlan } from '@/plan/storage'
 import type { FloorPlan, RoleKey } from '@/types'
-import { clearSessionList, loadSessionList, SESSION_LIST } from '@/api/catalogCache'
+import { clearDictCache, clearSessionList, loadSessionList, SESSION_LIST } from '@/api/catalogCache'
 import { fail, ok, toCsv } from '@/api/result'
 import { passwordIssue } from '@/security/policy'
 import { isMediaPath, mediaUrl } from './media'
@@ -353,7 +353,7 @@ function merchantRow(row: Row, types: { label: string; value: string }[]) {
     name: text(row.merchantName),
     role: labelOf(types, row.merchantType),
     phone: text(row.mobile),
-    credentialStatus: text(row.credentialStatus ?? row.CredentialStatus),
+    credentialStatus: text(row.credentialStatus),
     status: flagLabel(row.status),
     source: SOURCE_LABEL[source] || text(row.source),
     attachment: fileUrl,
@@ -636,7 +636,13 @@ async function findMerchant(name: unknown) {
 async function findItem(value: unknown) {
   const rows = await itemCatalogRows()
   const raw = text(value)
-  return rows.find((row) => text(row.id) === raw || text(row.itemCode) === raw || text(row.itemName) === raw)
+  return rows.find((row) => (
+    text(row.id) === raw
+    || text(row.itemCode) === raw
+    || text(row.itemName) === raw
+    || text(row.mineralSource) === raw
+    || text(row.mineArea) === raw
+  ))
 }
 
 async function findBook(name: unknown) {
@@ -1254,18 +1260,6 @@ async function removeMerchant(id: string) {
   return result.ok ? ok(true, '已删除') : fail(result.message)
 }
 
-async function uploadMerchantFile(file: Blob) {
-  const name = file instanceof File && file.name ? file.name : 'merchant.png'
-  if (!filingFileOk(file, name)) return fail('附件仅支持图片或 PDF')
-  const form = new FormData()
-  form.append('file', file, name)
-  const result = await ruoyiSend('POST', '/wms/merchant', form)
-  if (!result.ok) return fail(result.message || '附件上传失败')
-  const path = filingUploadPath(result.data) || filingUploadPath(result.message)
-  if (!path) return fail('附件上传未返回路径')
-  return ok(path)
-}
-
 async function saveMerchant(id: string | undefined, body: Row) {
   const types = await merchantTypes()
   const merchantType = codeOf(types, body.role)
@@ -1273,7 +1267,7 @@ async function saveMerchant(id: string | undefined, body: Row) {
   let fileUrl = text(body.attachment).trim()
   const file = body.__file
   if (file instanceof Blob) {
-    const uploaded = await uploadMerchantFile(file)
+    const uploaded = await uploadFilingFile(file)
     if (!uploaded.success || !uploaded.data) return fail(uploaded.message || '附件上传失败')
     fileUrl = uploaded.data
   }
@@ -1684,6 +1678,7 @@ async function saveDictType(id: string | undefined, body: Row) {
   }
   if (id) payload.dictId = idOf(id)
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/system/dict/type', payload)
+  if (result.ok) clearDictCache()
   return result.ok ? ok(true, '已保存') : fail(result.message)
 }
 
@@ -1707,6 +1702,7 @@ async function saveDictData(id: string | undefined, body: Row) {
   }
   if (id) payload.dictCode = idOf(id)
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/system/dict/data', payload)
+  if (result.ok) clearDictCache()
   return result.ok ? ok(true, '已保存') : fail(result.message)
 }
 
@@ -1747,6 +1743,7 @@ function inventoryLot(
   categories: { label: string; value: string }[],
   kinds: { label: string; value: string }[],
   houses: Row[],
+  translates: { label: string; value: string }[] = [],
 ): Row {
   const consignor = nested(row, 'consignor')
   const area = nested(row, 'area')
@@ -1760,6 +1757,7 @@ function inventoryLot(
   const cargoType = labelOf(categories, item?.itemCategory ?? row.itemCategory) || text(row.cargoType)
   const kind = labelOf(kinds, item?.type ?? row.itemType)
   const finished = cargoType === '混成品' || kind === '成品'
+  const mineArea = text(item?.mineralSource ?? item?.mineArea ?? row.mineralSource ?? row.mineArea)
   return {
     id: text(row.id),
     inventoryId: text(row.id),
@@ -1768,8 +1766,11 @@ function inventoryLot(
     batchKind: finished || /^FL-/.test(batchNo) ? '生产批次号' : '报关单号',
     consignor: text(consignor?.merchantName || row.consignorName),
     consignorId: text(row.consignorId || consignor?.id),
+    itemId: text(row.itemId || item?.id),
     material: text(item?.itemName || row.itemName),
+    mineArea,
     cargoType,
+    shipMode: shipModeOf(receipt || row, translates),
     filingNo: filingNoOf(row) || filingNoOf(receipt),
     warehouse: text(house?.warehouseName || house?.warehouseCode || warehouseId),
     warehouseId,
@@ -1959,18 +1960,20 @@ async function cockpitAreas() {
 }
 
 async function listInventory(query: Query) {
-  const [categories, kinds, houses, consignor, area, book, itemCategory, itemType] = await Promise.all([
+  const materialKey = text(query.materialId || query.mineArea).trim()
+  const [categories, kinds, houses, translates, consignor, area, item, itemCategory, shippingMethodId] = await Promise.all([
     dictOf('wms_item_category'),
     dictOf('wms_item_type'),
     loadHouses(),
+    dictOf('wms_translate_type'),
     query.consignor ? findMerchant(query.consignor) : Promise.resolve(undefined),
     query.stack ? findArea(query.stack) : Promise.resolve(undefined),
-    query.book ? findBook(query.book) : Promise.resolve(undefined),
+    materialKey ? findItem(materialKey) : Promise.resolve(undefined),
     query.cargoType ? dictValue('wms_item_category', query.cargoType) : Promise.resolve(undefined),
-    query.kind ? dictValue('wms_item_type', query.kind) : Promise.resolve(undefined),
+    query.shipMode ? codeFromDict('wms_translate_type', query.shipMode) : Promise.resolve(undefined),
   ])
   if (query.consignor && !consignor) return inventoryPage(query, [], 0)
-  if (query.book && !book) return inventoryPage(query, [], 0)
+  if (materialKey && !item) return inventoryPage(query, [], 0)
   const house = query.warehouse
     ? houses.find((entry) => [entry.id, entry.warehouseCode, entry.warehouseName].some((value) => text(value) === text(query.warehouse)))
     : undefined
@@ -1978,20 +1981,18 @@ async function listInventory(query: Query) {
   const span = query.timeMode === 'month'
     ? monthBounds()
     : { from: clockBound(query.from, false), to: clockBound(query.to, true) }
-  const country = text(query.originCountry)
   const filters: Query = {
     consignorId: consignor ? idOf(consignor.id) : undefined,
     areaId: area ? idOf(area.id) : undefined,
     areaCode: area ? undefined : text(query.stack) || undefined,
     warehouseId: house ? idOf(house.id) : undefined,
     recordNo: query.keyword || undefined,
+    itemId: item ? idOf(item.id) ?? text(item.id) : undefined,
     itemCategory,
-    itemType,
-    country: country && country !== '—' ? country : undefined,
+    shippingMethodId: shippingMethodId == null ? undefined : shippingMethodId,
     // 文档参数为 recordNumber；部分环境也认 filingNo，一并带上
     recordNumber: query.filingNo || undefined,
     filingNo: query.filingNo || undefined,
-    accountBookId: book ? idOf(book.id) : undefined,
     ...(span.from || span.to ? { params: { beginTime: span.from || undefined, endTime: span.to || undefined } } : {}),
   }
   let note = ''
@@ -2009,7 +2010,7 @@ async function listInventory(query: Query) {
     note = '库存列表暂不支持起止时间，已按其它条件查询'
   }
   if (!result.ok) return fail(brief(result.message))
-  let rows = await Promise.all(result.rows.map((row) => inventoryLot(row, categories, kinds, houses)).map(enrichLot))
+  let rows = await Promise.all(result.rows.map((row) => inventoryLot(row, categories, kinds, houses, translates)).map(enrichLot))
   const seen = new Set<string>()
   rows = rows.filter((row) => {
     const id = text(row.id)
@@ -2018,19 +2019,21 @@ async function listInventory(query: Query) {
     return true
   })
   const whole = rows.length >= result.total
+  const shipLabel = text(query.shipMode)
   rows = rows.filter((row) => {
     if (query.status && row.status !== query.status) return false
-    if (query.kind === '成品' && row.cargoType !== '混成品' && row.batchKind !== '生产批次号') return false
-    if (query.kind === '原料' && (row.cargoType === '混成品' || row.batchKind === '生产批次号')) return false
+    if (shipLabel && text(row.shipMode) && text(row.shipMode) !== shipLabel) return false
     if (!whole) return true
     if (query.cargoType && row.cargoType !== query.cargoType) return false
+    if (materialKey) {
+      const hit = text(row.itemId) === text(item?.id) || text(row.material) === text(item?.itemName) || text(row.mineArea) === text(item?.mineralSource || item?.itemName)
+      if (!hit && (row.itemId || row.material || row.mineArea)) return false
+    }
     // 已用 recordNumber 交给后端筛选；行上若未解析出 filingNo 则不再误杀
     if (query.filingNo) {
       const no = text(row.filingNo)
       if (no && !no.includes(text(query.filingNo))) return false
     }
-    if (query.originCountry && row.originCountry !== query.originCountry) return false
-    if (query.book && row.book !== query.book) return false
     if (query.warehouse && row.warehouse !== query.warehouse) return false
     if (query.keyword && !`${row.batchNo}${row.customsNo}${row.stackText}`.includes(text(query.keyword))) return false
     if ((span.from || span.to) && !inDayRange(row.inDate, span.from, span.to)) return false
@@ -3561,6 +3564,7 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
     if (dictTypeId && upper === 'PUT') return saveDictType(decodeURIComponent(dictTypeId[1]), payload)
     if (dictTypeId && upper === 'DELETE') {
       const result = await ruoyiSend('DELETE', `/system/dict/type/${decodeURIComponent(dictTypeId[1])}`)
+      if (result.ok) clearDictCache()
       return result.ok ? ok(true, '已删除') : fail(result.message)
     }
     if (upper === 'GET' && path === '/dicts/data') {
@@ -3576,6 +3580,7 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
     if (dictCode && upper === 'PUT') return saveDictData(decodeURIComponent(dictCode[1]), payload)
     if (dictCode && upper === 'DELETE') {
       const result = await ruoyiSend('DELETE', `/system/dict/data/${decodeURIComponent(dictCode[1])}`)
+      if (result.ok) clearDictCache()
       return result.ok ? ok(true, '已删除') : fail(result.message)
     }
   }

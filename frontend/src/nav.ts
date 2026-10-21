@@ -42,7 +42,7 @@ const MENU_WORDS: { id: string; words: string[] }[] = [
   { id: 'dashboard', words: ['概览', '驾驶舱', '首页'] },
   { id: 'warehouses', words: ['仓位管理', '仓库管理', '仓库'] },
   { id: 'stacks', words: ['堆位', '库区'] },
-  { id: 'materials', words: ['物料', '商品'] },
+  { id: 'materials', words: ['矿种', '商品'] },
   { id: 'partners', words: ['往来'] },
   { id: 'bonded', words: ['保税账册', '保税'] },
   { id: 'ledgerMonthly', words: ['月度账册'] },
@@ -66,7 +66,6 @@ export function pageIdsFromTitles(titles: string[], unmatched: 'all' | 'dashboar
   const pages = MENU_WORDS.filter((item) => item.words.some((word) => joined.includes(word.toLowerCase()))).map((item) => item.id)
   if (!pages.length) return unmatched === 'dashboard' ? ['dashboard'] : NAV.map((item) => item.id)
   if (!pages.includes('dashboard')) pages.unshift('dashboard')
-    console.log(123, MENU_WORDS);
 
   return pages
 }
