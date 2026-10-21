@@ -1,24 +1,48 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { DEFAULT_POLICY, loadPolicy, passwordRuleText, savePolicy, type SecurityPolicy } from '@/security/policy'
+import { settingsApi } from '@/api'
+import { DEFAULT_POLICY, loadPolicy, normalizePolicy, passwordRuleText, savePolicy, type SecurityPolicy } from '@/security/policy'
 
 const form = reactive<SecurityPolicy>(loadPolicy())
+const saving = ref(false)
+
+onMounted(async () => {
+  const res = await settingsApi.get()
+  if (res.success && res.data) {
+    Object.assign(form, normalizePolicy(res.data as Partial<SecurityPolicy>))
+    savePolicy(form)
+  }
+})
+
+async function persist(next: SecurityPolicy, okText: string) {
+  saving.value = true
+  try {
+    const policy = normalizePolicy(next)
+    const res = await settingsApi.save({ ...policy })
+    if (!res.success) {
+      ElMessage.error(res.message)
+      return
+    }
+    Object.assign(form, savePolicy(policy))
+    ElMessage.success(okText)
+  } finally {
+    saving.value = false
+  }
+}
 
 function save() {
-  Object.assign(form, savePolicy(form))
-  ElMessage.success('安全策略已保存')
+  void persist(form, '安全策略已保存')
 }
 
 function reset() {
-  Object.assign(form, savePolicy({ ...DEFAULT_POLICY }))
-  ElMessage.success('已恢复默认策略')
+  void persist({ ...DEFAULT_POLICY }, '已恢复默认策略')
 }
 </script>
 
 <template>
   <el-form label-width="180px" class="policy">
-    <p class="note">策略保存在本机浏览器。注册账号、修改密码、登录锁定和空闲退出按这里执行。丰联若拒绝口令或返回账号锁定，以服务端提示为准。</p>
+    <p class="note">策略随系统参数同步到服务端，本机缓存用于登录锁定、空闲退出和密码校验。注册账号、修改密码按这里执行。丰联若拒绝口令或返回账号锁定，以服务端提示为准。</p>
     <el-form-item label="密码长度">
       <el-input-number v-model="form.minLength" :min="8" :max="32" />
       <span class="unit">至 32 位</span>
@@ -47,8 +71,8 @@ function reset() {
       <span class="unit">分钟，提前 1 分钟提示</span>
     </el-form-item>
     <el-form-item>
-      <el-button type="primary" @click="save">保存策略</el-button>
-      <el-button @click="reset">恢复默认</el-button>
+      <el-button type="primary" :loading="saving" @click="save">保存策略</el-button>
+      <el-button :disabled="saving" @click="reset">恢复默认</el-button>
     </el-form-item>
   </el-form>
 </template>

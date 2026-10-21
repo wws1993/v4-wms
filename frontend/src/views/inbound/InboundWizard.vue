@@ -1,10 +1,33 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { inboundApi, materialApi, ocrApi } from '@/api'
+import { inboundApi, materialApi, ocrApi, settingsApi } from '@/api'
 import ImageViewer from '@/components/ImageViewer.vue'
 import StackGridPicker from '@/components/StackGridPicker.vue'
 import { cellKeys, dash } from '../ops/samples'
+
+type QualityKey = { key: string; symbol: string; name: string; label: string; unit: string; required: boolean }
+
+const QUALITY_UNITS: Record<string, string> = { ag: 'g/t', au: 'g/t' }
+
+const DEFAULT_QUALITY: QualityKey[] = [
+  { key: 'cu', symbol: 'Cu', name: '铜', label: '铜（Cu）', unit: '%', required: true },
+  { key: 'ag', symbol: 'Ag', name: '银', label: '银（Ag）', unit: 'g/t', required: false },
+  { key: 'au', symbol: 'Au', name: '金', label: '金（Au）', unit: 'g/t', required: false },
+  { key: 'as', symbol: 'As', name: '砷', label: '砷（As）', unit: '%', required: false },
+  { key: 'pb', symbol: 'Pb', name: '铅', label: '铅（Pb）', unit: '%', required: false },
+  { key: 'cd', symbol: 'Cd', name: '镉', label: '镉（Cd）', unit: '%', required: false },
+  { key: 'f', symbol: 'F', name: '氟', label: '氟（F）', unit: '%', required: false },
+  { key: 'hg', symbol: 'Hg', name: '汞', label: '汞（Hg）', unit: '%', required: false },
+]
+
+function qualityLabel(name: string, symbol: string) {
+  return name ? `${name}（${symbol}）` : symbol
+}
+
+function qualityUnit(key: string) {
+  return QUALITY_UNITS[key] || '%'
+}
 
 const props = defineProps<{
   consignors: string[]
@@ -27,19 +50,13 @@ const ocrStatus = ref('上传报关单影像，自动识别并回填下方字段
 const weightStatus = ref('重量单：待上传')
 const qualityStatus = ref('品质证书：待上传')
 const lastDoc = ref<'bl' | 'customs' | 'weight' | 'quality' | ''>('')
-const previews = reactive<Record<string, { name: string; url: string; image: boolean }>>({})
+type DocPreview = { name: string; url: string; image: boolean; file?: File }
+const previews = reactive<Record<string, DocPreview>>({})
 const ocrOpen = ref(false)
+const ocrBusy = ref(false)
 const ocrTarget = ref<'inbound' | 'weight' | 'quality' | 'receive'>('inbound')
-const qualityKeys = [
-  { key: 'cu', label: 'Cu 铜', required: true },
-  { key: 'ag', label: 'Ag 银' },
-  { key: 'au', label: 'Au 金' },
-  { key: 'as', label: 'As 砷' },
-  { key: 'pb', label: 'Pb 铅' },
-  { key: 'cd', label: 'Cd 镉' },
-  { key: 'f', label: 'F 氟' },
-  { key: 'hg', label: 'Hg 汞' },
-]
+const qualityKeys = ref<QualityKey[]>(DEFAULT_QUALITY.map((item) => ({ ...item })))
+const qualityFieldKeys = computed(() => qualityKeys.value.map((item) => item.key))
 
 const form = reactive<Record<string, any>>({
   id: '',
@@ -74,11 +91,54 @@ const form = reactive<Record<string, any>>({
 })
 const draft = reactive<Record<string, any>>({})
 
+for (const item of qualityKeys.value) form[item.key] = form[item.key] ?? ''
+
 if (props.seed) {
   Object.assign(form, props.seed, { category: '原料' })
   if (Array.isArray(form.cells)) form.cells = form.cells.join(',')
   if (props.seed.orcId) ocrStatus.value = `已关联报关单任务 ${props.seed.orcId}`
 }
+
+function applyQualityItems(items: unknown) {
+  if (!Array.isArray(items) || !items.length) return
+  const rows: QualityKey[] = []
+  for (const raw of items) {
+    const item = (raw || {}) as Record<string, unknown>
+    const symbol = String(item.symbol || '').trim()
+    if (!symbol) continue
+    const key = symbol.toLowerCase()
+    const known = DEFAULT_QUALITY.find((row) => row.key === key)
+    const name = String(item.name || '').trim() || known?.name || ''
+    rows.push({
+      key,
+      symbol,
+      name,
+      label: qualityLabel(name, symbol),
+      unit: known?.unit || qualityUnit(key),
+      // 系统参数页暂未配置必填时，沿用默认（Cu 必填）
+      required: String(item.isRequired || '') === '1' || Boolean(known?.required),
+    })
+    if (form[key] == null) form[key] = ''
+  }
+  if (rows.length) qualityKeys.value = rows
+}
+
+onMounted(async () => {
+  const res = await settingsApi.get()
+  if (res.success && res.data) {
+    const saved = res.data.qualityItems
+    if (Array.isArray(saved) && saved.length) applyQualityItems(saved)
+    else {
+      const symbols = String(res.data.qualities || '').split(/[、,，\s]+/).filter(Boolean)
+      if (symbols.length) {
+        applyQualityItems(symbols.map((symbol) => {
+          const known = DEFAULT_QUALITY.find((item) => item.symbol === symbol)
+          return { symbol, name: known?.name || '', isRequired: known?.required ? '1' : '0' }
+        }))
+      }
+    }
+  }
+})
 
 const rawMaterials = computed(() => props.materials.filter((row) => {
   const kind = String(row.kind || '')
@@ -114,7 +174,7 @@ function tonText(value: number) {
   return Number.isInteger(rounded) ? String(rounded) : String(rounded)
 }
 
-/** 按剩余量覆盖提单重量；单条不够则累加多条，格式如 JG-2026-BL-01(300t), JG-2027-BL-03(6700t)。 */
+/** 按提货重量分配预计使用量；单条不够则累加多条，格式如 JG-2026-BL-01(300吨), JG-2027-BL-03(6700吨)。 */
 function buildFilingText(rows: { code: string; remain: number; filingDate: string }[], demand: number) {
   const usable = rows
     .filter((row) => row.code && row.remain > 0)
@@ -125,14 +185,28 @@ function buildFilingText(rows: { code: string; remain: number; filingDate: strin
     })
   if (!usable.length) return ''
   const need = Number.isFinite(demand) && demand > 0 ? demand : usable[0].remain
-  const picked: typeof usable = []
-  let covered = 0
+  const parts: string[] = []
+  let left = need
   for (const row of usable) {
-    picked.push(row)
-    covered += row.remain
-    if (covered >= need) break
+    if (left <= 0) break
+    const use = Math.min(row.remain, left)
+    parts.push(`${row.code}(${tonText(use)}吨)`)
+    left -= use
   }
-  return picked.map((row) => `${row.code}(${tonText(row.remain)}t)`).join(', ')
+  return parts.join(', ')
+}
+
+/** 按矿区货物类型匹配矿种：报备矿 → 含「报备」的矿种，达标矿 → 含「达标」的矿种。 */
+function oreTypeForCargo(cargoType: string) {
+  const types = props.oreTypes
+  if (!types.length) return ''
+  if (cargoType === '报备矿') {
+    return types.find((item) => item.includes('报备')) || types.find((item) => item === '报备矿') || ''
+  }
+  if (cargoType === '达标矿') {
+    return types.find((item) => item.includes('达标')) || types.find((item) => item === '达标矿') || ''
+  }
+  return ''
 }
 
 function applyFilingNo() {
@@ -171,6 +245,8 @@ async function loadFilingsForItem(itemId: string) {
 async function onMaterial(name: string) {
   const row = rawMaterials.value.find((item) => item.name === name)
   form.cargoType = row ? String(row.cargoType || '') : form.cargoType
+  const matched = oreTypeForCargo(form.cargoType)
+  if (matched) form.oreType = matched
   itemFilings.value = []
   if (row?.cargoType !== '报备矿') {
     form.filingNo = ''
@@ -210,6 +286,13 @@ function fillFields(keys: string[], from: Record<string, any>, to: Record<string
   }
 }
 
+function fillQualityFields(from: Record<string, any>, to: Record<string, any>, onlyFilled = true) {
+  for (const key of qualityFieldKeys.value) {
+    if (onlyFilled && !filled(from[key])) continue
+    to[key] = filled(from[key]) ? stripQualityUnit(from[key]) : ''
+  }
+}
+
 function pick(kind: 'bl' | 'customs' | 'weight' | 'quality') {
   pickKind.value = kind
   if (!picker.value) return
@@ -217,62 +300,129 @@ function pick(kind: 'bl' | 'customs' | 'weight' | 'quality') {
   picker.value.click()
 }
 
+function syncDraftFromForm(kind: 'bl' | 'customs' | 'weight' | 'quality') {
+  if (!ocrOpen.value) return
+  if (kind === 'bl' || kind === 'customs') {
+    if (ocrTarget.value !== 'inbound') return
+    copyFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency'], form, draft)
+    return
+  }
+  if (kind === 'weight' && (ocrTarget.value === 'weight' || ocrTarget.value === 'receive')) {
+    copyFields(['wet', 'dry', 'moisture'], form, draft)
+    return
+  }
+  if (kind === 'quality' && (ocrTarget.value === 'quality' || ocrTarget.value === 'receive')) {
+    copyFields(['qualityNo', 'moisture', ...qualityFieldKeys.value], form, draft)
+  }
+}
+
+async function recognizeFile(kind: 'bl' | 'customs' | 'weight' | 'quality', file: File, replacePreview = true) {
+  if (replacePreview) {
+    const previous = previews[kind]
+    if (previous?.url) URL.revokeObjectURL(previous.url)
+    const image = file.type.startsWith('image/')
+    previews[kind] = { name: file.name, url: image ? URL.createObjectURL(file) : '', image, file }
+  } else {
+    previews[kind] = { ...previews[kind], name: file.name, file }
+  }
+  lastDoc.value = kind
+  ocrBusy.value = true
+  try {
+    const res = await ocrApi.recognize({ docType: DOC_TYPE[kind], fileName: file.name, __file: file })
+    if (!res.success || !res.data) {
+      ElMessage.error(res.message || '识别失败')
+      return false
+    }
+    const data = res.data as Record<string, unknown>
+    const id = String(data.id || '')
+    if (kind === 'bl' || kind === 'customs') {
+      fillFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency'], data, form)
+      if (filled(data.timeText)) form.time = data.timeText
+      form.orcId = id
+      ocrStatus.value = `已识别 ${file.name}`
+      ElMessage.success(`${kind === 'bl' ? '提单' : '报关单'}已识别并回填`)
+    } else if (kind === 'weight') {
+      fillFields(['wet', 'dry', 'moisture'], data, form)
+      form.weightOrcId = id
+      weightStatus.value = `重量单已识别：湿重 ${data.wet || '—'}t / 干重 ${data.dry || '—'}t`
+      ElMessage.success('重量单已识别并回填')
+    } else {
+      fillFields(['qualityNo'], data, form)
+      fillQualityFields(data, form)
+      if (filled(data.moisture) && !filled(form.moisture)) form.moisture = data.moisture
+      form.elementsOrcId = id
+      qualityStatus.value = `品质证书已识别：${data.qualityNo || file.name}`
+      ElMessage.success('品质证书已识别并回填')
+    }
+    syncDraftFromForm(kind)
+    return true
+  } finally {
+    ocrBusy.value = false
+  }
+}
+
 async function onPicked(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
-  const kind = pickKind.value
-  const previous = previews[kind]
-  if (previous?.url) URL.revokeObjectURL(previous.url)
-  const image = file.type.startsWith('image/')
-  previews[kind] = { name: file.name, url: image ? URL.createObjectURL(file) : '', image }
-  lastDoc.value = kind
-  const res = await ocrApi.recognize({ docType: DOC_TYPE[kind], fileName: file.name, __file: file })
-  if (!res.success || !res.data) {
-    ElMessage.error(res.message || '识别失败')
-    return
-  }
-  const data = res.data as Record<string, unknown>
-  const id = String(data.id || '')
-  if (kind === 'bl' || kind === 'customs') {
-    fillFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency'], data, form)
-    if (filled(data.timeText)) form.time = data.timeText
-    form.orcId = id
-    ocrStatus.value = `已识别 ${file.name}`
-    ElMessage.success(`${kind === 'bl' ? '提单' : '报关单'}已识别并回填`)
-    return
-  }
-  if (kind === 'weight') {
-    fillFields(['wet', 'dry', 'moisture'], data, form)
-    form.weightOrcId = id
-    weightStatus.value = `重量单已识别：湿重 ${data.wet || '—'}t / 干重 ${data.dry || '—'}t`
-    ElMessage.success('重量单已识别并回填')
-    return
-  }
-  fillFields(['qualityNo', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], data, form)
-  if (filled(data.moisture) && !filled(form.moisture)) form.moisture = data.moisture
-  form.elementsOrcId = id
-  qualityStatus.value = `品质证书已识别：${data.qualityNo || file.name}`
-  ElMessage.success('品质证书已识别并回填')
+  await recognizeFile(pickKind.value, file)
 }
 
 function openOcr(target: 'inbound' | 'weight' | 'quality' | 'receive') {
   ocrTarget.value = target
-  copyFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency', 'wet', 'dry', 'moisture', 'qualityNo', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], form, draft)
+  copyFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency', 'wet', 'dry', 'moisture', 'qualityNo', ...qualityFieldKeys.value], form, draft)
   ocrOpen.value = true
+}
+
+function repickOcr() {
+  if (ocrTarget.value === 'weight') pick('weight')
+  else if (ocrTarget.value === 'quality') pick('quality')
+  else if (ocrTarget.value === 'inbound') pick(lastDoc.value === 'bl' ? 'bl' : 'customs')
+  else if (previews.weight) pick('weight')
+  else if (previews.quality) pick('quality')
+  else pick('customs')
+}
+
+async function rerecognize() {
+  const kind = ocrTarget.value === 'quality'
+    ? 'quality'
+    : ocrTarget.value === 'weight'
+      ? 'weight'
+      : ocrTarget.value === 'inbound'
+        ? (lastDoc.value === 'bl' ? 'bl' : 'customs')
+        : (previews.weight?.file ? 'weight' : previews.quality?.file ? 'quality' : '')
+  if (!kind) {
+    ElMessage.warning('请先上传证书')
+    return
+  }
+  const file = previews[kind]?.file
+  if (!file) {
+    ElMessage.warning('当前没有可重新识别的文件，请重新上传')
+    return
+  }
+  await recognizeFile(kind, file, false)
 }
 
 function applyOcr() {
   if (ocrTarget.value === 'inbound') copyFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency'], draft, form)
   else if (ocrTarget.value === 'weight') copyFields(['wet', 'dry', 'moisture'], draft, form)
-  else if (ocrTarget.value === 'quality') copyFields(['qualityNo', 'moisture', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], draft, form)
-  else copyFields(['wet', 'dry', 'moisture', 'qualityNo', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], draft, form)
+  else if (ocrTarget.value === 'quality') {
+    copyFields(['qualityNo', 'moisture'], draft, form)
+    fillQualityFields(draft, form, false)
+  } else {
+    copyFields(['wet', 'dry', 'moisture', 'qualityNo'], draft, form)
+    fillQualityFields(draft, form, false)
+  }
   ocrOpen.value = false
   ElMessage.success('已回填并归档')
 }
 
+function stripQualityUnit(value: unknown) {
+  return String(value ?? '').trim().replace(/\s*(%|g\/t)\s*$/i, '')
+}
+
 function numberOrBlank(value: unknown) {
   if (value == null || String(value).trim() === '') return Number.NaN
-  return Number(String(value).replace('%', ''))
+  return Number(stripQualityUnit(value))
 }
 
 function createdId(data: unknown) {
@@ -353,16 +503,23 @@ async function submitReceive() {
     ElMessage.warning('请填写水分，或上传重量单')
     return
   }
-  if (!String(form.cu || '').trim()) {
-    ElMessage.warning('请填写铜含量，或上传品质证书')
+  const missingQuality = qualityKeys.value.find((item) => item.required && !String(form[item.key] || '').trim())
+  if (missingQuality) {
+    ElMessage.warning(`请填写${missingQuality.label}，或上传品质证书`)
     return
   }
+  const elements = qualityKeys.value.flatMap((item) => {
+    const value = numberOrBlank(form[item.key])
+    if (!Number.isFinite(value)) return []
+    return [{ elementCode: item.symbol, elementValue: value }]
+  })
   saving.value = true
   try {
     const received = await inboundApi.update(String(form.id), {
       ...form,
       wet, dry, moisture: `${moisture}%`,
       wetWeight: wet, dryWeight: dry, moistureContent: moisture,
+      elements,
       category: form.category || '原料',
       status: '已入库',
       containerCount: containerMode.value ? form.containerCount : '',
@@ -416,12 +573,13 @@ onBeforeUnmount(() => {
         <div class="split">
           <el-form class="fields" label-width="108px">
             <el-form-item label="委托方" required><el-select v-model="form.consignor"><el-option v-for="name in consignors" :key="name" :label="name" :value="name" /></el-select></el-form-item>
-            <el-form-item label="船名" required><el-input v-model="form.shipName" placeholder="OCR 回填" /></el-form-item>
-            <el-form-item label="提单号" required><el-input v-model="form.blNo" placeholder="OCR 回填" /></el-form-item>
-            <el-form-item label="提货重量"><el-input v-model="form.blWeight" type="number" placeholder="OCR 回填" /></el-form-item>
-            <el-form-item label="预计到货日"><el-date-picker v-model="form.time" type="date" value-format="YYYY-MM-DD" placeholder="OCR 回填" style="width: 100%" /></el-form-item>
             <el-form-item label="报关单号"><el-input v-model="form.customsNo" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="申报日期"><el-input v-model="form.time" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="提货重量"><el-input v-model="form.blWeight" type="number" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="船名" required><el-input v-model="form.shipName" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="核注清单号"><el-input v-model="form.checklistNo" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="提运单号" required><el-input v-model="form.blNo" placeholder="OCR 回填" /></el-form-item>
+
             <el-form-item label="金额" required>
               <div class="money">
                 <el-select v-model="form.currency" style="width: 120px"><el-option v-for="item in currencies" :key="item.value" :label="item.label" :value="item.value" /></el-select>
@@ -464,32 +622,47 @@ onBeforeUnmount(() => {
             <el-col :span="12"><el-form-item label="货运方式"><el-input :model-value="dash(form.shipMode)" readonly disabled /></el-form-item></el-col>
             <el-col v-if="containerMode" :span="12"><el-form-item label="集装箱柜数"><el-input :model-value="dash(form.containerCount)" readonly disabled /></el-form-item></el-col>
             <el-col :span="24">
-              <div class="ocr-dual">
+              <div class="ocr-dual" v-loading="ocrBusy">
                 <div>
-                  <button type="button" class="slot" @click="pick('weight')"><strong>上传重量单</strong><span>识别湿重 / 干重 / 水分</span></button>
+                  <button v-if="!previews.weight" type="button" class="slot" @click="pick('weight')">
+                    <strong>上传重量单</strong><span>识别湿重 / 干重 / 水分</span>
+                  </button>
+                  <button v-else type="button" class="slot shot" @click="openOcr('weight')">
+                    <img v-if="previews.weight.image && previews.weight.url" :src="previews.weight.url" :alt="previews.weight.name" />
+                    <div v-else class="file-card"><strong>{{ previews.weight.name }}</strong><span>点击查看 OCR 详情</span></div>
+                    <em>点击查看 OCR</em>
+                  </button>
                   <span class="status">{{ weightStatus }}</span>
                 </div>
                 <div>
-                  <button type="button" class="slot" @click="pick('quality')"><strong>上传品质证书</strong><span>识别各品质元素 / 证书编号</span></button>
+                  <button v-if="!previews.quality" type="button" class="slot" @click="pick('quality')">
+                    <strong>上传品质证书</strong><span>识别各品质元素 / 证书编号</span>
+                  </button>
+                  <button v-else type="button" class="slot shot" @click="openOcr('quality')">
+                    <img v-if="previews.quality.image && previews.quality.url" :src="previews.quality.url" :alt="previews.quality.name" />
+                    <div v-else class="file-card"><strong>{{ previews.quality.name }}</strong><span>点击查看 OCR 详情</span></div>
+                    <em>点击查看 OCR</em>
+                  </button>
                   <span class="status">{{ qualityStatus }}</span>
                 </div>
               </div>
             </el-col>
             <el-col :span="8"><el-form-item label="湿重(吨)" required><el-input v-model="form.wet" type="number" placeholder="OCR 回填" /></el-form-item></el-col>
             <el-col :span="8"><el-form-item label="干重(吨)" required><el-input v-model="form.dry" type="number" placeholder="OCR 回填" /></el-form-item></el-col>
-            <el-col :span="8"><el-form-item label="水分"><el-input v-model="form.moisture" readonly placeholder="OCR 回填" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="水分"><el-input v-model="form.moisture" placeholder="可手填或 OCR 回填" /></el-form-item></el-col>
             <el-col :span="24">
               <el-form-item label="品质参数">
                 <div class="quality">
                   <label v-for="item in qualityKeys" :key="item.key">
                     <span>{{ item.label }}<i v-if="item.required">*</i></span>
-                    <el-input v-model="form[item.key]" />
+                    <el-input v-model="form[item.key]" type="number">
+                      <template #suffix>{{ item.unit }}</template>
+                    </el-input>
                   </label>
                 </div>
               </el-form-item>
             </el-col>
             <el-col :span="12"><el-form-item label="品质证书号"><el-input v-model="form.qualityNo" readonly placeholder="OCR 回填" /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label=" "><el-button @click="openOcr('receive')">查看 OCR 详情</el-button></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="收货备注"><el-input v-model="form.remark" type="textarea" /></el-form-item></el-col>
           </el-row>
         </el-form>
@@ -511,7 +684,10 @@ onBeforeUnmount(() => {
             <strong>{{ preview?.name || '单据预览区' }}</strong>
             <span>{{ preview?.name ? '该文件不能在这里预览' : '上传后显示识别影像' }}</span>
           </div>
-          <el-button size="small" @click="pick(ocrTarget === 'weight' ? 'weight' : ocrTarget === 'quality' ? 'quality' : 'customs')">重新上传</el-button>
+          <div class="ocr-actions">
+            <el-button size="small" :disabled="ocrBusy" @click="repickOcr">重新上传</el-button>
+            <el-button size="small" :loading="ocrBusy" :disabled="!preview?.file" @click="rerecognize">重新识别</el-button>
+          </div>
         </div>
         <el-form label-width="96px">
           <p class="hint">识别字段均可手工修正后回填</p>
@@ -537,7 +713,12 @@ onBeforeUnmount(() => {
             <el-form-item label="证书编号"><el-input v-model="draft.qualityNo" /></el-form-item>
             <el-form-item label="品质参数">
               <div class="quality">
-                <label v-for="item in qualityKeys" :key="item.key"><span>{{ item.label }}</span><el-input v-model="draft[item.key]" /></label>
+                <label v-for="item in qualityKeys" :key="item.key">
+                  <span>{{ item.label }}</span>
+                  <el-input v-model="draft[item.key]" type="number">
+                    <template #suffix>{{ item.unit }}</template>
+                  </el-input>
+                </label>
               </div>
             </el-form-item>
           </template>
@@ -578,9 +759,48 @@ onBeforeUnmount(() => {
 .ocr-dual > div { flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .slot { height: auto; min-height: 72px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; text-align: left; }
 .slot span { color: #8a8a8a; font-size: 12px; }
+.slot.shot {
+  position: relative;
+  padding: 0;
+  min-height: 120px;
+  overflow: hidden;
+  align-items: stretch;
+}
+.slot.shot img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+  background: #f3f3f3;
+}
+.slot.shot .file-card {
+  min-height: 120px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  background: #f7f7f7;
+}
+.slot.shot em {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 4px 8px;
+  font-style: normal;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+.ocr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .quality { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; width: 100%; }
 .quality label { display: flex; align-items: center; gap: 8px; }
-.quality span { width: 64px; color: #5c5c5c; }
+.quality span { flex: 0 0 72px; color: #5c5c5c; white-space: nowrap; }
+.quality .el-input { flex: 1; min-width: 0; }
+.quality .el-input :deep(.el-input__suffix) { color: #8a8a8a; }
 .quality i { color: var(--el-color-danger); font-style: normal; }
 .ocr-detail { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
 .ocr-shot { display: block; margin-bottom: 12px; }

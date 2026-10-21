@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { authApi, dashboardApi } from '@/api'
+import { auditApi, authApi, dashboardApi, settingsApi, warningApi } from '@/api'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import PulseDot from '@/components/PulseDot.vue'
@@ -13,10 +13,85 @@ interface UsageItem { name: string; rate: number }
 interface TrendItem { day: string; dry: number }
 interface WarnItem { title: string; detail: string; time: string; link: string; tone?: string }
 
+const DEFAULT_REFRESH_MINUTES = 3
+const FLOW_LIMIT = 30
+
+function pollMs(minutes: unknown) {
+  const value = Number(minutes)
+  const mins = value > 0 ? value : DEFAULT_REFRESH_MINUTES
+  return mins * 60 * 1000
+}
+
+function dayText(offset = 0) {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() + offset)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function warnTone(level: unknown) {
+  const text = String(level || '')
+  if (text.includes('高')) return 'red'
+  if (text.includes('中')) return 'orange'
+  return 'yellow'
+}
+
+function mapWarning(row: Record<string, unknown>): WarnItem {
+  const type = String(row.type || '预警')
+  const target = String(row.target || '').trim()
+  const detail = String(row.detail || '').trim()
+  return {
+    title: target ? `${type} · ${target}` : type,
+    detail: detail || target || '—',
+    time: String(row.time || ''),
+    link: '/warning-logs',
+    tone: warnTone(row.level),
+  }
+}
+
+/** 作业链路展示类型：入仓 / 出仓 / 称重 / 生产 / 加工 / 完工 / 移库 / 盘点。 */
+function flowTypeOf(row: Record<string, unknown>): string | null {
+  const module = String(row.module || '')
+  const blob = [module, row.action, row.content, row.detail].map((item) => String(item || '')).join(' ')
+  if (blob.includes('盘点')) return '盘点'
+  if (blob.includes('移库')) return '移库'
+  if (blob.includes('完工')) return '完工'
+  if (blob.includes('加工')) return '加工'
+  if (blob.includes('投料') || module.includes('生产')) return '生产'
+  if (blob.includes('收货') || blob.includes('称重') || blob.includes('到货')) return '称重'
+  if (blob.includes('出库') || blob.includes('出仓') || module.includes('出库')) return '出仓'
+  if (blob.includes('入库') || blob.includes('入仓') || blob.includes('预约') || module.includes('入库')) return '入仓'
+  return null
+}
+
+function flowTime(value: unknown) {
+  const text = String(value || '')
+  const hit = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2})/)
+  if (hit) return `${hit[1]} ${hit[2]}时`
+  return text || '—'
+}
+
+function flowText(row: Record<string, unknown>) {
+  const biz = String(row.bizNo || '').trim()
+  const body = String(row.content || row.detail || '').trim()
+  const parts = [biz && biz !== '—' ? biz : '', body && body !== '—' ? body : ''].filter(Boolean)
+  return parts.join(' · ') || '—'
+}
+
+function mapFlowLog(row: Record<string, unknown>): LogItem | null {
+  const type = flowTypeOf(row)
+  if (!type) return null
+  return { type, text: flowText(row), time: flowTime(row.time) }
+}
+
 const router = useRouter()
 const auth = useAuthStore()
 const passwordOpen = ref(false)
 const boardRef = ref<HTMLElement>()
+const yardRef = ref<{ reload?: (quiet?: boolean) => Promise<void> }>()
+let yardBooted = false
 const barRef = ref<HTMLElement>()
 const lineRef = ref<HTMLElement>()
 const kpi = ref({ rawWet: 0, rawDry: 0, fgWet: 0, fgDry: 0, inboundToday: 0, outboundToday: 0, pendingQc: 0, alerts: 0 })
@@ -25,16 +100,40 @@ const logs = ref<LogItem[]>([])
 const usage = ref<UsageItem[]>([])
 const trend = ref<TrendItem[]>([])
 const warnings = ref<WarnItem[]>([])
+const refreshedAt = ref('')
+/** 无缝滚动：列表复制一份，动画 translateY(-50%)。 */
+const warnTrack = computed(() => (warnings.value.length ? [...warnings.value, ...warnings.value] : []))
+const warnScrollSec = computed(() => Math.max(18, warnings.value.length * 4))
+const logTrack = computed(() => (logs.value.length ? [...logs.value, ...logs.value] : []))
+const logScrollSec = computed(() => Math.max(20, logs.value.length * 2.4))
 let barChart: echarts.ECharts | null = null
 let lineChart: echarts.ECharts | null = null
+let feedTimer = 0
+let pollIntervalMs = pollMs(DEFAULT_REFRESH_MINUTES)
+
+function stampRefreshed() {
+  const date = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  refreshedAt.value = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function schedulePoll(ms: number) {
+  pollIntervalMs = ms
+  window.clearInterval(feedTimer)
+  feedTimer = window.setInterval(() => {
+    void refreshDashboard()
+  }, pollIntervalMs)
+}
 
 const tagColor: Record<string, string> = {
-  生产: '#3d8bff',
-  称重: '#3dbe8c',
-  上架: '#e08a3a',
-  完工: '#3ec6d4',
   入仓: '#5b8def',
   出仓: '#e0b15a',
+  称重: '#3dbe8c',
+  生产: '#9b8fd4',
+  加工: '#3d8bff',
+  完工: '#3ec6d4',
+  移库: '#e08a3a',
+  盘点: '#c5a15b',
 }
 
 let observer: ResizeObserver | null = null
@@ -180,19 +279,74 @@ function trendMax(values: number[]) {
   return Math.ceil((peak * 1.2) / step) * step
 }
 
-onMounted(async () => {
-  const [weightRes, dailyRes] = await Promise.all([
+function onYardUsage(items: UsageItem[]) {
+  usage.value = items
+  nextTick(() => {
+    if (!barChart || !barRef.value) {
+      renderCharts()
+      return
+    }
+    barChart.setOption({
+      xAxis: { data: items.map((item) => item.name) },
+      series: [{ data: items.map((item) => item.rate) }],
+    })
+  })
+}
+
+async function loadWarnings() {
+  const res = await warningApi.list({ page: 1, pageSize: 100, from: dayText(-4), to: dayText(0) })
+  if (!res.success || !res.data) return
+  warnings.value = res.data.list.map((row) => mapWarning(row))
+  if (!Number(kpi.value.alerts)) kpi.value.alerts = res.data.total || warnings.value.length
+}
+
+async function loadFlowLogs() {
+  const res = await auditApi.list({ page: 1, pageSize: 100 })
+  if (!res.success || !res.data) return
+  const rows: LogItem[] = []
+  for (const row of res.data.list) {
+    const item = mapFlowLog(row)
+    if (!item) continue
+    rows.push(item)
+    if (rows.length >= FLOW_LIMIT) break
+  }
+  logs.value = rows
+}
+
+async function refreshDashboard() {
+  const quietYard = yardBooted
+  const [weightRes, dailyRes, paramRes] = await Promise.all([
     dashboardApi.weight(),
     dashboardApi.receiptDaily(),
+    settingsApi.get(),
+    loadWarnings(),
+    loadFlowLogs(),
+    yardRef.value?.reload?.(quietYard),
   ])
+  yardBooted = true
   if (weightRes.success && weightRes.data) {
     kpi.value = { ...kpi.value, ...weightRes.data }
   }
   if (dailyRes.success && Array.isArray(dailyRes.data)) trend.value = dailyRes.data
+  if (!Number(kpi.value.alerts) && warnings.value.length) {
+    kpi.value.alerts = warnings.value.length
+  }
+  stampRefreshed()
   await nextTick()
   renderCharts()
+  const nextMs = pollMs(paramRes.success && paramRes.data ? paramRes.data.refreshInterval : undefined)
+  if (nextMs !== pollIntervalMs) {
+    schedulePoll(nextMs)
+    return
+  }
+  pollIntervalMs = nextMs
+}
+
+onMounted(async () => {
+  await refreshDashboard()
   observer = new ResizeObserver(() => resizeCharts())
   if (boardRef.value) observer.observe(boardRef.value)
+  if (!feedTimer) schedulePoll(pollIntervalMs)
 })
 
 onActivated(() => {
@@ -200,6 +354,7 @@ onActivated(() => {
 })
 
 onBeforeUnmount(() => {
+  window.clearInterval(feedTimer)
   observer?.disconnect()
   barChart?.dispose()
   lineChart?.dispose()
@@ -211,7 +366,10 @@ onBeforeUnmount(() => {
     <header class="head">
         <div>
           <h1>系统概览</h1>
-          <p>BONDED WMS · 关务监管</p>
+          <p class="sub">
+            <span>BONDED WMS · 关务监管</span>
+            <span v-if="refreshedAt" class="refreshed">数据刷新 {{ refreshedAt }}</span>
+          </p>
         </div>
         <div class="tools">
           <el-dropdown>
@@ -237,7 +395,7 @@ onBeforeUnmount(() => {
         <article><b>{{ num(kpi.fgDry) }}</b><span>成品干吨</span></article>
       </section>
 
-      <YardBoard />
+      <YardBoard ref="yardRef" @usage="onYardUsage" />
       </div>
 
       <div class="side-col">
@@ -263,13 +421,22 @@ onBeforeUnmount(() => {
           <h3><PulseDot />仓库作业链路</h3>
           <b class="live"><PulseDot color="#3d8bff" round :size="6" />LIVE</b>
         </div>
-        <ul>
-          <li v-for="(item, index) in logs" :key="item.type" :class="{ alt: index % 2 === 1 }">
-            <em :style="{ color: tagColor[item.type] }">{{ item.type }}</em>
-            <span>{{ item.text }}</span>
-            <time>{{ item.time }}</time>
-          </li>
-        </ul>
+        <div class="logs-body">
+          <p v-if="!logs.length" class="logs-empty">暂无作业日志</p>
+          <div v-else class="logs-viewport">
+            <ul class="logs-track" :style="{ animationDuration: `${logScrollSec}s` }">
+              <li
+                v-for="(item, index) in logTrack"
+                :key="`${item.time}-${item.type}-${item.text}-${index}`"
+                :class="{ alt: index % 2 === 1 }"
+              >
+                <time>{{ item.time }}</time>
+                <em :style="{ color: tagColor[item.type] || '#c5d0dc' }">{{ item.type }}</em>
+                <span>{{ item.text }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
       </section>
       </div>
     </div>
@@ -288,18 +455,30 @@ onBeforeUnmount(() => {
           </div>
           <div ref="lineRef" class="chart" />
         </article>
-        <article class="chart-card">
-          <div class="card-head"><h3><PulseDot />预警</h3></div>
-          <ul class="warns">
-            <li v-for="(item, index) in warnings" :key="index" @click="router.push(item.link)">
-              <i :class="item.tone || 'red'" />
-              <div>
-                <b>{{ item.title }}</b>
-                <span>{{ item.detail }}</span>
-              </div>
-              <time>{{ item.time }}</time>
-            </li>
-          </ul>
+        <article class="chart-card warn-card">
+          <div class="card-head">
+            <h3><PulseDot />预警</h3>
+            <button type="button" class="warn-all" @click="router.push('/warning-logs')">全部</button>
+          </div>
+          <div class="warns">
+            <p v-if="!warnings.length" class="warn-empty">近 5 日暂无预警</p>
+            <div v-else class="warns-viewport">
+              <ul class="warns-track" :style="{ animationDuration: `${warnScrollSec}s` }">
+                <li
+                  v-for="(item, index) in warnTrack"
+                  :key="`${item.time}-${item.title}-${index}`"
+                  @click="router.push(item.link)"
+                >
+                  <i :class="item.tone || 'red'" />
+                  <div>
+                    <b>{{ item.title }}</b>
+                    <span>{{ item.detail }}</span>
+                  </div>
+                  <time>{{ item.time }}</time>
+                </li>
+              </ul>
+            </div>
+          </div>
         </article>
     </section>
   </div>
@@ -341,7 +520,21 @@ onBeforeUnmount(() => {
   justify-content: space-between;
 }
 .head h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: 1px; color: #fff; }
-.head p { margin: 4px 0 0; color: rgba(255,255,255,.55); font-size: 13px; letter-spacing: .6px; }
+.head .sub {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin: 4px 0 0;
+  color: rgba(255, 255, 255, .55);
+  font-size: 13px;
+  letter-spacing: .6px;
+}
+.head .refreshed {
+  color: rgba(231, 201, 138, .88);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+}
 .tools { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 .tool {
   position: relative;
@@ -474,22 +667,85 @@ onBeforeUnmount(() => {
   background: #3aa0ff;
 }
 .legend .out::before { background: #e0a04a; }
-.warns { list-style: none; margin: 0; padding: 0 12px; flex: 1; min-height: 0; overflow: auto; }
-.warns li {
-  display: grid;
-  grid-template-columns: 12px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  height: 56px;
-  border-bottom: 1px solid rgba(255,255,255,.06);
+.warn-all {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #e7c98a;
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
-.warns i { width: 8px; height: 8px; border-radius: 50%; }
-.warns i.red { background: #e15b54; }
-.warns i.orange { background: #e08a3a; }
-.warns i.yellow { background: #e0c15a; }
+.warn-all:hover { color: #f0d090; }
+.warns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 8px;
+  overflow: hidden;
+}
+.warn-empty {
+  margin: 0;
+  padding: 24px 12px;
+  color: #8ea0b5;
+  font-size: 13px;
+  text-align: center;
+}
+.warns-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+.warns-track {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px;
+  animation-name: warnScroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.warns:hover .warns-track { animation-play-state: paused; }
+@keyframes warnScroll {
+  from { transform: translateY(0); }
+  to { transform: translateY(-50%); }
+}
+.warns-track li {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+.warns-track li:hover { background: rgba(231, 201, 138, 0.06); }
+.warns i {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+.warns i.red { background: #e15b54; box-shadow: 0 0 8px rgba(225, 91, 84, 0.65); }
+.warns i.orange { background: #e08a3a; box-shadow: 0 0 8px rgba(224, 138, 58, 0.55); }
+.warns i.yellow { background: #e0c15a; box-shadow: 0 0 8px rgba(224, 193, 90, 0.45); }
 .warns b { display: block; font-size: 13px; color: #f3f7fb; font-weight: 600; }
-.warns span, .warns time { color: #8ea0b5; font-size: 12px; }
+.warns span {
+  display: block;
+  margin-top: 2px;
+  color: #8ea0b5;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.warns time { color: #8ea0b5; font-size: 11px; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .warns-track { animation: none; }
+  .warns-viewport { overflow: auto; }
+}
 
 .logs {
   position: relative;
@@ -525,18 +781,73 @@ onBeforeUnmount(() => {
   font-size: 13px;
   letter-spacing: 1px;
 }
-.logs ul { list-style: none; margin: 0; padding: 0 8px 8px; flex: 1; min-height: 0; overflow: auto; }
-.logs li {
-  display: grid;
-  grid-template-columns: 48px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  height: 44px;
-  padding: 0 8px;
-  font-size: 13px;
+.logs-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 8px;
+  overflow: hidden;
 }
-.logs li.alt { background: rgba(255,255,255,.03); }
-.logs em { font-style: normal; font-weight: 600; }
-.logs span { color: #d5e0ec; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.logs time { color: #9aa8b8; font-size: 12px; }
+.logs-empty {
+  margin: 0;
+  padding: 20px 12px;
+  color: #8ea0b5;
+  font-size: 13px;
+  text-align: center;
+}
+.logs-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+}
+.logs-track {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px;
+  animation-name: logScroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.logs:hover .logs-track { animation-play-state: paused; }
+@keyframes logScroll {
+  from { transform: translateY(0); }
+  to { transform: translateY(-50%); }
+}
+.logs-track li {
+  display: grid;
+  grid-template-columns: 108px 36px 1fr;
+  gap: 6px;
+  align-items: center;
+  height: 30px;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+.logs-track li.alt { background: rgba(255, 255, 255, 0.03); }
+.logs-track time {
+  color: #9aa8b8;
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.logs-track em {
+  font-style: normal;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+.logs-track span {
+  color: #d5e0ec;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .logs-track { animation: none; }
+  .logs-viewport { overflow: auto; }
+}
 </style>

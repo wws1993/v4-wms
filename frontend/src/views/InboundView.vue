@@ -149,12 +149,11 @@ function lotFromInbound(row: Record<string, unknown>) {
 
 async function openDetail(row: Record<string, unknown>, section = 'inbound') {
   focus.value = section
+  // 列表行已是入库单摘要，不再额外 get；入场记录由弹窗直接用本行，避免 list/get 重复打同一单据。
+  const base = lotFromInbound(row)
+  current.value = base
   detailOpen.value = true
   detailLoading.value = true
-  const detail = String(row.id || '') ? await receiptOf(row) : row
-  if (!detailOpen.value) return
-  const base = lotFromInbound(detail || row)
-  current.value = base
   const batchNo = String(base.batchNo || row.customsNo || row.batchNo || '')
   if (batchNo) {
     const res = await inventoryApi.detail(batchNo)
@@ -222,6 +221,7 @@ function canReceive(row: Record<string, unknown>) {
       <el-table-column prop="blNo" label="提单号" min-width="140" />
       <el-table-column prop="checklistNo" label="核注清单号" width="200" />
       <el-table-column label="金额" width="130"><template #default="{ row }">{{ money(row.amount, row.currency) }}</template></el-table-column>
+      <el-table-column label="提货重量" width="110"><template #default="{ row }">{{ dash(row.blWeight) }}</template></el-table-column>
       <el-table-column label="湿/干" width="200"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
       <el-table-column prop="shipMode" label="货运方式" width="100" />
       <el-table-column prop="containerCount" label="柜数" width="70" />

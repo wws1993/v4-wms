@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import type { FloorPlan, PlanItem } from '@/types'
 import { hostOf, isWarehouseItem, stackCode, warehouseCodeOf, type CargoLot } from '@/plan/model'
 
@@ -58,6 +58,7 @@ const emit = defineEmits<{
   open: [item: PlanItem | null]
   hover: [payload: { title: string; rate: string; line: string; hint: string; x: number; y: number }]
   leave: []
+  usage: [items: { name: string; rate: number }[]]
 }>()
 
 function areaTone(area: string): Tone {
@@ -196,6 +197,14 @@ const cards = computed<HouseCard[]>(() => {
     }
   })
 })
+
+watch(
+  cards,
+  (list) => {
+    emit('usage', list.map((card) => ({ name: card.name, rate: card.rate })))
+  },
+  { immediate: true },
+)
 
 function lotHint(stack: StackCube) {
   const rows = lotsOf(stack.code, stack.id)

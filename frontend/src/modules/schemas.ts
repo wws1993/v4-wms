@@ -212,7 +212,7 @@ export const schemas: Record<string, ModuleSchema> = {
         title: `备案票货 · ${row.code || ''}`,
         table: {
           columns: [
-            { prop: 'customsNo', label: '报关单号', minWidth: 150, lot: true },
+            { prop: 'customsNo', label: '报关单号', minWidth: 180, lot: true },
             { prop: 'prodBatch', label: '生产批次号', minWidth: 120 },
             { prop: 'consignor', label: '委托方', minWidth: 100 },
             { prop: 'material', label: '物料', minWidth: 110 },
@@ -551,7 +551,7 @@ export const schemas: Record<string, ModuleSchema> = {
     filters: [
       { key: 'from', label: '开始日期', type: 'date' },
       { key: 'to', label: '结束日期', type: 'date' },
-      { key: 'status', label: '状态', type: 'select', options: ['待审核', '已审核'] },
+      { key: 'status', label: '状态', type: 'select', options: ['未出库', '已出库', '作废'] },
     ],
     columns: [
       { prop: 'time', label: '出库时间', minWidth: 150 },
@@ -579,10 +579,10 @@ export const schemas: Record<string, ModuleSchema> = {
     create: outboundApi.create,
     update: outboundApi.update,
     actions: [{
-      label: '审核',
-      when: (row) => row.status === '待审核',
-      confirm: '确认审核通过该出库单？',
-      request: (row) => outboundApi.approve(String(row.id)),
+      label: '出库完成',
+      when: (row) => row.status === '未出库',
+      confirm: '确认完成出库？',
+      request: (row) => outboundApi.complete(String(row.id)),
     }],
   },
   production: {

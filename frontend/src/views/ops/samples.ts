@@ -8,9 +8,46 @@ export function money(amount: unknown, currency?: unknown) {
   return `${mark} ${num}`
 }
 
+const QUALITY_UNITS: Record<string, string> = {
+  cu: '%',
+  ag: 'g/t',
+  au: 'g/t',
+  as: '%',
+  pb: '%',
+  cd: '%',
+  f: '%',
+  hg: '%',
+}
+
+/** 去掉小数末尾多余的 0，如 7595.000 → 7595、11979.140 → 11979.14 */
+export function trimZeros(value: unknown) {
+  const raw = String(value ?? '').trim()
+  if (!raw || raw === '—' || raw === '-') return ''
+  const cleaned = raw.replace(/\s*(%|g\/t|吨|t)\s*$/i, '').trim()
+  if (!cleaned) return ''
+  if (!cleaned.includes('.')) return cleaned
+  return cleaned.replace(/0+$/, '').replace(/\.$/, '')
+}
+
+export function tonText(value: unknown) {
+  const num = trimZeros(value)
+  return num ? `${num} 吨` : '—'
+}
+
+function formatQualityValue(value: unknown) {
+  return trimZeros(value)
+}
+
 export function qualityLine(row: Record<string, unknown>) {
   const keys = ['cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg']
-  const text = keys.map((key) => (row[key] ? `${key.toUpperCase()}${row[key]}` : '')).filter(Boolean).join('；')
+  const text = keys
+    .map((key) => {
+      const value = formatQualityValue(row[key])
+      if (!value) return ''
+      return `${key.toUpperCase()}${value}${QUALITY_UNITS[key] || '%'}`
+    })
+    .filter(Boolean)
+    .join(',')
   return text || '—'
 }
 

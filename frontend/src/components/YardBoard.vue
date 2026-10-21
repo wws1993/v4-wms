@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
 import { dashboardApi, floorApi, inventoryApi, settingsApi, warehouseApi } from '@/api'
 import PulseDot from '@/components/PulseDot.vue'
 import YardIso from '@/components/YardIso.vue'
@@ -8,6 +8,10 @@ import YardPlanMap from '@/components/YardPlanMap.vue'
 import { defaultPlan, warehouseCodeOf } from '@/plan/model'
 import type { CargoLot } from '@/plan/model'
 import type { FloorPlan, PlanItem } from '@/types'
+
+const emit = defineEmits<{
+  usage: [items: { name: string; rate: number }[]]
+}>()
 
 const plan = reactive<FloorPlan>(defaultPlan())
 const lots = ref<CargoLot[]>([])
@@ -51,8 +55,11 @@ let blendFrame = 0
 let observer: ResizeObserver | undefined
 let alive = true
 
-onMounted(async () => {
-  focusId.value = ''
+async function loadBoard(quiet = false) {
+  if (!quiet) {
+    loading.value = true
+    focusId.value = ''
+  }
   const started = Date.now()
   const [planRes, stockRes, houseRes, stackRes, paramRes, alertRes] = await Promise.all([
     floorApi.get(),
@@ -64,7 +71,7 @@ onMounted(async () => {
   ])
   if (!alive) return
   if (planRes.success && planRes.data) Object.assign(plan, planRes.data)
-  else planError.value = planRes.message || '平面图读取失败'
+  else if (!quiet) planError.value = planRes.message || '平面图读取失败'
   if (houseRes.success && houseRes.data) houses.value = houseRes.data.list
   if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
   if (paramRes.success && paramRes.data) {
@@ -73,17 +80,26 @@ onMounted(async () => {
   }
   if (alertRes.success && alertRes.data) alertRows.value = alertRes.data.list
   if (stockRes.success && Array.isArray(stockRes.data)) lots.value = stockRes.data
-  const remain = LOAD_MIN_MS - (Date.now() - started)
-  if (remain > 0) await new Promise((resolve) => window.setTimeout(resolve, remain))
-  if (!alive) return
+  if (!quiet) {
+    const remain = LOAD_MIN_MS - (Date.now() - started)
+    if (remain > 0) await new Promise((resolve) => window.setTimeout(resolve, remain))
+    if (!alive) return
+  }
   loading.value = false
   await nextTick()
-  if (stageRef.value) {
+  if (!observer && stageRef.value) {
     observer = new ResizeObserver(() => {
       if (!focusId.value) planMapRef.value?.layout()
     })
     observer.observe(stageRef.value)
+  } else if (!focusId.value) {
+    planMapRef.value?.layout()
   }
+}
+
+defineExpose({
+  /** quiet 为 true 时静默刷新，不闪加载层。 */
+  reload: (quiet = true) => loadBoard(quiet),
 })
 
 onBeforeUnmount(() => {
@@ -217,6 +233,7 @@ function back() {
             :stacks="stacks"
             :lots="lots"
             :warn-codes="warnCodes"
+            @usage="emit('usage', $event)"
             @open="openIso"
             @hover="onIsoHover"
             @leave="onLeave"
@@ -255,9 +272,9 @@ function back() {
         <li><span>预警</span><i class="lv crit" /></li>
       </ul>
       <ul v-else-if="!loading && !focusId" class="legend">
-        <li><span>五矿有色达标/报备</span><i class="ore std" /><i class="ore" /></li>
-        <li><span>南国铜业达标/报备</span><i class="ng std" /><i class="ng" /></li>
-        <li><span>广西金川达标/报备</span><i class="jc std" /><i class="jc filed" /></li>
+        <li><span>五矿有色达标/报备</span><i class="ore" /><i class="ore std" /></li>
+        <li><span>南国铜业达标/报备</span><i class="ng" /><i class="ng std" /></li>
+        <li><span>广西金川达标/报备</span><i class="jc" /><i class="jc filed std" /></li>
         <li><span>混成品</span><i class="mix" /></li>
         <li><span>入库预约</span><i class="book" /></li>
         <li><span>空闲</span><i class="idle" /></li>

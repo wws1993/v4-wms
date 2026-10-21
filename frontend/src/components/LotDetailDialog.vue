@@ -58,6 +58,7 @@ const ocrRows = ref<Row[]>([])
 const inboundPick = ref('')
 const outboundPick = ref('')
 const loaded = ref<Partial<Record<'inbound' | 'production' | 'outbound' | 'transfer' | 'ocr', string>>>({})
+const inflight = ref<Partial<Record<'inbound' | 'production' | 'outbound' | 'transfer' | 'ocr', string>>>({})
 const docPatch = ref<Row | null>(null)
 const docsStamp = ref('')
 let listTicket = 0
@@ -180,6 +181,7 @@ function resetTrace() {
   transferRows.value = []
   ocrRows.value = []
   loaded.value = {}
+  inflight.value = {}
   docPatch.value = null
   docsStamp.value = ''
 }
@@ -233,25 +235,56 @@ async function loadDocs() {
   }
 }
 
+/** 票货上已带齐入场摘要时，直接用本行，不再打 receiptOrder/list。 */
+function inboundSeed(lot: Row): Row | null {
+  const customsNo = clean(lot.customsNo) || (lot.batchKind === '报关单号' ? clean(lot.batchNo) : '')
+  if (!customsNo) return null
+  const rich = clean(lot.orderNo) || clean(lot.shipName) || clean(lot.time) || clean(lot.inDate) || lot.wet != null && lot.wet !== ''
+  if (!rich) return null
+  return {
+    id: lot.orderId || lot.id,
+    orderNo: lot.orderNo,
+    customsNo,
+    consignor: lot.consignor,
+    shipName: lot.shipName,
+    blNo: lot.blNo,
+    stackCode: lot.stackCode || lot.stackText,
+    wet: lot.wet,
+    dry: lot.dry,
+    status: lot.status,
+    time: lot.time || lot.inDate,
+    loadWeight: lot.blWeight ?? lot.loadWeight,
+    checklistNo: lot.checklistNo,
+    material: lot.material,
+  }
+}
+
 async function loadPage(id: PageId) {
   const source = sourceOf(id)
   const lot = props.lot
   if (!source || !lot) return
   const stamp = `${clean(lot.batchNo)}|${clean(lot.customsNo)}|${source}`
-  if (loaded.value[source] === stamp) return
+  if (loaded.value[source] === stamp || inflight.value[source] === stamp) return
+  inflight.value = { ...inflight.value, [source]: stamp }
   const mine = ++listTicket
   beginTrace()
   try {
     const keys = seedKeys()
     if (source === 'inbound') {
-      const listed = await rowsOf(inboundApi.list({ page: 1, pageSize: 50, keyword: keys[0] || undefined }))
-      if (mine !== listTicket) return
-      let inbound = listed.filter((row) => mentions(`${row.customsNo || ''}${row.blNo || ''}${row.orderNo || ''}`, keys))
-      const missing = keys.filter((key) => /^\d{10,}$/.test(key) && !inbound.some((row) => clean(row.customsNo) === key)).slice(0, 6)
-      if (missing.length) {
-        const extra = await Promise.all(missing.map((key) => rowsOf(inboundApi.list({ keyword: key, page: 1, pageSize: 20 }))))
+      const seeded = inboundSeed(lot)
+      let inbound: Row[] = []
+      if (seeded && keys.every((key) => mentions(`${seeded.customsNo}${seeded.blNo}${seeded.orderNo}${seeded.id}${lot.batchNo}`, [key]))) {
+        inbound = [seeded]
+      } else {
+        const listed = await rowsOf(inboundApi.list({ page: 1, pageSize: 50, keyword: keys[0] || undefined }))
         if (mine !== listTicket) return
-        inbound = unique([...inbound, ...extra.flat()], (row) => clean(row.id || row.customsNo))
+        inbound = listed.filter((row) => mentions(`${row.customsNo || ''}${row.blNo || ''}${row.orderNo || ''}`, keys))
+        const missing = keys.filter((key) => /^\d{10,}$/.test(key) && !inbound.some((row) => clean(row.customsNo) === key)).slice(0, 6)
+        if (missing.length) {
+          const extra = await Promise.all(missing.map((key) => rowsOf(inboundApi.list({ keyword: key, page: 1, pageSize: 20 }))))
+          if (mine !== listTicket) return
+          inbound = unique([...inbound, ...extra.flat()], (row) => clean(row.id || row.customsNo))
+        }
       }
       inboundRows.value = inbound
       if (!inbound.some((row) => clean(row.customsNo || row.id) === inboundPick.value)) inboundPick.value = clean(inbound[0]?.customsNo || inbound[0]?.id)
@@ -280,6 +313,11 @@ async function loadPage(id: PageId) {
     }
     if (mine === listTicket) loaded.value = { ...loaded.value, [source]: stamp }
   } finally {
+    if (inflight.value[source] === stamp) {
+      const next = { ...inflight.value }
+      delete next[source]
+      inflight.value = next
+    }
     endTrace()
   }
 }
@@ -467,8 +505,8 @@ function productOut(row: Row) {
           <em>{{ dash(current.material) }}</em>
         </div>
         <div class="stat">
-          <span>报关单号</span>
-          <strong>{{ dash(current.customsNo || (finished ? current.outCustomsNo : current.batchNo)) }}</strong>
+          <span>矿源备案号</span>
+          <strong>{{ dash(current.filingNo) }}</strong>
           <em>{{ finished ? '成品' : '原料' }}</em>
         </div>
         <div class="stat">
@@ -517,14 +555,15 @@ function productOut(row: Row) {
           <template v-else-if="page === 'inbound'">
             <el-table :data="inboundRows" border empty-text="暂无入场记录">
               <el-table-column prop="status" label="状态" width="100" />
-              <el-table-column label="入库单号" min-width="200"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column>
-              <el-table-column label="报关单号" min-width="200"><template #default="{ row }">{{ dash(row.customsNo) }}</template></el-table-column>
-              <el-table-column prop="consignor" label="委托方" width="200" />
+              <!-- <el-table-column label="入库单号" min-width="200"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column> -->
+              <!-- <el-table-column label="报关单号" min-width="200"><template #default="{ row }">{{ dash(row.customsNo) }}</template></el-table-column> -->
+              <!-- <el-table-column prop="consignor" label="委托方" width="200" /> -->
               <el-table-column prop="shipName" label="船名" width="110" />
-              <el-table-column prop="blNo" label="提单" min-width="200" />
+              <el-table-column prop="blNo" label="提运单号" width="200" />
+              <el-table-column prop="loadWeight" label="提货重量" width="200" />
               <el-table-column label="堆位" width="100"><template #default="{ row }">{{ dash(row.stackCode) }}</template></el-table-column>
-              <el-table-column label="湿重/干重" width="120"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
-              <el-table-column prop="time" label="时间" min-width="240" />
+              <el-table-column label="湿重/干重" width="200"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
+              <el-table-column prop="time" label="入库时间" min-width="240" />
             </el-table>
           </template>
 
@@ -604,7 +643,6 @@ function productOut(row: Row) {
               <el-table-column prop="toStack" label="目标堆位" width="100" />
               <el-table-column prop="weight" label="重量" width="80" />
               <el-table-column label="时间" min-width="180"><template #default="{ row }">{{ dash(row.timeFrom) }} 至 {{ dash(row.timeTo) }}</template></el-table-column>
-              <el-table-column prop="status" label="状态" width="90" />
             </el-table>
           </template>
 

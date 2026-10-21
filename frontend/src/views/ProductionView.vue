@@ -153,7 +153,7 @@ const flatOps = computed(() => {
         customs: customsText(lines),
         outCustoms: row.outCustomsNo || '—',
         kind: row.process,
-        qty: `${clock(row.time)}–${clock(row.timeTo)}`,
+        qty: `加工时间：${clock(row.time)}–${clock(row.timeTo)}`,
         stack: stackText(lines),
       })
     }
@@ -171,7 +171,7 @@ const flatOps = computed(() => {
           customs: line.customsNo,
           outCustoms: line.outCustomsNo || row.outCustomsNo || '—',
           kind: line.cargoType,
-          qty: lines.length ? `${num(line.wet)} / ${num(line.feedDry)} 干吨` : '—',
+          qty: lines.length ? `投入 ${num(line.wet)} / ${num(line.feedDry)} 干吨` : '—',
           stack: line.stack,
         })
       })
@@ -736,8 +736,7 @@ function openLedger(date: string) {
     <el-tabs v-model="tab">
       <el-tab-pane label="投料/加工" name="feed">
         <div class="toolbar">
-          <el-button type="primary" @click="openFeed">新建投料单</el-button>
-          <el-button @click="openProcess()">登记加工过程</el-button>
+          <el-button type="primary" @click="openFeed">新建生产批次</el-button>
         </div>
         <el-form :inline="true">
           <el-form-item label="单号">
@@ -760,21 +759,19 @@ function openLedger(date: string) {
             <template #default="{ row }"><el-tag :type="row.type === '加工过程' ? 'primary' : 'success'" effect="plain">{{ row.type }}</el-tag></template>
           </el-table-column>
           <el-table-column prop="orderNo" label="单号" width="150" />
-          <el-table-column label="委托方" width="110">
+          <el-table-column label="委托方" width="190">
             <template #default="{ row }"><el-tag effect="plain">{{ row.consignor }}</el-tag></template>
           </el-table-column>
           <el-table-column prop="prodBatch" label="生产批次" width="130" />
           <el-table-column prop="customs" label="报关单号" min-width="180" />
-          <el-table-column prop="outCustoms" label="出库报关单号" min-width="160" />
-          <el-table-column label="货物类型/工序" width="130">
+          <el-table-column label="工序" width="130">
             <template #default="{ row }">
               <el-tag v-if="row.type === '投料出库'" :type="cargoTag(row.kind)" effect="plain">{{ row.kind }}</el-tag>
               <el-tag v-else type="info" effect="plain">{{ row.kind }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="qty" label="数量" min-width="140" />
+          <el-table-column prop="qty" label="工序内容" min-width="140" />
           <el-table-column prop="stack" label="堆放堆位" min-width="140" />
-          <el-table-column prop="workOrder" label="生产工单" width="150" />
           <el-table-column prop="time" label="时间" min-width="150" />
           <el-table-column label="操作" width="220">
             <template #default="{ row }">
@@ -797,8 +794,7 @@ function openLedger(date: string) {
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="完工入库" name="finish">
-        <div class="toolbar"><el-button type="primary" @click="openFinish()">成品完工入库</el-button></div>
+      <el-tab-pane label="完工入库台账" name="finish">
         <el-table :data="finishRows" border stripe>
           <el-table-column prop="orderNo" label="完工单号" width="150" />
           <el-table-column label="委托方" width="110">

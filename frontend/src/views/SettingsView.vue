@@ -23,7 +23,7 @@ const paramNav = [
   { key: 'security' as const, label: '安全策略' },
 ]
 const paramTitle = computed(() => paramNav.find((item) => item.key === paramTab.value)?.label || '系统参数')
-const params = reactive({ capacityWarn: 70, ageWarn: 90, dockDays: 7, filingUsageWarn: 80, qualities: '' })
+const params = reactive({ capacityWarn: 70, ageWarn: 90, dockDays: 7, filingUsageWarn: 80, refreshInterval: 3, qualities: '' })
 const qualityNames: Record<string, string> = { Cu: '铜', Ag: '银', Au: '金', As: '砷', Pb: '铅', Cd: '镉', F: '氟', Hg: '汞' }
 const harmfulSymbols = new Set(['As', 'Pb', 'Cd', 'F', 'Hg'])
 const taxableSymbols = new Set(['Cu', 'Ag', 'Au'])
@@ -104,6 +104,7 @@ async function saveParams() {
             <el-form-item label="原料库龄预警（天）"><el-input-number v-model="params.ageWarn" :min="1" /></el-form-item>
             <el-form-item label="码头仓库预警（天）"><el-input-number v-model="params.dockDays" :min="1" /></el-form-item>
             <el-form-item label="矿源备案用量预警（%）"><el-input-number v-model="params.filingUsageWarn" :min="1" :max="100" /></el-form-item>
+            <el-form-item label="首页数据刷新时效（分钟）"><el-input-number v-model="params.refreshInterval" :min="1" /></el-form-item>
             <el-form-item><el-button type="primary" @click="saveParams">保存参数</el-button></el-form-item>
           </el-form>
           <el-form v-else-if="paramTab === 'quality'" label-width="0" class="params">

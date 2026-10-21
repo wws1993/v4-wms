@@ -7,7 +7,7 @@ const tab = usePageTab('materials', ['materials', 'filings'])
 
 <template>
   <el-tabs v-model="tab">
-    <el-tab-pane label="物料档案" name="materials">
+    <el-tab-pane label="矿种档案" name="materials">
       <DataPage v-if="tab === 'materials'" name="materials" />
     </el-tab-pane>
     <el-tab-pane label="矿源备案" name="filings">

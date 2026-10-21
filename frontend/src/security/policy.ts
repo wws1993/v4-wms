@@ -57,6 +57,60 @@ export function savePolicy(input: SecurityPolicy) {
   return policy
 }
 
+/** 丰联 `passwordComplexity`：1 大写、2 小写、3 数字、4 特殊字符，逗号分隔 */
+export function encodeComplexity(policy: Pick<SecurityPolicy, 'requireUpper' | 'requireLower' | 'requireDigit' | 'requireSpecial'>) {
+  const codes: string[] = []
+  if (policy.requireUpper) codes.push('1')
+  if (policy.requireLower) codes.push('2')
+  if (policy.requireDigit) codes.push('3')
+  if (policy.requireSpecial) codes.push('4')
+  return codes.join(',')
+}
+
+export function decodeComplexity(raw: unknown): Pick<SecurityPolicy, 'requireUpper' | 'requireLower' | 'requireDigit' | 'requireSpecial'> {
+  if (raw == null) {
+    return {
+      requireUpper: DEFAULT_POLICY.requireUpper,
+      requireLower: DEFAULT_POLICY.requireLower,
+      requireDigit: DEFAULT_POLICY.requireDigit,
+      requireSpecial: DEFAULT_POLICY.requireSpecial,
+    }
+  }
+  const text = String(raw).trim()
+  if (!text) {
+    return { requireUpper: false, requireLower: false, requireDigit: false, requireSpecial: false }
+  }
+  const tokens = /[,|，\s]/.test(text)
+    ? text.split(/[,|，\s]+/).map((item) => item.trim()).filter(Boolean)
+    : text.split('')
+  const set = new Set(tokens)
+  return {
+    requireUpper: set.has('1'),
+    requireLower: set.has('2'),
+    requireDigit: set.has('3'),
+    requireSpecial: set.has('4'),
+  }
+}
+
+export function policyFromParams(row: Partial<SecurityPolicy> & Record<string, unknown>): SecurityPolicy {
+  const complexity = decodeComplexity(row.passwordComplexity)
+  const flag = (key: keyof SecurityPolicy, fallback: boolean) => {
+    const value = row[key]
+    if (value == null) return fallback
+    return value !== false && value !== '0' && value !== 0
+  }
+  return normalizePolicy({
+    minLength: row.minLength ?? row.passwordLength as number | undefined,
+    requireUpper: flag('requireUpper', complexity.requireUpper),
+    requireLower: flag('requireLower', complexity.requireLower),
+    requireDigit: flag('requireDigit', complexity.requireDigit),
+    requireSpecial: flag('requireSpecial', complexity.requireSpecial),
+    maxRetry: row.maxRetry ?? row.passwordErrorNum as number | undefined,
+    lockMinutes: row.lockMinutes ?? row.accountLockTime as number | undefined,
+    idleMinutes: row.idleMinutes ?? row.sessionFreeTime as number | undefined,
+  })
+}
+
 export function passwordRuleText(policy = loadPolicy()) {
   const kinds = [
     policy.requireUpper ? '大写字母' : '',

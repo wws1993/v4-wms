@@ -27,12 +27,12 @@ const ledgerOpen = ref(false)
 const focus = ref('inbound')
 const current = ref<Record<string, unknown> | null>(null)
 const form = reactive({
-  stackId: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
+  stackId: '', customsKeyword: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
   toStack: '', toAreaId: '', cells: '', weight: '',
   fromDate: '', fromHour: '08', toDate: '', toHour: '12',
 })
 const batchQuery = reactive({ warehouse: '', stack: '', consignor: '', keyword: '' })
-type BatchPick = { toStack: string; toAreaId: string; cells: string; scene: string }
+type BatchPick = { toStack: string; toAreaId: string; cells: string; scene: string; weight: string }
 const picked = ref<Record<string, BatchPick>>({})
 /** 当前在平面图上框选目标的票 */
 const batchFocus = ref('')
@@ -132,7 +132,7 @@ async function openDetail(row: Record<string, unknown>, section = 'inbound') {
 
 function openSingle() {
   Object.assign(form, {
-    stackId: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
+    stackId: '', customsKeyword: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
     toStack: '', toAreaId: '', cells: '', weight: '',
     fromDate: '', fromHour: '08', toDate: '', toHour: '12',
   })
@@ -141,16 +141,23 @@ function openSingle() {
 }
 
 let lotToken = 0
-async function loadSourceLots(stackId: string) {
+async function loadSourceLots(stackId = form.stackId) {
   form.lotId = ''
   form.batchNo = ''
   form.inventoryId = ''
   form.weight = ''
   sourceLots.value = []
-  if (!stackId) return
+  const keyword = form.customsKeyword.trim()
+  if (!stackId && !keyword) return
   const token = ++lotToken
   lotsLoading.value = true
-  const res = await inventoryApi.list({ stack: stackId, status: '在库', page: 1, pageSize: 200 })
+  const res = await inventoryApi.list({
+    stack: stackId || undefined,
+    keyword: keyword || undefined,
+    status: '在库',
+    page: 1,
+    pageSize: 200,
+  })
   if (token !== lotToken) return
   lotsLoading.value = false
   if (!res.success || !res.data) {
@@ -158,6 +165,19 @@ async function loadSourceLots(stackId: string) {
     return
   }
   sourceLots.value = res.data.list
+  if (!form.stackId && sourceLots.value.length) {
+    const stackText = String(sourceLots.value[0].stackText || '')
+    const hit = stacks.value.find((row) => String(row.code) === stackText || String(row.id) === stackText)
+    if (hit) form.stackId = String(hit.id)
+  }
+}
+
+function querySourceLots() {
+  if (!form.stackId && !form.customsKeyword.trim()) {
+    ElMessage.warning('请选择原堆位或输入报关单号')
+    return
+  }
+  loadSourceLots(form.stackId)
 }
 
 function pickLot(row: Record<string, unknown>) {
@@ -234,7 +254,7 @@ function lotRowClass({ row }: { row: Record<string, unknown> }) {
 }
 
 function emptyPick(): BatchPick {
-  return { toStack: '', toAreaId: '', cells: '', scene: '整票移位' }
+  return { toStack: '', toAreaId: '', cells: '', scene: '整票移位', weight: '' }
 }
 
 function targetLabel(value?: BatchPick) {
@@ -314,12 +334,27 @@ async function submitBatch() {
       batchFocus.value = key
       return
     }
+    if (value.scene === '拆票移位') {
+      const weight = Number(value.weight)
+      const dry = Number(source.dry)
+      if (!(weight > 0)) {
+        ElMessage.warning(`请为 ${label} 填写移库重量`)
+        batchFocus.value = key
+        return
+      }
+      if (dry > 0 && weight > dry) {
+        ElMessage.warning(`${label}：移库重量不能超过可移重量`)
+        batchFocus.value = key
+        return
+      }
+    }
   }
   saving.value = true
   try {
     const res = await transferApi.batch({
       items: items.map(([key, value]) => {
         const source = findBatchLot(key)!
+        const split = value.scene === '拆票移位'
         return {
           batchNo: String(source.batchNo || ''),
           inventoryId: String(source.id || source.inventoryId || ''),
@@ -327,6 +362,7 @@ async function submitBatch() {
           areaId: value.toAreaId,
           cells: value.cells,
           scene: value.scene || '批量移库',
+          weight: split ? Number(value.weight) : undefined,
           shipName: source.shipName || '—',
           containerCount: Number(source.containerCount || 0),
           timeFrom: '',
@@ -409,9 +445,19 @@ async function submitBatch() {
       <div class="split">
         <el-form class="fields" label-width="96px">
           <el-form-item label="原堆位" required>
-            <el-select v-model="form.stackId" filterable placeholder="先选择堆位" @change="loadSourceLots">
-              <el-option v-for="item in stacks" :key="String(item.id)" :label="String(item.code)" :value="String(item.id)" />
-            </el-select>
+            <div class="stack-query">
+              <el-select v-model="form.stackId" filterable clearable placeholder="请选择原堆位" style="width: 140px" @change="loadSourceLots">
+                <el-option v-for="item in stacks" :key="String(item.id)" :label="String(item.code)" :value="String(item.id)" />
+              </el-select>
+              <el-input
+                v-model="form.customsKeyword"
+                clearable
+                placeholder="报关单号查询"
+                style="flex: 1; min-width: 140px"
+                @keyup.enter="querySourceLots"
+              />
+              <el-button type="primary" :loading="lotsLoading" @click="querySourceLots">查询</el-button>
+            </div>
           </el-form-item>
           <el-form-item label="票货" required>
             <el-table
@@ -420,7 +466,7 @@ async function submitBatch() {
               border
               size="small"
               max-height="220"
-              :empty-text="form.stackId ? '该堆位没有在库票货' : '请先选择原堆位'"
+              :empty-text="form.stackId || form.customsKeyword.trim() ? '没有匹配的在库票货' : '请先选择原堆位或查询报关单号'"
               :row-class-name="lotRowClass"
               @row-click="pickLot"
             >
@@ -531,8 +577,22 @@ async function submitBatch() {
                 >
                   <el-option label="整票移位" value="整票移位" />
                   <el-option label="拆票移位" value="拆票移位" />
-                  <el-option label="批量移位" value="批量移位" />
                 </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="移库重量" width="130">
+              <template #default="{ row }">
+                <el-input
+                  v-if="picked[lotKey(row)]?.scene === '拆票移位'"
+                  v-model="picked[lotKey(row)].weight"
+                  type="number"
+                  size="small"
+                  :placeholder="Number(row.dry) > 0 ? `≤${row.dry}` : '吨'"
+                  @click.stop
+                >
+                  <template #append>吨</template>
+                </el-input>
+                <span v-else class="muted">—</span>
               </template>
             </el-table-column>
           </el-table>
@@ -568,6 +628,7 @@ async function submitBatch() {
 .dlg-title { margin: 0; font-size: 16px; font-weight: 600; }
 .split { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(640px, 720px) minmax(420px, 1fr); gap: 16px; }
 .fields { min-height: 0; overflow: auto; padding-right: 4px; }
+.stack-query { display: flex; gap: 8px; align-items: center; width: 100%; }
 .lot-line { margin: 0; line-height: 1.5; }
 .hours { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .map-pane { min-height: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ececec; border-radius: 8px; padding: 12px; }

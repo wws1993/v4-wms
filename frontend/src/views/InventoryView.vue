@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { dictApi, inventoryApi, materialApi, partnerApi, shippingApi, warehouseApi } from '@/api'
 import LotDetailDialog from '@/components/LotDetailDialog.vue'
-import { dash, HOURS, qualityLine } from './ops/samples'
+import { dash, HOURS, qualityLine, tonText } from './ops/samples'
 
 const route = useRoute()
 const filters = reactive({
@@ -265,8 +265,8 @@ async function openLedger(row: Record<string, unknown>) {
       <el-table-column prop="warehouse" label="仓库" min-width="120" show-overflow-tooltip />
       <el-table-column label="堆位" min-width="110"><template #default="{ row }">{{ row.status === '已出库' ? '—' : dash(row.stackText) }}</template></el-table-column>
       <el-table-column prop="areaLabel" label="片区标识" min-width="110" />
-      <el-table-column prop="wet" label="湿重" min-width="110" />
-      <el-table-column prop="dry" label="干重" min-width="110" />
+      <el-table-column label="湿重" min-width="110"><template #default="{ row }">{{ tonText(row.wet) }}</template></el-table-column>
+      <el-table-column label="干重" min-width="110"><template #default="{ row }">{{ tonText(row.dry) }}</template></el-table-column>
       <el-table-column prop="inDate" label="入库时间" min-width="170" />
       <el-table-column prop="status" label="状态" width="90" />
       <el-table-column label="操作" width="140" fixed="right">

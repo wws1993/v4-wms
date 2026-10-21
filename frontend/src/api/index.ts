@@ -282,6 +282,7 @@ export const productionApi = {
 
 export const outboundApi = {
   list: (params: Q) => request<Page>('GET', '/outbound', { params }),
+  get: (id: string) => request<Record<string, unknown>>('GET', `/outbound/${encodeURIComponent(id)}`),
   create: (body: B) => request('POST', '/outbound', { body }),
   update: (id: string, body: B) => request('PUT', `/outbound/${id}`, { body }),
   approve: (id: string) => request('POST', `/outbound/${id}/approve`),
