@@ -187,6 +187,10 @@ html {
   --el-table-border-color: #f0f2f5;
   --el-table-row-hover-bg-color: #faf8f4;
 }
+.admin:not(.is-dashboard) .el-table .cell {
+  word-break: normal;
+  white-space: nowrap;
+}
 .admin:not(.is-dashboard) .el-table--border .el-table__cell { border-right: none; }
 .admin:not(.is-dashboard) .el-table--border::before,
 .admin:not(.is-dashboard) .el-table--border::after,

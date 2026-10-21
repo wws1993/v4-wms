@@ -240,31 +240,31 @@ async function openLedger(row: Record<string, unknown>) {
     </el-form>
 
     <el-table v-loading="loading" :data="rows" border stripe>
-      <el-table-column label="报关单号" min-width="160">
+      <el-table-column label="报关单号" min-width="170" show-overflow-tooltip>
         <template #default="{ row }">
           <el-button v-if="customsOf(row) !== '—'" link type="primary" @click="openDetail(row, 'inbound')">{{ customsOf(row) }}</el-button>
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column label="生产批次" min-width="130">
+      <el-table-column label="生产批次" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
           <el-button v-if="prodOf(row) !== '—'" link type="primary" @click="openDetail(row, 'production')">{{ prodOf(row) }}</el-button>
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column prop="consignor" label="委托方" width="100" />
-      <el-table-column prop="material" label="物料" width="110" />
-      <el-table-column prop="cargoType" label="货物类型" width="100" />
-      <el-table-column label="矿源备案号" width="130"><template #default="{ row }">{{ dash(row.filingNo) }}</template></el-table-column>
-      <el-table-column label="本票品质" min-width="220"><template #default="{ row }">{{ qualityLine(row) }}</template></el-table-column>
-      <el-table-column prop="originCountry" label="原产国" width="90" />
-      <el-table-column label="账册" width="120"><template #default="{ row }">{{ dash(row.book) }}</template></el-table-column>
-      <el-table-column prop="warehouse" label="仓库" width="100" />
-      <el-table-column label="堆位" width="100"><template #default="{ row }">{{ row.status === '已出库' ? '—' : dash(row.stackText) }}</template></el-table-column>
-      <el-table-column prop="areaLabel" label="片区标识" width="100" />
-      <el-table-column prop="wet" label="湿重" width="80" />
-      <el-table-column prop="dry" label="干重" width="80" />
-      <el-table-column prop="inDate" label="入库时间" width="140" />
+      <el-table-column prop="consignor" label="委托方" min-width="200" show-overflow-tooltip />
+      <el-table-column prop="material" label="物料" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="cargoType" label="货物类型" min-width="130" show-overflow-tooltip />
+      <el-table-column label="矿源备案号" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ dash(row.filingNo) }}</template></el-table-column>
+      <el-table-column label="本票品质" min-width="240" show-overflow-tooltip><template #default="{ row }">{{ qualityLine(row) }}</template></el-table-column>
+      <el-table-column prop="originCountry" label="原产国" min-width="100" />
+      <el-table-column label="账册" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ dash(row.book) }}</template></el-table-column>
+      <el-table-column prop="warehouse" label="仓库" min-width="120" show-overflow-tooltip />
+      <el-table-column label="堆位" min-width="110"><template #default="{ row }">{{ row.status === '已出库' ? '—' : dash(row.stackText) }}</template></el-table-column>
+      <el-table-column prop="areaLabel" label="片区标识" min-width="110" />
+      <el-table-column prop="wet" label="湿重" min-width="110" />
+      <el-table-column prop="dry" label="干重" min-width="110" />
+      <el-table-column prop="inDate" label="入库时间" min-width="170" />
       <el-table-column prop="status" label="状态" width="90" />
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">

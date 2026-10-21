@@ -130,38 +130,32 @@ export const schemas: Record<string, ModuleSchema> = {
     createLabel: '新建物料',
     dialogTitle: '物料档案',
     formWidth: 520,
+    labelWidth: '120px',
     exportLabel: '导出 Excel',
+    defaults: () => ({
+      cargoType: '达标矿',
+      mineArea: '',
+      originCountry: '',
+      orderNum: 1,
+    }),
     filters: [
-      { key: 'cargoType', label: '货物类型', type: 'select', placeholder: '全部货物类型', dict: 'wms_item_category' },
-      { key: 'kind', label: '类型', type: 'select', placeholder: '全部类型', dict: 'wms_item_type' },
-      { key: 'keyword', label: '物料编码/名称', placeholder: '物料编码/名称' },
+      { key: 'cargoType', label: '矿种类型', type: 'select', placeholder: '全部矿种类型', options: ['报备矿', '达标矿', '混成品'] },
+      { key: 'keyword', label: '名称', placeholder: '物料名称' },
     ],
     columns: [
-      { prop: 'code', label: '物料编码', minWidth: 140 },
       { prop: 'name', label: '名称', minWidth: 160 },
-      { prop: 'cargoType', label: '货物类型', width: 120, tag: true },
-      { prop: 'kind', label: '类型', width: 100, tag: true },
-      { prop: 'source', label: '矿源', minWidth: 140 },
+      { prop: 'cargoType', label: '矿种类型', width: 120, tag: true },
+      { prop: 'mineArea', label: '矿区', minWidth: 120 },
+      { prop: 'originCountry', label: '原产国', width: 120 },
+      { prop: 'orderNum', label: '排序', width: 90 },
     ],
     form: [
-      { key: 'code', label: '物料编码', required: true, placeholder: '如 YL-CU-001', disabled: (_f, isEdit) => isEdit, span: 24 },
       { key: 'name', label: '名称', required: true, span: 24 },
-      { key: 'cargoType', label: '货物类型', type: 'select', dict: 'wms_item_category', required: true, span: 24, disabled: (form) => form.kind === '成品', options: (form, labels = []) => {
-        if (form.kind === '成品') {
-          const locked = labels.filter((item) => item === '混成品')
-          return locked.length ? locked : labels
-        }
-        const raw = labels.filter((item) => item !== '混成品')
-        return raw.length ? raw : labels
-      } },
-      { key: 'kind', label: '类型', type: 'select', dict: 'wms_item_type', required: true, span: 24 },
-      { key: 'source', label: '矿源', required: true, span: 24, placeholder: '如 智利精矿', when: (form) => form.kind !== '成品' },
+      { key: 'cargoType', label: '矿种类型', type: 'select', required: true, span: 24, options: ['报备矿', '达标矿', '混成品'] },
+      { key: 'mineArea', label: '矿区', span: 24, placeholder: '如 智利北部矿区' },
+      { key: 'originCountry', label: '原产国', span: 24, placeholder: '如 智利' },
+      { key: 'orderNum', label: '排序', type: 'number', required: true, placeholder: '数字越小越靠前', span: 24 },
     ],
-    onFormChange(form, key) {
-      if (key === 'kind' && form.kind === '成品') form.cargoType = '混成品'
-      if (key === 'kind' && form.kind === '原料' && form.cargoType === '混成品') form.cargoType = '达标矿'
-      if (form.kind === '成品') form.source = ''
-    },
     list: materialApi.list,
     create: materialApi.create,
     update: materialApi.update,
@@ -175,27 +169,24 @@ export const schemas: Record<string, ModuleSchema> = {
     key: 'filings',
     createLabel: '新建矿源备案',
     dialogTitle: '矿源备案',
-    formWidth: 480,
-    labelWidth: '156px',
+    formWidth: 520,
+    labelWidth: '180px',
     exportLabel: '导出 Excel',
     defaults: () => ({
-      originCountry: '智利',
       filingDate: new Date().toISOString().slice(0, 10),
+      harmfulContent: '',
     }),
     filters: [
-      { key: 'source', label: '矿源', type: 'select', placeholder: '全部矿源', dict: 'wms_mineral_source', options: (_form, labels = []) => labels.length ? labels : ['智利精矿', '澳洲精矿'] },
-      { key: 'sourceKind', label: '矿源种类', placeholder: '如 精铜矿' },
       { key: 'keyword', label: '矿源备案编号', placeholder: '如 JG-2023-KY04' },
       { key: 'status', label: '状态', type: 'select', placeholder: '全部状态', options: ['有效', '即将用尽', '已用尽'] },
       { key: 'from', label: '开始日期', type: 'date' },
       { key: 'to', label: '结束日期', type: 'date' },
     ],
     columns: [
-      { prop: 'source', label: '矿源', minWidth: 120 },
-      { prop: 'sourceKind', label: '矿源种类', width: 110 },
-      { prop: 'originCountry', label: '备案原产国', width: 120 },
       { prop: 'code', label: '矿源备案编号', minWidth: 150 },
+      { prop: 'materialName', label: '物料', minWidth: 140 },
       { prop: 'filingDate', label: '备案日期', width: 120 },
+      { prop: 'harmfulContent', label: '有害元素含量(区间范围)', minWidth: 180 },
       { prop: 'status', label: '状态', width: 100, tag: true },
       { prop: 'qty', label: '备案数量（DMT）', width: 150 },
       { prop: 'usedQty', label: '核销吨数', width: 110 },
@@ -204,11 +195,10 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'attachmentUrl', label: '附件', width: 90, image: true },
     ],
     form: [
-      { key: 'source', label: '矿源', required: true, span: 24, placeholder: '如 智利精矿' },
-      { key: 'sourceKind', label: '矿源种类', span: 24, placeholder: '如 精铜矿' },
-      { key: 'originCountry', label: '备案原产国', required: true, span: 24 },
+      { key: 'materialId', label: '物料', type: 'select', required: true, span: 24, optionsFrom: 'materials', placeholder: '从物料档案选择' },
       { key: 'code', label: '矿源备案编号', required: true, span: 24, placeholder: '如 JG-2025-KY04' },
       { key: 'filingDate', label: '备案日期', type: 'date', span: 24 },
+      { key: 'harmfulContent', label: '有害元素含量(区间范围)', span: 24, placeholder: '如 As 0.1%~0.3%' },
       { key: 'qty', label: '备案数量（DMT）', type: 'number', span: 24, disabled: (_f, isEdit) => isEdit },
       { key: 'attachment', label: '附件资料', type: 'image', span: 24 },
     ],
@@ -387,11 +377,7 @@ export const schemas: Record<string, ModuleSchema> = {
       { key: 'username', label: '账号', required: true, disabled: (_f, isEdit) => isEdit, span: 24 },
       { key: 'name', label: '姓名', required: true, span: 24 },
       { key: 'password', label: '密码', type: 'password', required: true, when: (form) => !form.__isEdit, span: 24 },
-      { key: 'roleKey', label: '角色', type: 'select', required: true, span: 24, options: [
-        { label: '系统管理员', value: 'admin' },
-        { label: '仓管员', value: 'warehouse' },
-        { label: '关务员', value: 'customs' },
-      ] },
+      { key: 'roleId', label: '角色', type: 'select', required: true, span: 24, optionsFrom: 'roles' },
       { key: 'phone', label: '电话', span: 24 },
       { key: 'status', label: '状态', type: 'select', options: ['启用', '停用'], required: true, span: 24 },
     ],
@@ -407,7 +393,6 @@ export const schemas: Record<string, ModuleSchema> = {
       { key: 'from', label: '开始日期', type: 'date' },
       { key: 'to', label: '结束日期', type: 'date' },
       { key: 'shipMode', label: '货运方式', type: 'select', optionsFrom: 'shipping' },
-      { key: 'oreType', label: '矿种' },
       { key: 'status', label: '状态', type: 'select', options: ['暂存码头', '待收货', '已入库', '混成品'] },
     ],
     columns: [
@@ -415,7 +400,6 @@ export const schemas: Record<string, ModuleSchema> = {
       { prop: 'customsNo', label: '报关单号', minWidth: 170 },
       { prop: 'blNo', label: '提单号', width: 120 },
       { prop: 'shipName', label: '船名', width: 100 },
-      { prop: 'oreType', label: '矿种', width: 100 },
       { prop: 'shipMode', label: '装运方式', width: 100 },
       { prop: 'containerCount', label: '柜数', width: 80 },
       { prop: 'consignor', label: '委托方', width: 110 },
@@ -436,7 +420,6 @@ export const schemas: Record<string, ModuleSchema> = {
       { key: 'customsNo', label: '报关单号', required: true },
       { key: 'checklistNo', label: '核注清单', required: true },
       { key: 'amount', label: '金额', type: 'number', required: true },
-      { key: 'oreType', label: '矿种', required: true, placeholder: '字典编码或名称' },
       { key: 'shipMode', label: '装运方式', type: 'select', optionsFrom: 'shipping', required: true },
       { key: 'containerCount', label: '集装箱柜数', type: 'number', when: (form) => form.shipMode === '集装箱', required: true },
       { key: 'consignor', label: '委托方', type: 'select', optionsFrom: 'consignors', required: true },

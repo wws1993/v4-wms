@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      allowedHosts: ['.loca.lt', '.trycloudflare.com'],
       proxy: env.VITE_PROXY_TARGET
         ? {
             '/api': {

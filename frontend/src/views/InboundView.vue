@@ -8,7 +8,7 @@ import { dash, money } from './ops/samples'
 import InboundWizard from './inbound/InboundWizard.vue'
 
 const route = useRoute()
-const filters = reactive({ consignor: '', status: '', shipMode: '', oreType: '', from: '', to: '', keyword: '' })
+const filters = reactive({ consignor: '', status: '', shipMode: '', from: '', to: '', keyword: '' })
 const rows = ref<Record<string, unknown>[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -18,7 +18,6 @@ const materials = ref<Record<string, unknown>[]>([])
 const filings = ref<Record<string, unknown>[]>([])
 const stacks = ref<Record<string, unknown>[]>([])
 const shipModes = ref<string[]>([])
-const minerals = ref<string[]>([])
 const statuses = ref<string[]>(['暂存码头', '待收货', '已入库', '混成品'])
 const currencies = ref<{ label: string; value: string }[]>([{ label: '人民币 ¥', value: 'CNY' }, { label: '美元 $', value: 'USD' }])
 const wizard = ref<{ start: number; seed: Record<string, unknown> | null; key: number } | null>(null)
@@ -84,13 +83,11 @@ onMounted(async () => {
   if (materialRes.success && materialRes.data) materials.value = materialRes.data.list
   if (filingRes.success && filingRes.data) filings.value = filingRes.data.list
   if (stackRes.length) stacks.value = stackRes
-  const [mineralRes, statusRes, currencyRes, shipRes] = await Promise.all([
-    dictApi.labels('wms_mineral_type'),
+  const [statusRes, currencyRes, shipRes] = await Promise.all([
     dictApi.labels('wms_receipt_status'),
     dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 }),
     dictApi.labels('wms_translate_type'),
   ])
-  if (mineralRes.success && mineralRes.data?.length) minerals.value = mineralRes.data
   if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
   if (currencyRes.success && currencyRes.data?.list.length) {
     currencies.value = currencyRes.data.list
@@ -181,16 +178,12 @@ function canReceive(row: Record<string, unknown>) {
     :filings="filings"
     :stacks="stacks"
     :ship-modes="shipOptions"
-    :minerals="minerals"
     :currencies="currencies"
     :start="wizard.start"
     :seed="wizard.seed"
     @close="closeWizard"
     @done="finishWizard"
   />
-    <div class="toolbar">
-      <el-button type="primary" @click="openCreate">新建入库预约</el-button>
-    </div>
     <el-form :inline="true">
       <el-form-item label="委托方">
         <el-select v-model="filters.consignor" clearable style="width: 140px">
@@ -207,16 +200,14 @@ function canReceive(row: Record<string, unknown>) {
           <el-option v-for="item in shipOptions" :key="item" :label="item" :value="item" />
         </el-select>
       </el-form-item>
-      <el-form-item label="矿种">
-        <el-select v-model="filters.oreType" clearable style="width: 110px">
-          <el-option v-for="item in minerals" :key="item" :label="item" :value="item" />
-        </el-select>
-      </el-form-item>
       <el-form-item label="开始"><el-date-picker v-model="filters.from" type="date" value-format="YYYY-MM-DD" /></el-form-item>
       <el-form-item label="结束"><el-date-picker v-model="filters.to" type="date" value-format="YYYY-MM-DD" /></el-form-item>
       <el-form-item label="关键字"><el-input v-model="filters.keyword" placeholder="单号 / 船名 / 提单" clearable /></el-form-item>
       <el-form-item><el-button type="primary" @click="page = 1; load()">查询</el-button></el-form-item>
     </el-form>
+    <div class="toolbar">
+      <el-button type="primary" @click="openCreate">新建入库预约</el-button>
+    </div>
     <el-table v-loading="loading" :data="rows" border stripe>
       <!-- <el-table-column label="单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column> -->
       <el-table-column label="报关单号" min-width="150">
@@ -227,7 +218,6 @@ function canReceive(row: Record<string, unknown>) {
       </el-table-column>
       <el-table-column prop="consignor" label="委托方" width="200" />
       <el-table-column prop="material" label="物料" min-width="120" />
-      <el-table-column prop="oreType" label="矿种" width="90" />
       <el-table-column prop="shipName" label="船名" width="110" />
       <el-table-column prop="blNo" label="提单号" min-width="140" />
       <el-table-column prop="checklistNo" label="核注清单号" width="200" />

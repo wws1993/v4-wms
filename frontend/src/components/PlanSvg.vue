@@ -80,17 +80,16 @@ function cargoCells(item: PlanItem) {
   for (const [key, list] of groups) {
     const rect = stackCellRect(item, key, grid)
     if (!rect) continue
-    list.forEach((lot, index) => {
-      const slice = rect.h / list.length
-      marks.push({
-        key: `${item.id}-${key}-${index}`,
-        x: rect.x + rect.w * 0.08,
-        y: rect.y + slice * index + slice * 0.08,
-        w: rect.w * 0.84,
-        h: Math.max(0.02, slice * 0.84),
-        consignor: lot.consignor,
-        cargoType: lot.cargoType,
-      })
+    // 有货整格涂满，不按重量或票数切分高度；多票同格时取干重最大的一票定色
+    const top = list.slice().sort((a, b) => b.wet - a.wet)[0] || list[0]
+    marks.push({
+      key: `${item.id}-${key}`,
+      x: rect.x,
+      y: rect.y,
+      w: rect.w,
+      h: rect.h,
+      consignor: top.consignor,
+      cargoType: top.cargoType,
     })
   }
   return marks

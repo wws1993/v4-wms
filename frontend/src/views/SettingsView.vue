@@ -2,20 +2,19 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { authApi, settingsApi } from '@/api'
-import { NAV, NAV_GROUPS } from '@/nav'
-import { useAuthStore } from '@/stores/auth'
+import { settingsApi } from '@/api'
 import DataPage from '@/components/DataPage.vue'
 import FloorPlanEditor from '@/components/FloorPlanEditor.vue'
 import NavPane from '@/components/NavPane.vue'
 import SecurityPolicyForm from '@/components/SecurityPolicyForm.vue'
 import { usePageTab } from '@/hooks/pageTab'
-import type { RoleKey } from '@/types'
+import CacheManage from '@/views/settings/CacheManage.vue'
+import MenuManage from '@/views/settings/MenuManage.vue'
+import RoleManage from '@/views/settings/RoleManage.vue'
 
-const auth = useAuthStore()
 const route = useRoute()
 const openedSecurity = route.query.tab === 'security'
-const tab = usePageTab('roles', ['roles', 'users', 'params', 'plan'])
+const tab = usePageTab('roles', ['roles', 'menus', 'users', 'params', 'plan', 'cache'])
 const paramTab = ref<'warn' | 'quality' | 'security'>(openedSecurity ? 'security' : 'warn')
 if (openedSecurity) tab.value = 'params'
 const paramNav = [
@@ -24,8 +23,6 @@ const paramNav = [
   { key: 'security' as const, label: '安全策略' },
 ]
 const paramTitle = computed(() => paramNav.find((item) => item.key === paramTab.value)?.label || '系统参数')
-const perms = reactive<Record<RoleKey, string[]>>({ admin: [], warehouse: [], customs: [] })
-const counts = reactive<Record<RoleKey, number>>({ admin: 0, warehouse: 0, customs: 0 })
 const params = reactive({ capacityWarn: 70, ageWarn: 90, dockDays: 7, filingUsageWarn: 80, qualities: '' })
 const qualityNames: Record<string, string> = { Cu: '铜', Ag: '银', Au: '金', As: '砷', Pb: '铅', Cd: '镉', F: '氟', Hg: '汞' }
 const harmfulSymbols = new Set(['As', 'Pb', 'Cd', 'F', 'Hg'])
@@ -50,37 +47,8 @@ function qualityFromSymbol(symbol: string): QualityRow {
     isRequired: '0',
   }
 }
-const roles: { key: RoleKey; label: string; desc: string }[] = [
-  { key: 'admin', label: '系统管理员', desc: '全量配置' },
-  { key: 'warehouse', label: '仓管员', desc: '日常仓储作业' },
-  { key: 'customs', label: '关务员', desc: '关务监管，默认菜单全开' },
-]
-const selectedRole = ref<RoleKey>('admin')
-const drafts = reactive<Record<RoleKey, string[]>>({ admin: [], warehouse: [], customs: [] })
-const savingRole = ref(false)
-const roleItems = computed(() => roles.map((role) => ({
-  key: role.key,
-  label: role.label,
-  hint: `${countOf(role.key)} 人`,
-})))
-const currentRole = computed(() => roles.find((role) => role.key === selectedRole.value) || roles[0])
-const permGroups = computed(() => NAV_GROUPS.filter((group) => NAV.some((item) => item.group === group)))
-
-function countOf(key: string) {
-  if (key === 'admin' || key === 'warehouse' || key === 'customs') return counts[key]
-  return 0
-}
-
 onMounted(async () => {
-  const [permRes, paramRes, userRes] = await Promise.all([
-    authApi.permissions(),
-    settingsApi.get(),
-    authApi.users({ page: 1, pageSize: 200 }),
-  ])
-  if (permRes.success && permRes.data) {
-    Object.assign(perms, permRes.data)
-    for (const role of roles) drafts[role.key] = [...(perms[role.key] || [])]
-  }
+  const paramRes = await settingsApi.get()
   if (paramRes.success && paramRes.data) {
     Object.assign(params, paramRes.data)
     const saved = paramRes.data.qualityItems
@@ -99,28 +67,7 @@ onMounted(async () => {
       })
       : String(params.qualities || '').split(/[、,，\s]+/).filter(Boolean).map(qualityFromSymbol)
   }
-  if (userRes.success && userRes.data) {
-    for (const role of roles) counts[role.key] = 0
-    for (const row of userRes.data.list) {
-      const key = String(row.roleKey) as RoleKey
-      if (key in counts) counts[key] += 1
-    }
-  }
 })
-
-async function saveRole() {
-  const role = selectedRole.value
-  savingRole.value = true
-  const res = await authApi.savePermissions(role, drafts[role])
-  savingRole.value = false
-  if (!res.success) {
-    ElMessage.error(res.message)
-    return
-  }
-  perms[role] = [...drafts[role]]
-  if (auth.user?.roleKey === role) auth.setPages(perms[role])
-  ElMessage.success('权限已保存')
-}
 
 function addQuality() {
   qualityRows.value.push({ name: '', symbol: '', harmful: false, taxable: false, isRequired: '0' })
@@ -140,20 +87,11 @@ async function saveParams() {
 
 <template>
   <el-tabs v-model="tab" class="settings fill">
-    <el-tab-pane label="角色权限" name="roles">
-      <NavPane v-model="selectedRole" class="role-pane" searchable search-placeholder="查找角色" :items="roleItems">
-        <div class="role-head">
-          <h2>{{ currentRole.label }}</h2>
-          <el-button type="primary" :loading="savingRole" @click="saveRole">保存</el-button>
-        </div>
-        <p class="role-desc">{{ currentRole.desc }} · {{ countOf(currentRole.key) }} 人 · 已选 {{ drafts[selectedRole].length }} 项</p>
-        <div v-for="group in permGroups" :key="group" class="group">
-          <h4>{{ group }}</h4>
-          <el-checkbox-group v-model="drafts[selectedRole]">
-            <el-checkbox v-for="item in NAV.filter((nav) => nav.group === group)" :key="item.id" :value="item.id">{{ item.title }}</el-checkbox>
-          </el-checkbox-group>
-        </div>
-      </NavPane>
+    <el-tab-pane label="角色管理" name="roles">
+      <RoleManage v-if="tab === 'roles'" />
+    </el-tab-pane>
+    <el-tab-pane label="菜单管理" name="menus">
+      <MenuManage v-if="tab === 'menus'" />
     </el-tab-pane>
     <el-tab-pane label="账号管理" name="users">
       <DataPage v-if="tab === 'users'" name="users" />
@@ -185,6 +123,9 @@ async function saveParams() {
     <el-tab-pane label="平面图设置" name="plan">
       <FloorPlanEditor v-if="tab === 'plan'" />
     </el-tab-pane>
+    <el-tab-pane label="本机缓存管理" name="cache">
+      <CacheManage v-if="tab === 'cache'" />
+    </el-tab-pane>
   </el-tabs>
 </template>
 
@@ -193,13 +134,6 @@ async function saveParams() {
 .settings.fill :deep(.el-tabs__header) { flex: none; }
 .settings.fill :deep(.el-tabs__content) { flex: 1; min-height: 0; }
 .settings.fill :deep(.el-tab-pane) { height: 100%; }
-.role-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
-.role-head h2 { margin: 0; }
-.role-desc { margin: 0 0 8px; color: #5d5d5d; font-size: 14px; }
-.role-pane .group { margin-top: 18px; }
-.role-pane .group h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #5d5d5d; }
-.role-pane .group :deep(.el-checkbox) { margin: 0 18px 10px 0; height: 32px; }
-.role-pane .group :deep(.el-checkbox__label) { color: #1a2332; }
 .params { max-width: 860px; }
 .add { margin-top: 8px; }
 .save-row { margin-top: 16px; }

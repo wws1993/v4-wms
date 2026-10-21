@@ -138,7 +138,6 @@ async function complete(row: Record<string, unknown>) {
 
 <template>
   <div>
-    <div class="toolbar"><el-button type="primary" @click="reset">新建出库单</el-button></div>
     <el-form :inline="true">
       <el-form-item label="单号"><el-input v-model="filters.keyword" clearable placeholder="报关单 / 批次 / 出库单" style="width: 200px" /></el-form-item>
       <el-form-item label="委托方"><el-select v-model="filters.consignor" clearable style="width: 140px"><el-option v-for="name in consignors" :key="name" :label="name" :value="name" /></el-select></el-form-item>
@@ -151,6 +150,7 @@ async function complete(row: Record<string, unknown>) {
       <el-form-item label="结束"><el-date-picker v-model="filters.to" type="date" value-format="YYYY-MM-DD" /></el-form-item>
       <el-form-item><el-button type="primary" @click="page = 1; load()">查询</el-button></el-form-item>
     </el-form>
+    <div class="toolbar"><el-button type="primary" @click="reset">新建出库单</el-button></div>
     <el-table v-loading="loading" :data="rows" border stripe>
       <el-table-column label="出库单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column>
       <el-table-column prop="consignor" label="委托方" width="100" />

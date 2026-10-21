@@ -193,11 +193,6 @@ async function exportRows() {
 
 <template>
   <div>
-    <div class="toolbar">
-      <el-button type="primary" @click="reset">新建盘点</el-button>
-      <span class="spacer" />
-      <el-button :loading="exporting" @click="exportRows">导出</el-button>
-    </div>
     <el-form :inline="true" @submit.prevent="search">
       <el-form-item label="盘点单号">
         <el-input v-model="filters.keyword" clearable placeholder="盘点单号" style="width: 180px" @keyup.enter="search" />
@@ -213,6 +208,11 @@ async function exportRows() {
         <el-button @click="clearFilters">重置</el-button>
       </el-form-item>
     </el-form>
+    <div class="toolbar">
+      <el-button type="primary" @click="reset">新建盘点</el-button>
+      <span class="spacer" />
+      <el-button :loading="exporting" @click="exportRows">导出</el-button>
+    </div>
     <el-table v-loading="loading" :data="rows" border stripe empty-text="暂无盘点记录">
       <el-table-column prop="id" label="盘点单号" min-width="160" />
       <el-table-column prop="operator" label="盘点人" width="120" />

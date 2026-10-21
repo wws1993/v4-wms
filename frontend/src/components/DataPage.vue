@@ -3,9 +3,10 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormItemRule, type FormRules } from 'element-plus'
 import { passwordIssue, passwordRuleText } from '@/security/policy'
-import { inventoryApi, materialApi, partnerApi, shippingApi, warehouseApi, dictApi } from '@/api'
+import { inventoryApi, materialApi, partnerApi, roleApi, shippingApi, warehouseApi, dictApi } from '@/api'
 import ImageUpload from '@/components/ImageUpload.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
+import StackGridPicker from '@/components/StackGridPicker.vue'
 import LotDetailDialog from '@/components/LotDetailDialog.vue'
 import { isMediaPath, mediaUrl } from '@/api/media'
 import { downloadBlob, downloadText } from '@/api/result'
@@ -48,9 +49,11 @@ const monthDialog = ref(false)
 const monthValue = ref('')
 const stackRows = ref<Record<string, unknown>[]>([])
 const materialOptions = ref<{ label: string; value: string }[]>([])
+const materialRows = ref<Record<string, unknown>[]>([])
 const shippingOptions = ref<{ label: string; value: string }[]>([])
 const consignorOptions = ref<{ label: string; value: string }[]>([])
 const warehouseOptions = ref<{ label: string; value: string }[]>([])
+const roleOptions = ref<{ label: string; value: string }[]>([])
 const dictOptions = ref<Record<string, string[]>>({})
 
 const rules = computed<FormRules>(() => {
@@ -121,6 +124,7 @@ function fieldOptions(field: FieldSchema) {
   if (field.optionsFrom === 'shipping') return shippingOptions.value
   if (field.optionsFrom === 'consignors') return consignorOptions.value
   if (field.optionsFrom === 'warehouses') return warehouseOptions.value
+  if (field.optionsFrom === 'roles') return roleOptions.value
   if (field.dict) {
     const labels = dictOptions.value[field.dict] || []
     const source = typeof field.options === 'function' ? field.options(form, labels) : labels
@@ -130,34 +134,8 @@ function fieldOptions(field: FieldSchema) {
   return source.map((item) => (typeof item === 'string' ? { label: item, value: item } : item))
 }
 
-function stackGrid(code: string) {
-  const row = stackRows.value.find((item) => item.code === code)
-  const cols = Number(row?.gridCols || 0)
-  const rows = Number(row?.gridRows || 0)
-  if (cols > 0 && rows > 0) return { cols, rows }
-  const matched = String(row?.grid || '').match(/(\d+)\s*[×xX]\s*(\d+)/)
-  if (!matched) return { cols: 0, rows: 0 }
-  return { cols: Number(matched[1]), rows: Number(matched[2]) }
-}
-
-function cellKeys(code: string) {
-  const { cols, rows } = stackGrid(code)
-  const list: string[] = []
-  for (let row = 1; row <= rows; row += 1) {
-    for (let col = 1; col <= cols; col += 1) list.push(`${row}-${col}`)
-  }
-  return list
-}
-
-function cellOn(value: unknown, cell: string) {
-  return String(value || '').split(',').includes(cell)
-}
-
-function toggleCell(key: string, cell: string) {
-  const set = new Set(String(form[key] || '').split(',').filter(Boolean))
-  if (set.has(cell)) set.delete(cell)
-  else set.add(cell)
-  form[key] = [...set].join(',')
+function gridOwns(field: FieldSchema) {
+  return (schema.value?.form || []).some((item) => item.type === 'cells' && item.stackKey === field.key)
 }
 
 function uses(kind: FieldSchema['optionsFrom']) {
@@ -172,9 +150,11 @@ async function loadLookups() {
   }
   if (uses('materials')) {
     const res = await materialApi.list({ page: 1, pageSize: 200 })
-    materialOptions.value = res.success && res.data
-      ? res.data.list.map((row) => ({ label: `${row.code} ${row.name}`, value: String(row.id) }))
-      : []
+    materialRows.value = res.success && res.data ? res.data.list : []
+    materialOptions.value = materialRows.value.map((row) => ({
+      label: [row.name, row.originCountry, row.mineArea].filter(Boolean).join(' · ') || String(row.id),
+      value: String(row.id),
+    }))
   }
   if (uses('shipping')) {
     const res = await shippingApi.list()
@@ -192,6 +172,10 @@ async function loadLookups() {
     warehouseOptions.value = res.success && res.data
       ? res.data.list.map((row) => ({ label: String(row.code), value: String(row.code) }))
       : []
+  }
+  if (uses('roles')) {
+    const res = await roleApi.options()
+    roleOptions.value = res.success && Array.isArray(res.data) ? res.data : []
   }
   const dictKeys = [...new Set(
     [...(schema.value?.form || []), ...(schema.value?.filters || [])].map((field) => field.dict).filter((item): item is string => Boolean(item)),
@@ -239,6 +223,7 @@ function openEdit(row: Record<string, unknown>) {
       ? (Array.isArray(raw) ? raw : String(raw || '').split('、').filter(Boolean))
       : raw ?? ''
   }
+  if (row.code != null && form.code == null) form.code = row.code
   if (schema.value?.key === 'stacks' && form.code && !form.stackName) {
     const parts = String(form.code).split('#')
     form.stackName = parts.length > 1 ? parts.slice(1).join('#') : ''
@@ -248,7 +233,7 @@ function openEdit(row: Record<string, unknown>) {
 }
 
 function onFieldChange(key: string) {
-  schema.value?.onFormChange?.(form, key)
+  schema.value?.onFormChange?.(form, key, { materials: materialRows.value })
 }
 
 async function submit() {
@@ -587,13 +572,13 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
       />
     </div>
 
-    <el-dialog v-model="dialog" :title="schema.dialogTitle || (editingId ? '编辑' : (schema.createLabel || '新建'))" :width="schema.formWidth || 720" destroy-on-close>
+    <el-dialog v-model="dialog" :title="schema.dialogTitle || (editingId ? '编辑' : (schema.createLabel || '新建'))" :width="schema.formWidth || (schema.form?.some((field) => field.type === 'cells') ? 1080 : 720)" destroy-on-close>
       <el-button v-if="schema.assist && !editingId" class="assist" @click="applyAssist">{{ schema.assist.label }}</el-button>
       <el-form ref="formRef" class="edit-form" :model="form" :rules="rules" :label-width="schema.labelWidth || '120px'">
         <el-row :gutter="16">
-          <el-col v-for="field in schema.form" v-show="!field.when || field.when(form)" :key="field.key" :span="field.span || (field.type === 'textarea' ? 24 : 12)">
+          <el-col v-for="field in schema.form" v-show="(!field.when || field.when(form)) && !gridOwns(field)" :key="field.key" :span="field.type === 'cells' ? 24 : (field.span || (field.type === 'textarea' ? 24 : 12))">
             <el-form-item :label="field.label" :prop="field.key">
-              <el-select v-if="field.type === 'select' || field.type === 'multi'" v-model="form[field.key]" :multiple="field.type === 'multi'" :disabled="isDisabled(field)" style="width: 100%" @change="onFieldChange(field.key)">
+              <el-select v-if="field.type === 'select' || field.type === 'multi'" v-model="form[field.key]" :multiple="field.type === 'multi'" :disabled="isDisabled(field)" clearable filterable :placeholder="field.placeholder || '请选择'" style="width: 100%" @change="onFieldChange(field.key)">
                 <el-option v-for="opt in fieldOptions(field)" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-select>
               <div v-else-if="field.type === 'number'" class="number-field">
@@ -615,18 +600,15 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
                 @update:model-value="onImageFile"
                 @clear="form[field.key] = ''"
               />
-              <div v-else-if="field.type === 'cells'" class="cells">
-                <template v-if="cellKeys(String(form[field.stackKey || ''] || '')).length">
-                  <button
-                    v-for="cell in cellKeys(String(form[field.stackKey || ''] || ''))"
-                    :key="cell"
-                    type="button"
-                    :class="{ on: cellOn(form[field.key], cell) }"
-                    @click="toggleCell(field.key, cell)"
-                  >{{ cell }}</button>
-                </template>
-                <span v-else class="file-name">请先选择已在平面图中绘制的堆位</span>
-              </div>
+              <StackGridPicker
+                v-else-if="field.type === 'cells'"
+                class="grid-pick"
+                :stack-code="String(form[field.stackKey || 'stackCode'] || '')"
+                :cells="String(form[field.key] || '')"
+                :stacks="stackRows"
+                @update:stack-code="form[field.stackKey || 'stackCode'] = $event"
+                @update:cells="form[field.key] = $event"
+              />
               <div v-else-if="field.type === 'password'" class="password-field">
                 <el-input v-model="form[field.key]" type="password" show-password :disabled="isDisabled(field)" :placeholder="field.placeholder" autocomplete="new-password" />
                 <p class="field-hint">密码须为 {{ passwordRuleText() }}</p>
@@ -718,9 +700,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
 .number-field { display: flex; align-items: center; gap: 8px; width: 100%; }
 .number-field :deep(.el-input-number) { flex: 1; width: auto; }
 .unit { flex: none; color: #5a6a7e; }
-.cells { display: flex; flex-wrap: wrap; gap: 6px; }
-.cells button { min-width: 52px; height: 28px; border: 1px solid #d8dee8; background: #fff; color: #1a2332; cursor: pointer; }
-.cells button.on { background: var(--el-color-primary); color: #fff; border-color: var(--el-color-primary); }
+.grid-pick { height: 420px; }
 .detail-block + .detail-block { margin-top: 20px; }
 .detail-block h3 { margin: 0 0 10px; font-size: 15px; }
 .detail-table { margin-top: 12px; }

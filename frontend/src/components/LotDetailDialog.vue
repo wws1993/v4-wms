@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { inboundApi, inventoryApi, outboundApi, productionApi, transferApi } from '@/api'
 import ImageViewer from './ImageViewer.vue'
 import { dash } from '../views/ops/samples'
@@ -34,18 +33,6 @@ const PAGES = [
 
 type PageId = typeof PAGES[number]['id']
 
-const JUMPS: Partial<Record<PageId, { name: string; title: string }>> = {
-  inbound: { name: 'inbound', title: '入库管理' },
-  inCustoms: { name: 'inbound', title: '入库管理' },
-  production: { name: 'production', title: '生产加工' },
-  outbound: { name: 'outbound', title: '出库管理' },
-  outCustoms: { name: 'outbound', title: '出库管理' },
-  transfer: { name: 'transfer', title: '库内移库' },
-  ocr: { name: 'ocr', title: 'OCR识别' },
-  weight: { name: 'ocr', title: 'OCR识别' },
-  quality: { name: 'ocr', title: 'OCR识别' },
-}
-
 const props = defineProps<{
   modelValue: boolean
   ledger?: boolean
@@ -60,7 +47,6 @@ const emit = defineEmits<{
   openBatch: [batchNo: string, focus?: string]
 }>()
 
-const router = useRouter()
 const page = ref<PageId>('basic')
 const traceLoading = ref(false)
 const inboundRows = ref<Row[]>([])
@@ -92,7 +78,6 @@ const finished = computed(() => {
 const products = computed(() => (Array.isArray(current.value?.products) ? current.value.products : []) as Row[])
 const ledgerRows = computed(() => (Array.isArray(current.value?.ledger) ? current.value.ledger : []) as Row[])
 
-const jump = computed(() => JUMPS[page.value])
 const pageLabel = computed(() => PAGES.find((item) => item.id === page.value)?.label || '记录')
 const paneLoading = computed(() => Boolean(props.loading) || traceLoading.value)
 
@@ -413,23 +398,6 @@ function exportLedger() {
   downloadText(`${current.value?.batchNo || '台账'}.csv`, lines.join('\n'))
 }
 
-function keywordFor(id: PageId) {
-  const row = current.value
-  if (!row) return ''
-  if (id === 'production') return clean(row.batchKind === '生产批次号' ? row.batchNo : productionRows.value[0]?.prodBatch)
-  if (id === 'outbound' || id === 'outCustoms') return clean(pickedOutbound.value?.customsNo || row.outCustomsNo || row.batchNo)
-  if (id === 'transfer') return clean(row.batchKind === '报关单号' ? row.batchNo : row.customsNo) || clean(row.batchNo)
-  return clean(row.customsNo || (row.batchKind === '报关单号' ? row.batchNo : '') || row.batchNo)
-}
-
-function openPage(id: PageId = page.value) {
-  const target = JUMPS[id]
-  if (!target) return
-  const keyword = keywordFor(id)
-  emit('update:modelValue', false)
-  router.push({ name: target.name, query: keyword ? { keyword } : {} })
-}
-
 function openCustoms(value: unknown) {
   const text = clean(value)
   if (!text) return
@@ -500,8 +468,7 @@ function productOut(row: Row) {
       <div class="layout">
         <nav class="side">
           <button v-for="item in PAGES" :key="item.id" type="button" :class="{ active: page === item.id }" @click="page = item.id">
-            <span>{{ item.label }}</span>
-            <em v-if="counts[item.id] != null">{{ counts[item.id] }}</em>
+            {{ item.label }}
           </button>
         </nav>
         <section class="pane">
@@ -515,11 +482,6 @@ function productOut(row: Row) {
             </div>
             <strong>{{ pageLabel }}加载中</strong>
           </div>
-          <div v-if="jump" class="pane-bar">
-            <span>对应记录在{{ jump.title }}</span>
-            <el-button link type="primary" @click="openPage()">打开{{ jump.title }}</el-button>
-          </div>
-
           <template v-if="page === 'basic'">
             <div class="flow">
               <button type="button" @click="page = 'inbound'"><b>{{ counts.inbound ?? '—' }}</b><span>入场</span></button>
@@ -854,13 +816,11 @@ function productOut(row: Row) {
   .sweep,
   .core { animation: none; }
 }
-.pane-bar { min-width: 0; }
 .pane :deep(.el-table) { width: 100%; max-width: 100%; }
 .side { display: flex; flex-direction: column; gap: 4px; }
 .side button {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  display: block;
+  width: 100%;
   padding: 8px 10px;
   border: 0;
   border-radius: 8px;
@@ -870,8 +830,7 @@ function productOut(row: Row) {
   cursor: pointer;
 }
 .side button.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; }
-.side em { font-style: normal; color: var(--el-text-color-secondary); font-size: 12px; }
-.pane-bar, .pick { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--el-text-color-secondary); }
+.pick { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--el-text-color-secondary); }
 .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .flow button {
   padding: 10px 12px;

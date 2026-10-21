@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { floorApi, inventoryApi, settingsApi, warehouseApi } from '@/api'
-import PlanSvg from '@/components/PlanSvg.vue'
+import { dashboardApi, floorApi, inventoryApi, settingsApi, warehouseApi } from '@/api'
 import PulseDot from '@/components/PulseDot.vue'
 import YardIso from '@/components/YardIso.vue'
 import YardMapLoading from '@/components/YardMapLoading.vue'
-import { archiveForStack, contentFrame, defaultPlan, hostOf, isWarehouseItem, lotsOnStack, stackCellAt, stackCellGrid, stackCode, warehouseCodeOf } from '@/plan/model'
+import YardPlanMap from '@/components/YardPlanMap.vue'
+import { defaultPlan, warehouseCodeOf } from '@/plan/model'
 import type { CargoLot } from '@/plan/model'
 import type { FloorPlan, PlanItem } from '@/types'
 
-const router = useRouter()
 const plan = reactive<FloorPlan>(defaultPlan())
 const lots = ref<CargoLot[]>([])
 const houses = ref<Record<string, unknown>[]>([])
@@ -46,11 +44,9 @@ const tip = ref<{ title: string; rate: string; line: string; hint: string; x: nu
 let hideTip = 0
 const focusId = ref('')
 const stageRef = ref<HTMLElement>()
-const mapRef = ref<InstanceType<typeof PlanSvg>>()
-const view = reactive({ x: 0, y: 0, w: defaultPlan().gridCols, h: defaultPlan().gridRows })
+const planMapRef = ref<InstanceType<typeof YardPlanMap>>()
 const blend = ref(0)
 const fading = ref(false)
-let fly = 0
 let blendFrame = 0
 let observer: ResizeObserver | undefined
 let alive = true
@@ -60,7 +56,7 @@ onMounted(async () => {
   const started = Date.now()
   const [planRes, stockRes, houseRes, stackRes, paramRes, alertRes] = await Promise.all([
     floorApi.get(),
-    inventoryApi.home(),
+    dashboardApi.areas(),
     warehouseApi.catalog(),
     warehouseApi.stacks({ page: 1, pageSize: 500 }),
     settingsApi.get(),
@@ -82,39 +78,20 @@ onMounted(async () => {
   if (!alive) return
   loading.value = false
   await nextTick()
-  layoutBoard()
   if (stageRef.value) {
-    observer = new ResizeObserver(() => layoutBoard())
+    observer = new ResizeObserver(() => {
+      if (!focusId.value) planMapRef.value?.layout()
+    })
     observer.observe(stageRef.value)
   }
 })
 
 onBeforeUnmount(() => {
   alive = false
-  cancelAnimationFrame(fly)
   cancelAnimationFrame(blendFrame)
   observer?.disconnect()
   window.clearTimeout(hideTip)
 })
-
-function stockTons(match: (lot: CargoLot) => boolean) {
-  return Math.round(lots.value.reduce((sum, lot) => sum + (lot.status === '在库' && match(lot) ? lot.wet : 0), 0))
-}
-
-function screenBox(item: PlanItem) {
-  const svg = stageRef.value?.querySelector('svg')
-  const ctm = svg?.getScreenCTM()
-  if (!svg || !ctm) return null
-  const point = (x: number, y: number) => {
-    const spot = svg.createSVGPoint()
-    spot.x = x
-    spot.y = y
-    return spot.matrixTransform(ctm)
-  }
-  const a = point(item.col, item.row)
-  const b = point(item.col + item.cols, item.row + item.rows)
-  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }
-}
 
 function placeCursorTip(
   x: number,
@@ -135,178 +112,9 @@ function onIsoHover(body: { title: string; rate: string; line: string; hint: str
   placeCursorTip(body.x, body.y, body)
 }
 
-function placeTip(item: PlanItem, body: { title: string; rate: string; line: string; hint: string }) {
-  const width = 232
-  const height = 108
-  const gap = 10
-  const box = screenBox(item)
-  let x = 16
-  let y = 16
-  if (box) {
-    x = box.x + box.w + gap
-    y = box.y
-    if (x + width > window.innerWidth - 8) x = box.x - width - gap
-    if (x < 8) {
-      x = Math.max(8, box.x)
-      y = box.y + box.h + gap
-    }
-    if (y + height > window.innerHeight - 8) y = Math.max(8, box.y - height - gap)
-  }
-  tip.value = { ...body, x, y }
-}
-
-function warehouseCard(item: PlanItem) {
-  const code = warehouseCodeOf(item.name)
-  const house = houses.value.find((row) => String(row.code) === code)
-  const fromLots = stockTons((lot) => warehouseCodeOf(lot.warehouse) === code)
-  const tons = lots.value.length ? fromLots : (fromLots || Number(house?.used) || 0)
-  const rate = house ? Number(house.rate) || 0 : 0
-  const count = Number(house?.stackCount) || plan.items.filter((entry) => entry.type === 'stack' && hostOf(entry, plan.items)?.id === item.id).length
-  return {
-    title: code,
-    rate: `${rate}%`,
-    line: `堆位${count}个 · 干重${tons}吨`,
-    hint: focusId.value ? '移入堆位查看堆位信息' : '点击放大至本仓库',
-  }
-}
-
-function stackRef(item: PlanItem) {
-  const host = hostOf(item, plan.items)
-  const slot = item.name.replace(/^\d+#/, '').trim() || item.name
-  const built = host ? stackCode(host.name, slot) : slot
-  const row = stacks.value.find((entry) => String(entry.id) === item.stackId || String(entry.code) === built || (item.archiveCode != null && String(entry.code) === item.archiveCode))
-  const code = String(row?.code || item.archiveCode || built)
-  return { host, slot, code, row }
-}
-
-function stackLots(item: PlanItem) {
-  return lotsOnStack(item, plan.items, lots.value)
-}
-
-function namesOf(rows: CargoLot[]) {
-  return [...new Set(rows.map((lot) => lot.consignor).filter(Boolean))]
-}
-
-function stackCard(item: PlanItem, event?: PointerEvent) {
-  const { host, slot, code, row } = stackRef(item)
-  const houseName = host ? warehouseCodeOf(host.name) : ''
-  const here = stackLots(item)
-  const tons = Math.round(here.reduce((sum, lot) => sum + lot.wet, 0))
-  const capacity = Number(row?.capacity) || 0
-  const rate = capacity > 0 ? Math.min(100, Math.round((tons / capacity) * 100)) : 0
-  const area = String(row?.areaLabel || '')
-  const occupied = new Set(here.flatMap((lot) => lot.cells || []))
-  const state = occupied.size ? `占用${occupied.size}格` : tons > 0 ? '在库' : '空闲'
-  const title = houseName ? `${houseName}-${slot}` : code
-  const base = {
-    title,
-    rate: `${rate}%`,
-    line: [area, state, tons ? `干重${tons}吨` : '', namesOf(here).join('、')].filter(Boolean).join(' · '),
-    hint: '点击查询本堆位库存',
-  }
-  if (!event) return base
-  const key = stackCellAt(item, mapRef.value?.locate(event) || { x: 0, y: 0 }, stackCellGrid(item, archiveForStack(item, plan.items, stacks.value)))
-  if (!key) return base
-  const placed = here.filter((lot) => lot.cells?.length)
-  const onCell = placed.length ? placed.filter((lot) => lot.cells?.includes(key)) : here
-  if (!onCell.length) return base
-  const [cellRow, cellCol] = key.split('-')
-  const cellTons = Math.round(onCell.reduce((sum, lot) => sum + lot.wet, 0))
-  return {
-    title: `${title} · ${cellRow}行${cellCol}列`,
-    rate: `${rate}%`,
-    line: [namesOf(onCell).join('、') || '在库', cellTons ? `干重${cellTons}吨` : '', placed.length ? '' : '整堆'].filter(Boolean).join(' · '),
-    hint: '点击查询本堆位库存',
-  }
-}
-
-function onEnter(event: PointerEvent, item: PlanItem) {
-  window.clearTimeout(hideTip)
-  if (!focusId.value) {
-    const host = isWarehouseItem(item) ? item : hostOf(item, plan.items)
-    if (!host) {
-      tip.value = null
-      return
-    }
-    placeTip(host, warehouseCard(host))
-    return
-  }
-  if (item.type === 'stack') {
-    placeCursorTip(event.clientX, event.clientY, stackCard(item, event), { width: 280, height: 120 })
-    return
-  }
-  if (isWarehouseItem(item)) {
-    placeTip(item, warehouseCard(item))
-    return
-  }
-  tip.value = null
-}
-
-function onMoveTip(event: PointerEvent, item: PlanItem) {
-  if (!tip.value) return
-  onEnter(event, item)
-}
-
 function onLeave() {
   window.clearTimeout(hideTip)
   hideTip = window.setTimeout(() => { tip.value = null }, 40)
-}
-
-function applyFrame(frame: { x: number; y: number; w: number; h: number }) {
-  const next = coverFrame(frame)
-  view.x = next.x
-  view.y = next.y
-  view.w = next.w
-  view.h = next.h
-}
-
-function layoutBoard() {
-  const el = stageRef.value
-  if (el && el.clientHeight < 2) return
-  if (!focusId.value) applyFrame(contentFrame(plan))
-}
-
-function coverFrame(frame: { x: number; y: number; w: number; h: number }) {
-  const el = stageRef.value
-  const aspect = el && el.clientHeight > 0 ? el.clientWidth / el.clientHeight : frame.w / frame.h
-  let w = frame.w
-  let h = frame.h
-  if (w / h < aspect) w = h * aspect
-  else h = w / aspect
-  return {
-    x: frame.x + frame.w / 2 - w / 2,
-    y: frame.y + frame.h / 2 - h / 2,
-    w,
-    h,
-  }
-}
-
-function frameOf(item?: PlanItem) {
-  if (!item) return coverFrame(contentFrame(plan))
-  const padX = Math.max(0.6, item.cols * 0.12)
-  const padY = Math.max(1.2, item.rows * 0.2)
-  return coverFrame({
-    x: item.col - padX,
-    y: item.row - padY,
-    w: item.cols + padX * 2,
-    h: item.rows + padY * 2,
-  })
-}
-
-function flyTo(next: { x: number; y: number; w: number; h: number }) {
-  cancelAnimationFrame(fly)
-  const from = { ...view }
-  const start = performance.now()
-  const tick = (now: number) => {
-    const t = Math.min(1, (now - start) / 420)
-    const e = 1 - (1 - t) ** 3
-    view.x = from.x + (next.x - from.x) * e
-    view.y = from.y + (next.y - from.y) * e
-    view.w = from.w + (next.w - from.w) * e
-    view.h = from.h + (next.h - from.h) * e
-    if (t < 1) fly = requestAnimationFrame(tick)
-  }
-  fly = requestAnimationFrame(tick)
 }
 
 function fadeMode(next: 'iso' | 'plan') {
@@ -352,7 +160,6 @@ async function openHouse(item: PlanItem) {
   focusId.value = item.id
   fadeMode('plan')
   await nextTick()
-  flyTo(frameOf(item))
 }
 
 function openIso(item: PlanItem | null) {
@@ -367,7 +174,7 @@ function showPlan() {
   tip.value = null
   if (mode.value !== 'plan') {
     focusId.value = ''
-    applyFrame(contentFrame(plan))
+    planMapRef.value?.layout()
   }
   fadeMode('plan')
 }
@@ -377,39 +184,15 @@ function showIso() {
   fadeMode('iso')
 }
 
-function onItem(item: PlanItem) {
-  tip.value = null
-  if (!focusId.value) {
-    const host = item.type === 'warehouse' || item.type === 'idle'
-      ? item
-      : item.type === 'stack'
-        ? hostOf(item, plan.items)
-        : undefined
-    if (!host) return
-    enteredFrom.value = 'plan'
-    focusId.value = host.id
-    flyTo(frameOf(host))
-    return
-  }
-  if (item.type === 'stack') {
-    const code = stackRef(item).code
-    if (!code) return
-    router.push({ path: '/inventory', query: { stack: code } })
-  }
-}
-
 function back() {
   tip.value = null
-  const fromIso = enteredFrom.value === 'iso'
-  focusId.value = ''
-  if (fromIso) {
-    applyFrame(contentFrame(plan))
+  if (enteredFrom.value === 'iso') {
+    focusId.value = ''
     fadeMode('iso')
     return
   }
-  flyTo(frameOf())
+  planMapRef.value?.zoomOut()
 }
-
 </script>
 
 <template>
@@ -425,38 +208,36 @@ function back() {
       <div ref="stageRef" class="stage" :class="{ 'is-loading': loading }">
         <YardMapLoading v-if="loading" />
         <template v-else>
-        <p v-if="planError" class="plan-miss">{{ planError }}</p>
-        <YardIso
-          class="view-layer"
-          :style="layerStyle('iso')"
-          :plan="plan"
-          :houses="houses"
-          :stacks="stacks"
-          :lots="lots"
-          :warn-codes="warnCodes"
-          @open="openIso"
-          @hover="onIsoHover"
-          @leave="onLeave"
-        />
-        <PlanSvg
-          ref="mapRef"
-          class="view-layer"
-          :style="layerStyle('plan')"
-          :plan="plan"
-          theme="cockpit"
-          :lots="lots"
-          :stacks="stacks"
-          :only-host-id="focusId"
-          :view="view"
-          @item-down="(_event, item) => onItem(item)"
-          @item-enter="onEnter"
-          @item-move="onMoveTip"
-          @item-leave="onLeave"
-        />
+          <p v-if="planError" class="plan-miss">{{ planError }}</p>
+          <YardIso
+            class="view-layer"
+            :style="layerStyle('iso')"
+            :plan="plan"
+            :houses="houses"
+            :stacks="stacks"
+            :lots="lots"
+            :warn-codes="warnCodes"
+            @open="openIso"
+            @hover="onIsoHover"
+            @leave="onLeave"
+          />
+          <YardPlanMap
+            ref="planMapRef"
+            class="view-layer plan-map"
+            :style="layerStyle('plan')"
+            mode="browse"
+            :show-bar="false"
+            :plan="plan"
+            :lots="lots"
+            :stacks="stacks"
+            :houses="houses"
+            v-model:focus-id="focusId"
+            @enter-host="enteredFrom = 'plan'"
+          />
         </template>
       </div>
       <button v-if="mode === 'plan' && focusId" class="back" type="button" @click="back">返回总览</button>
-      <div v-if="tip" class="yard-tip" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">
+      <div v-if="tip && mode === 'iso'" class="yard-tip" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">
         <i class="bar" />
         <div class="tip-body">
           <div class="tip-row">
@@ -545,6 +326,14 @@ function back() {
 .stage { position: absolute; inset: 0; }
 .stage.is-loading { cursor: default; }
 .stage :deep(.view-layer) { position: absolute; inset: 0; }
+.stage :deep(.plan-map.yard-plan) { display: block; }
+.stage :deep(.plan-map .stage) {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  border-radius: 0;
+  background: transparent;
+}
 .stage :deep(.plan-svg) { width: 100%; height: 100%; }
 .back {
   position: absolute;

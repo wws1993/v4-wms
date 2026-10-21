@@ -12,7 +12,6 @@ const props = defineProps<{
   filings: Record<string, unknown>[]
   stacks: Record<string, unknown>[]
   shipModes: string[]
-  minerals: string[]
   currencies: { label: string; value: string }[]
   start: number
   seed?: Record<string, unknown> | null
@@ -47,13 +46,13 @@ const form = reactive<Record<string, any>>({
   consignor: props.consignors[0] || '',
   shipName: '',
   blNo: '',
+  blWeight: '',
   time: '',
   customsNo: '',
   checklistNo: '',
   amount: '',
   currency: props.currencies[0]?.value || 'CNY',
   material: '',
-  oreType: props.minerals[0] || '精铜矿',
   shipMode: props.shipModes[0] || '',
   containerCount: '',
   filingNo: '',
@@ -110,7 +109,11 @@ function onMaterial(name: string) {
     form.filingNo = ''
     return
   }
-  const filing = props.filings.find((item) => item.source === row.source && item.status !== '已用尽' && Number(item.remain) > 0)
+  const filing = props.filings.find((item) => {
+    if (item.status === '已用尽' || !(Number(item.remain) > 0)) return false
+    const mine = String(row.mineArea || row.source || '')
+    return Boolean(mine) && String(item.source) === mine
+  })
   form.filingNo = filing ? String(filing.code) : ''
 }
 
@@ -159,7 +162,7 @@ async function onPicked(event: Event) {
   const data = res.data as Record<string, unknown>
   const id = String(data.id || '')
   if (kind === 'bl' || kind === 'customs') {
-    fillFields(['shipName', 'blNo', 'customsNo', 'checklistNo', 'amount', 'currency'], data, form)
+    fillFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency'], data, form)
     if (filled(data.timeText)) form.time = data.timeText
     form.orcId = id
     ocrStatus.value = `已识别 ${file.name}`
@@ -182,12 +185,12 @@ async function onPicked(event: Event) {
 
 function openOcr(target: 'inbound' | 'weight' | 'quality' | 'receive') {
   ocrTarget.value = target
-  copyFields(['shipName', 'blNo', 'customsNo', 'checklistNo', 'amount', 'currency', 'wet', 'dry', 'moisture', 'qualityNo', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], form, draft)
+  copyFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency', 'wet', 'dry', 'moisture', 'qualityNo', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], form, draft)
   ocrOpen.value = true
 }
 
 function applyOcr() {
-  if (ocrTarget.value === 'inbound') copyFields(['shipName', 'blNo', 'customsNo', 'checklistNo', 'amount', 'currency'], draft, form)
+  if (ocrTarget.value === 'inbound') copyFields(['shipName', 'blNo', 'blWeight', 'customsNo', 'checklistNo', 'amount', 'currency'], draft, form)
   else if (ocrTarget.value === 'weight') copyFields(['wet', 'dry', 'moisture'], draft, form)
   else if (ocrTarget.value === 'quality') copyFields(['qualityNo', 'moisture', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], draft, form)
   else copyFields(['wet', 'dry', 'moisture', 'qualityNo', 'cu', 'ag', 'au', 'as', 'pb', 'cd', 'f', 'hg'], draft, form)
@@ -208,8 +211,8 @@ function createdId(data: unknown) {
 }
 
 async function submitReserve() {
-  if (!form.consignor || !form.shipName || !form.blNo || !form.material || !form.oreType || !form.shipMode) {
-    ElMessage.warning('请填写委托方、船名、提单号、物料、矿种和货运方式')
+  if (!form.consignor || !form.shipName || !form.blNo || !form.material || !form.shipMode) {
+    ElMessage.warning('请填写委托方、船名、提单号、物料和货运方式')
     return
   }
   if (form.amount === '' || form.amount == null) {
@@ -326,7 +329,6 @@ onBeforeUnmount(() => {
       <input ref="picker" class="file" type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onPicked" />
 
       <!-- {{form}} -->
-      <div style="height:12px"></div>
       <section v-if="!receiveMode" class="reserve">
         <div class="ocr-bar">
           <span class="ocr-label">OCR 识别回填</span>
@@ -338,11 +340,12 @@ onBeforeUnmount(() => {
         <div class="split">
           <el-form class="fields" label-width="108px">
             <el-form-item label="委托方" required><el-select v-model="form.consignor"><el-option v-for="name in consignors" :key="name" :label="name" :value="name" /></el-select></el-form-item>
-            <el-form-item label="船名" required><el-input v-model="form.shipName" /></el-form-item>
-            <el-form-item label="提单号" required><el-input v-model="form.blNo" /></el-form-item>
-            <el-form-item label="预计到货日"><el-date-picker v-model="form.time" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+            <el-form-item label="船名" required><el-input v-model="form.shipName" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="提单号" required><el-input v-model="form.blNo" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="提单重量"><el-input v-model="form.blWeight" type="number" placeholder="OCR 回填" /></el-form-item>
+            <el-form-item label="预计到货日"><el-date-picker v-model="form.time" type="date" value-format="YYYY-MM-DD" placeholder="OCR 回填" style="width: 100%" /></el-form-item>
             <el-form-item label="报关单号"><el-input v-model="form.customsNo" placeholder="OCR 回填" /></el-form-item>
-            <el-form-item label="核注清单号"><el-input v-model="form.checklistNo" /></el-form-item>
+            <el-form-item label="核注清单号"><el-input v-model="form.checklistNo" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="金额" required>
               <div class="money">
                 <el-select v-model="form.currency" style="width: 120px"><el-option v-for="item in currencies" :key="item.value" :label="item.label" :value="item.value" /></el-select>
@@ -354,7 +357,6 @@ onBeforeUnmount(() => {
                 <el-option v-for="item in rawMaterials" :key="String(item.id)" :label="String(item.name)" :value="String(item.name)" />
               </el-select>
             </el-form-item>
-            <el-form-item label="矿种" required><el-select v-model="form.oreType"><el-option v-for="item in minerals" :key="item" :label="item" :value="item" /></el-select></el-form-item>
             <el-form-item label="货运方式" required><el-select v-model="form.shipMode" @change="onShipMode"><el-option v-for="item in shipModes" :key="item" :label="item" :value="item" /></el-select></el-form-item>
             <el-form-item v-if="containerMode" label="集装箱柜数"><el-input v-model="form.containerCount" type="number" placeholder="柜" /></el-form-item>
           </el-form>
@@ -366,6 +368,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-else class="receive">
+        <div style="height:12px"></div>
         <el-form label-width="108px">
           <el-row :gutter="16">
             <el-col :span="12"><el-form-item label="入库单号" required><el-input :model-value="dash(form.orderNo || form.id)" readonly disabled /></el-form-item></el-col>
@@ -373,7 +376,6 @@ onBeforeUnmount(() => {
             <el-col :span="12"><el-form-item label="物料"><el-input :model-value="dash(form.material)" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="货物类型"><el-input :model-value="dash(form.cargoType)" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="矿源备案号"><el-input :model-value="filingText" readonly disabled /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="矿种"><el-input :model-value="dash(form.oreType)" readonly disabled /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="货运方式"><el-input :model-value="dash(form.shipMode)" readonly disabled /></el-form-item></el-col>
             <el-col v-if="containerMode" :span="12"><el-form-item label="集装箱柜数"><el-input :model-value="dash(form.containerCount)" readonly disabled /></el-form-item></el-col>
             <el-col :span="24">
@@ -402,14 +404,6 @@ onBeforeUnmount(() => {
               </el-form-item>
             </el-col>
             <el-col :span="12"><el-form-item label="品质证书号"><el-input v-model="form.qualityNo" readonly placeholder="OCR 回填" /></el-form-item></el-col>
-            <el-col :span="12">
-              <el-form-item label="分类">
-                <el-select v-model="form.category" style="width: 100%">
-                  <el-option label="原料" value="原料" />
-                  <el-option label="成品" value="成品" />
-                </el-select>
-              </el-form-item>
-            </el-col>
             <el-col :span="12"><el-form-item label=" "><el-button @click="openOcr('receive')">查看 OCR 详情</el-button></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="收货备注"><el-input v-model="form.remark" type="textarea" /></el-form-item></el-col>
           </el-row>
@@ -439,6 +433,7 @@ onBeforeUnmount(() => {
           <template v-if="ocrTarget === 'inbound'">
             <el-form-item label="船名"><el-input v-model="draft.shipName" /></el-form-item>
             <el-form-item label="提单号"><el-input v-model="draft.blNo" /></el-form-item>
+            <el-form-item label="提单重量"><el-input v-model="draft.blWeight" type="number" /></el-form-item>
             <el-form-item label="报关单号"><el-input v-model="draft.customsNo" /></el-form-item>
             <el-form-item label="核注清单号"><el-input v-model="draft.checklistNo" /></el-form-item>
             <el-form-item label="金额">
@@ -475,7 +470,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .dlg-title { margin: 0; font-size: 16px; font-weight: 600; }
 .file { display: none; }
-.reserve { min-height: 0; height: 100%; display: flex; flex-direction: column; padding-top: 24px;}
+.reserve { min-height: 0; height: 100%; display: flex; flex-direction: column}
 .ocr-bar, .ocr-dual { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; background: #fff; border: 1px solid #ececec; border-radius: 8px; }
 .ocr-bar { margin-bottom: 12px; }
 .ocr-label { font-weight: 600; }

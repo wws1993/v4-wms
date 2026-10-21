@@ -3,6 +3,7 @@ import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { inventoryApi, partnerApi, productionApi, warehouseApi } from '@/api'
+import StackGridPicker from '@/components/StackGridPicker.vue'
 import { usePageTab } from '@/hooks/pageTab'
 
 type Line = {
@@ -35,6 +36,8 @@ const feedLots = ref<Doc[]>([])
 const feedTotal = ref(0)
 const feedPage = ref(1)
 const feedPageSize = ref(10)
+const opsPage = ref(1)
+const opsPageSize = ref(10)
 const feedLoading = ref(false)
 const feedQueried = ref(false)
 const feedCountries = ref<string[]>([])
@@ -50,7 +53,7 @@ const detailBatch = ref('')
 const feed = reactive({ prodBatch: '', keyword: '', cargoType: '', country: '', stack: '' })
 const feedPicked = ref<Record<string, string>>({})
 const process = reactive({ id: '', orderNo: '', locked: false, consignor: '', prodBatch: '', process: '混矿筛分', from: '', to: '', remark: '' })
-const finish = reactive({ id: '', orderNo: '', locked: false, consignor: '', prodBatch: '', outputDry: '', stackCode: '', areaId: '', warehouseId: '' })
+const finish = reactive({ id: '', orderNo: '', locked: false, consignor: '', prodBatch: '', outputDry: '', stackCode: '', areaId: '', warehouseId: '', cells: '' })
 
 function linesOf(row: Doc): Line[] {
   if (!Array.isArray(row.feedLines)) return []
@@ -91,10 +94,12 @@ function availableOf(row: Doc) {
   return Math.max(0, Math.round(remain * 1000) / 1000)
 }
 
-const batchOptions = computed(() => [...new Set(docs.value.map((row) => String(row.prodBatch || '')).filter(Boolean))])
 const pickedLots = computed(() => Object.keys(feedPicked.value).map((key) => lotCache.value[key]).filter((row): row is Doc => Boolean(row)))
 const feedConsignors = computed(() => [...new Set(pickedLots.value.map((row) => String(row.consignor || '')).filter(Boolean))])
-const feedConsignorText = computed(() => feedConsignors.value.join('、'))
+const feedConsignorText = computed(() => {
+  if (feedConsignors.value.length) return feedConsignors.value.join('、')
+  return batchParty(feed.prodBatch).names.join('、')
+})
 
 function matchesKeyword(row: Doc) {
   const word = filters.keyword.trim()
@@ -182,9 +187,21 @@ const opsRows = computed(() => flatOps.value.filter((row) => {
   if (filters.to && day > filters.to) return false
   return true
 }))
+const opsPageRows = computed(() => {
+  const start = (opsPage.value - 1) * opsPageSize.value
+  return opsRows.value.slice(start, start + opsPageSize.value)
+})
+
+watch(opsRows, (rows) => {
+  const pages = Math.max(1, Math.ceil(rows.length / opsPageSize.value) || 1)
+  if (opsPage.value > pages) opsPage.value = pages
+})
+
+watch(() => [filters.keyword, filters.consignor, filters.from, filters.to], () => {
+  opsPage.value = 1
+})
 
 const finishRows = computed(() => docs.value.filter((row) => row.docType === '完工入库' && matchesKeyword(row)))
-const inspectStacks = computed(() => stacks.value.filter((row) => row.areaLabel === '待检区'))
 const detailLines = computed(() => batchLines(detailBatch.value))
 const detailFinish = computed(() => finishOf(detailBatch.value))
 const processLines = computed(() => linesOfOrder(process.id))
@@ -245,20 +262,38 @@ function listKind() {
 
 async function load(kind = listKind()) {
   loading.value = true
-  const res = await productionApi.list({
-    page: 1,
-    pageSize: 200,
-    type: kind,
-    consignor: filters.consignor || undefined,
-    from: filters.from || undefined,
-    to: filters.to || undefined,
-  })
-  loading.value = false
-  if (!res.success || !res.data) {
-    if (!res.success) ElMessage.error(res.message)
-    return false
+  const pageSize = 200
+  const incoming: Doc[] = []
+  const seen = new Set<string>()
+  let page = 1
+  while (page <= 50) {
+    const res = await productionApi.list({
+      page,
+      pageSize,
+      type: kind,
+      consignor: filters.consignor || undefined,
+      from: filters.from || undefined,
+      to: filters.to || undefined,
+    })
+    if (!res.success || !res.data) {
+      loading.value = false
+      if (!res.success) ElMessage.error(res.message)
+      return false
+    }
+    const list = res.data.list
+    let added = 0
+    for (const row of list) {
+      const id = String(row.id || `${row.orderNo}|${row.prodBatch}|${row.docType}|${row.time}`)
+      if (seen.has(id)) continue
+      seen.add(id)
+      incoming.push(row)
+      added += 1
+    }
+    const total = Number(res.data.total || 0)
+    if (!added || (total > 0 && incoming.length >= total) || list.length < pageSize) break
+    page += 1
   }
-  const incoming = res.data.list
+  loading.value = false
   if (kind === 2) docs.value = [...docs.value.filter((row) => row.docType !== '完工入库'), ...incoming]
   else docs.value = [...incoming.filter((row) => row.docType !== '完工入库'), ...docs.value.filter((row) => row.docType === '完工入库')]
   return true
@@ -283,6 +318,28 @@ watch(tab, (name, previous) => {
   if (next !== prev) load(next)
 })
 
+watch(() => feed.prodBatch, (batch) => {
+  if (!feedOpen.value || !batch) return
+  const locked = batchParty(batch)
+  if (!locked.tokens.length && !locked.names.length) return
+  const next = { ...feedPicked.value }
+  let removed = 0
+  for (const key of Object.keys(next)) {
+    const row = lotCache.value[key]
+    if (row && partyClash(row, locked)) {
+      delete next[key]
+      removed += 1
+    }
+  }
+  if (!removed) return
+  feedPicked.value = next
+  if (mixedParty(locked)) {
+    ElMessage.warning(`生产批次 ${batch} 已有不同委托方，已取消本次勾选`)
+    return
+  }
+  ElMessage.warning(`生产批次 ${batch} 的委托方是 ${locked.names[0] || locked.tokens[0]}，已取消其他委托方的原料`)
+})
+
 onActivated(() => {
   applyKeyword()
 })
@@ -305,6 +362,7 @@ async function search() {
     ElMessage.warning('开始日期不能晚于结束日期')
     return
   }
+  opsPage.value = 1
   const done = await load()
   if (!done) return
   if (tab.value === 'finish') {
@@ -314,12 +372,81 @@ async function search() {
   ElMessage.success(opsRows.value.length ? `已查询，共 ${opsRows.value.length} 条` : '该条件下暂无投料或加工记录')
 }
 
+type Party = { tokens: string[]; names: string[] }
+
+const PARTY_MARKS = ['五矿', '金川', '南国']
+
+function partyToken(party: { id: string; name: string }) {
+  const mark = PARTY_MARKS.find((item) => party.name.includes(item))
+  return mark || party.id || party.name
+}
+
+function partyOf(entries: { id: string; name: string }[]): Party {
+  const tokens = new Set<string>()
+  const names = new Set<string>()
+  entries.forEach((entry) => {
+    const token = partyToken(entry)
+    if (token) tokens.add(token)
+    if (entry.name) names.add(entry.name)
+  })
+  return { tokens: [...tokens], names: [...names] }
+}
+
+function rowParty(row: { consignor?: unknown; consignorId?: unknown }) {
+  return { id: String(row.consignorId || '').trim(), name: String(row.consignor || '').trim() }
+}
+
+function batchParty(batch: string): Party {
+  if (!batch) return { tokens: [], names: [] }
+  const entries: { id: string; name: string }[] = []
+  for (const row of docs.value) {
+    if (String(row.prodBatch || '') !== batch) continue
+    if (row.docType !== '投料出库' && row.docType !== '加工过程' && row.docType !== '完工入库') continue
+    entries.push(rowParty(row))
+    for (const line of linesOf(row)) entries.push({ id: line.consignorId, name: line.consignor })
+  }
+  return partyOf(entries)
+}
+
+function pickedParty(): Party {
+  return partyOf(pickedLots.value.map((row) => rowParty(row)))
+}
+
+function mergeParty(left: Party, right: Party): Party {
+  return {
+    tokens: [...new Set([...left.tokens, ...right.tokens])],
+    names: [...new Set([...left.names, ...right.names])],
+  }
+}
+
+function mixedParty(party: Party) {
+  return party.tokens.length > 1
+}
+
+function partyClash(row: { consignor?: unknown; consignorId?: unknown }, locked: Party) {
+  if (mixedParty(locked)) return '同一生产批次不能添加不同委托方的原料'
+  const party = rowParty(row)
+  const token = partyToken(party)
+  if (!token) return '该原料没有委托方，不能投料'
+  if (!locked.tokens.length) return ''
+  if (locked.tokens.includes(token)) return ''
+  const label = locked.names[0] || locked.tokens[0]
+  return `同一生产批次只能投同一委托方（${label}）`
+}
+
 function onFeedCheck(row: Doc, on: unknown) {
   const key = lotKey(row)
   const left = availableOf(row)
   if (on && left <= 0) {
     ElMessage.warning(`报关单 ${row.batchNo} 剩余干吨为 0`)
     return
+  }
+  if (on) {
+    const reason = partyClash(row, mergeParty(pickedParty(), batchParty(feed.prodBatch)))
+    if (reason) {
+      ElMessage.warning(reason)
+      return
+    }
   }
   lotCache.value = { ...lotCache.value, [key]: row }
   if (on) feedPicked.value = { ...feedPicked.value, [key]: String(left) }
@@ -372,8 +499,6 @@ async function searchLots() {
     return
   }
   const rows = res.data.list.filter((row) => row.status === '在库' && row.batchKind === '报关单号' && row.cargoType !== '混成品')
-  feedLots.value = rows
-  feedTotal.value = Number(res.data.total || 0)
   const seen = new Set(feedCountries.value)
   rows.forEach((row) => {
     const name = String(row.originCountry || '')
@@ -381,6 +506,15 @@ async function searchLots() {
     lotCache.value[lotKey(row)] = row
   })
   feedCountries.value = [...seen]
+  let total = Number(res.data.total || 0)
+  let pageRows = rows
+  if (rows.length > feedPageSize.value && rows.length >= total) {
+    total = rows.length
+    const start = (feedPage.value - 1) * feedPageSize.value
+    pageRows = rows.slice(start, start + feedPageSize.value)
+  }
+  feedLots.value = pageRows
+  feedTotal.value = total
 }
 
 function queryLots() {
@@ -441,8 +575,20 @@ async function saveFeed() {
     ElMessage.warning(over.feedDry > 0 ? `报关单 ${over.customsNo} 本次 ${over.feedDry} 吨，剩余 ${left} 吨` : `报关单 ${over.customsNo} 投料干吨须大于 0`)
     return
   }
+  const history = batchParty(feed.prodBatch)
+  const clash = lines.map((line) => partyClash(line, mergeParty(pickedParty(), history))).find(Boolean)
+    || (mixedParty(history) ? '该生产批次已有不同委托方，不能继续投料' : '')
+  if (clash) {
+    ElMessage.warning(clash)
+    return
+  }
   const consignorIds = [...new Set(lines.map((line) => line.consignorId).filter(Boolean))]
-  const res = await productionApi.create({ prodBatch: feed.prodBatch, consignorId: consignorIds.join(','), feedLines: lines })
+  const consignorTokens = new Set(lines.map((line) => partyToken({ id: line.consignorId, name: line.consignor })).filter(Boolean))
+  if (consignorTokens.size > 1) {
+    ElMessage.warning('同一生产批次不能添加不同委托方的原料')
+    return
+  }
+  const res = await productionApi.create({ prodBatch: feed.prodBatch, consignorId: consignorIds[0] || '', feedLines: lines })
   if (!res.success) {
     ElMessage.error(res.message)
     return
@@ -499,21 +645,32 @@ async function saveProcess() {
   load()
 }
 
-function pickStack(code: string) {
-  const stack = inspectStacks.value.find((item) => String(item.code) === code)
-  finish.stackCode = code
-  finish.areaId = stack ? String(stack.id) : ''
+watch(() => finish.stackCode, (code) => {
+  const stack = stacks.value.find((item) => String(item.code) === code)
   finish.warehouseId = stack ? String(stack.warehouseId || '') : ''
+  if (stack) finish.areaId = String(stack.id || finish.areaId)
+})
+
+function consignorFromFeed(doc: Doc | undefined) {
+  const lines = linesOf(doc || {})
+  const names = [...new Set(lines.map((line) => line.consignor).filter(Boolean))]
+  if (names.length) return names.join('、')
+  const batch = [...new Set(batchLines(String(doc?.prodBatch || '')).map((line) => line.consignor).filter(Boolean))]
+  if (batch.length) return batch.join('、')
+  return String(doc?.consignor || '')
 }
 
 function fillFinish(id: string) {
   const doc = docs.value.find((row) => String(row.id) === id)
   finish.id = id
   finish.orderNo = String(doc?.orderNo || '')
-  finish.consignor = String(doc?.consignor || '')
+  finish.consignor = consignorFromFeed(doc)
   finish.prodBatch = String(doc?.prodBatch || '')
   finish.outputDry = ''
-  pickStack(inspectStacks.value[0] ? String(inspectStacks.value[0].code) : '')
+  finish.stackCode = ''
+  finish.areaId = ''
+  finish.warehouseId = ''
+  finish.cells = ''
 }
 
 function openFinish(row?: Doc) {
@@ -593,7 +750,7 @@ function openLedger(date: string) {
           </el-form-item>
           <el-form-item><el-button type="primary" @click="search">查询</el-button></el-form-item>
         </el-form>
-        <el-table v-loading="loading" :data="opsRows" border stripe>
+        <el-table v-loading="loading" :data="opsPageRows" border stripe>
           <el-table-column label="类型" width="100">
             <template #default="{ row }"><el-tag :type="row.type === '加工过程' ? 'primary' : 'success'" effect="plain">{{ row.type }}</el-tag></template>
           </el-table-column>
@@ -622,7 +779,17 @@ function openLedger(date: string) {
             </template>
           </el-table-column>
         </el-table>
-        <p class="count">共 {{ opsRows.length }} 条</p>
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="opsPage"
+            v-model:page-size="opsPageSize"
+            :total="opsRows.length"
+            :page-sizes="[10, 20, 50]"
+            layout="total, sizes, prev, pager, next"
+            background
+            @size-change="opsPage = 1"
+          />
+        </div>
       </el-tab-pane>
 
       <el-tab-pane label="完工入库" name="finish">
@@ -662,11 +829,10 @@ function openLedger(date: string) {
     </el-tabs>
 
     <el-dialog v-model="feedOpen" title="原料投料出库" width="1280px" align-center>
-      <p class="hint">同一生产批次可勾选多个报关单。本次干吨不能超过剩余干吨。委托方随勾选票带出。</p>
+      <p class="hint">同一生产批次可勾选多个报关单，须为同一委托方。本次干吨不能超过剩余干吨。委托方随勾选票带出。</p>
       <el-row :gutter="16">
-        <el-col :span="12"><el-form-item label="生产批次" required><el-select v-model="feed.prodBatch" filterable allow-create default-first-option placeholder="新建或选择已有批次"><el-option v-for="name in batchOptions" :key="name" :label="name" :value="name" /></el-select></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="生产批次" required><el-input v-model="feed.prodBatch" clearable placeholder="请填写生产批次" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="委托方"><el-input :model-value="feedConsignorText" disabled placeholder="勾选报关单后带出" /></el-form-item></el-col>
-        <el-col :span="12"><el-form-item label="已选报关单"><el-input :model-value="`${Object.keys(feedPicked).length} 票`" disabled /></el-form-item></el-col>
       </el-row>
       <div class="panel-title">勾选投料报关单（可多选）</div>
       <el-form :inline="true" @submit.prevent="queryLots">
@@ -690,6 +856,7 @@ function openLedger(date: string) {
           <template #default="{ row }"><el-checkbox :model-value="feedPicked[lotKey(row)] != null" @change="onFeedCheck(row, $event)" /></template>
         </el-table-column>
         <el-table-column prop="batchNo" label="报关单号" min-width="160" />
+        <el-table-column label="委托方" min-width="120"><template #default="{ row }">{{ row.consignor || '—' }}</template></el-table-column>
         <el-table-column label="货物类型" width="100"><template #default="{ row }"><el-tag :type="cargoTag(row.cargoType)" effect="plain">{{ row.cargoType }}</el-tag></template></el-table-column>
         <el-table-column prop="originCountry" label="来源国家" width="100" />
         <el-table-column prop="stackText" label="堆放堆位" width="100" />
@@ -752,7 +919,7 @@ function openLedger(date: string) {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="finishOpen" title="成品完工入库" width="860px" align-center>
+    <el-dialog v-model="finishOpen" title="成品完工入库" width="1080px" align-center>
       <p class="hint">目标堆位只显示待检区。查验完成在堆位管理。</p>
       <el-row :gutter="16">
         <el-col v-if="finish.locked" :span="12"><el-form-item label="生产单"><el-input :model-value="finish.orderNo" readonly /></el-form-item></el-col>
@@ -763,18 +930,14 @@ function openLedger(date: string) {
             </el-select>
           </el-form-item>
         </el-col>
-        <el-col :span="12"><el-form-item label="委托方"><el-input :model-value="finish.consignor" readonly /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="委托方"><el-input :model-value="finish.consignor" disabled /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="生产批次"><el-input :model-value="finish.prodBatch" readonly /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="产量(干吨)" required><el-input v-model="finish.outputDry" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="关联报关单号"><el-input :model-value="finishCustoms" readonly /></el-form-item></el-col>
-        <el-col :span="12">
-          <el-form-item label="目标堆位" required>
-            <el-select :model-value="finish.stackCode" @change="pickStack(String($event))">
-              <el-option v-for="item in inspectStacks" :key="String(item.id)" :label="`${item.code}（${item.warehouse} / 待检区）`" :value="String(item.code)" />
-            </el-select>
-          </el-form-item>
-        </el-col>
       </el-row>
+      <el-form-item label="目标堆位" required>
+        <StackGridPicker v-model:stack-code="finish.stackCode" v-model:area-id="finish.areaId" v-model:cells="finish.cells" class="grid-pick" :stacks="stacks" area-label="待检区" />
+      </el-form-item>
       <div class="panel-title">关联报关单矿物</div>
       <el-table :data="finishLines" border empty-text="未匹配到投料报关单">
         <el-table-column prop="customsNo" label="报关单号" min-width="160" />
@@ -835,8 +998,8 @@ function openLedger(date: string) {
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .hint { color: #5a6a7e; margin: 0 0 12px; }
+.grid-pick { height: 420px; }
 .sep { margin: 0 8px; color: #5a6a7e; }
-.count { color: #5a6a7e; margin: 8px 0 0; }
 .panel-title { margin: 16px 0 8px; font-weight: 600; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .remark { margin-top: 12px; }

@@ -36,6 +36,7 @@ tags:
   - name: 生产加工
   - name: 角色信息
   - name: 菜单信息
+  - name: 驾驶舱
 paths:
   /wms/warehouse:
     put:
@@ -5872,7 +5873,36 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ItemBo'
+              type: object
+              properties:
+                id:
+                  type: integer
+                  description: id
+                  format: int64
+                itemName:
+                  type: string
+                  description: 物料名称
+                itemCategory:
+                  type: string
+                  description: 矿种类型
+                mineralSource:
+                  type: string
+                  description: 矿区
+                originCountry:
+                  type: string
+                  description: 备案原产国
+                orderNum:
+                  type: integer
+                  description: 排序
+                  format: int64
+                remark:
+                  type: string
+                  description: 备注
+              required:
+                - id
+                - itemCategory
+                - itemName
+            examples: {}
         required: true
       responses:
         '200':
@@ -5896,7 +5926,30 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ItemBo'
+              type: object
+              properties:
+                itemName:
+                  type: string
+                  description: 物料名称
+                itemCategory:
+                  type: string
+                  description: 矿种类型
+                mineralSource:
+                  type: string
+                  description: 矿区
+                originCountry:
+                  type: string
+                  description: 备案原产国
+                orderNum:
+                  type: integer
+                  description: 排序
+                  format: int64
+                remark:
+                  type: string
+                  description: 备注
+              required:
+                - itemName
+            examples: {}
         required: true
       responses:
         '200':
@@ -6405,7 +6458,55 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SystemParamBo'
+              type: object
+              properties:
+                thresholdAlter:
+                  type: integer
+                  description: 库存预警阈值（库容占用%）
+                  format: int32
+                agingAlert:
+                  type: integer
+                  description: 原料库龄预警（天）
+                  format: int32
+                dockAlert:
+                  type: integer
+                  description: 码头仓库预警（天）
+                  format: int32
+                usageAlert:
+                  type: integer
+                  description: 矿源备案用量预警（%）
+                  format: int32
+                passwordLength:
+                  type: integer
+                  description: 密码最低长度
+                passwordComplexity:
+                  type: string
+                  description: 密码复杂度（1大写字母，2小写字母，3数字，4特殊字符）
+                passwordErrorNum:
+                  type: integer
+                  description: 密码错误次数后锁定
+                accountLockTime:
+                  type: integer
+                  description: 账号异常尝试登录锁定时长
+                sessionFreeTime:
+                  type: integer
+                  description: 系统未操作分钟数后退出
+                elements:
+                  type: array
+                  description: 品质参数配置
+                  items:
+                    $ref: '#/components/schemas/SystemElementBo'
+              required:
+                - agingAlert
+                - dockAlert
+                - thresholdAlter
+                - usageAlert
+                - passwordLength
+                - passwordComplexity
+                - passwordErrorNum
+                - accountLockTime
+                - sessionFreeTime
+            examples: {}
         required: true
       responses:
         '200':
@@ -6431,7 +6532,57 @@ paths:
           content:
             '*/*':
               schema:
-                $ref: '#/components/schemas/RSystemParamVo'
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    format: int32
+                  msg:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      thresholdAlter:
+                        type: integer
+                        description: 库存预警阈值（库容占用%）
+                        format: int32
+                      agingAlert:
+                        type: integer
+                        description: 原料库龄预警（天）
+                        format: int32
+                      dockAlert:
+                        type: integer
+                        description: 码头仓库预警（天）
+                        format: int32
+                      usageAlert:
+                        type: integer
+                        description: 矿源备案用量预警（%）
+                        format: int32
+                      passwordLength:
+                        type: integer
+                        description: 密码最低长度
+                      passwordComplexity:
+                        type: string
+                        description: 密码复杂度（1大写字母，2小写字母，3数字，4特殊字符）
+                      passwordErrorNum:
+                        type: integer
+                        description: 密码错误次数后锁定
+                      accountLockTime:
+                        type: integer
+                        description: 账号异常尝试登录锁定时长
+                      sessionFreeTime:
+                        type: integer
+                        description: 系统未操作分钟数后退出
+                      elements:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SystemElementVo'
+                    required:
+                      - passwordLength
+                      - passwordComplexity
+                      - passwordErrorNum
+                      - accountLockTime
+                      - sessionFreeTime
               example:
                 code: 200
                 msg: 操作成功
@@ -9663,25 +9814,6 @@ paths:
           headers: {}
       security:
         - apiKey: []
-  /wms/inventory/home:
-    get:
-      summary: 驾驶舱堆位信息
-      deprecated: false
-      description: 驾驶舱堆位信息
-      operationId: queryIndex
-      tags:
-        - 库存
-      parameters: []
-      responses:
-        '200':
-          description: OK
-          content:
-            '*/*':
-              schema:
-                $ref: '#/components/schemas/RAreaInventoryDto'
-          headers: {}
-      security:
-        - apiKey: []
   /wms/checkOrder:
     post:
       summary: 新增库存盘点单据
@@ -10714,6 +10846,9 @@ paths:
                 dosage:
                   type: string
                   description: 用量
+                hazardousElementsRemark:
+                  type: string
+                  description: 有害元素含量
               required:
                 - id
                 - mineralSource
@@ -13485,6 +13620,63 @@ paths:
           headers: {}
       security:
         - apiKey: []
+  /wms/home/weight:
+    get:
+      summary: 重量信息
+      deprecated: false
+      description: 重量信息
+      operationId: querySum
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RInventorySumDto'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/home/receiptDailyWeight:
+    get:
+      summary: 7日入库统计
+      deprecated: false
+      description: 7日入库统计
+      operationId: selectReceiptDailyWeight
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RReceiptDailyWeightDto'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/home/areas:
+    get:
+      summary: 堆位信息
+      deprecated: false
+      description: 堆位信息
+      operationId: queryIndex
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RListAreaInventoryDto'
+          headers: {}
+      security:
+        - apiKey: []
 webhooks: {}
 components:
   schemas:
@@ -14833,11 +15025,11 @@ components:
         parentMenuName:
           type: string
           description: 上级菜单名称字段
-        sub:
-          type: boolean
         tree:
           type: boolean
         crud:
+          type: boolean
+        sub:
           type: boolean
       description: 业务表 gen_table
     SysDept:
@@ -14997,25 +15189,25 @@ components:
           type: integer
           description: 排序
           format: int32
-        pk:
-          type: boolean
-        edit:
-          type: boolean
-        usableColumn:
-          type: boolean
-        superColumn:
-          type: boolean
-        insert:
-          type: boolean
-        required:
-          type: boolean
-        list:
+        query:
           type: boolean
         capJavaField:
           type: string
         increment:
           type: boolean
-        query:
+        required:
+          type: boolean
+        list:
+          type: boolean
+        pk:
+          type: boolean
+        usableColumn:
+          type: boolean
+        superColumn:
+          type: boolean
+        edit:
+          type: boolean
+        insert:
           type: boolean
       description: 代码生成业务字段表 gen_table_column
     SysRole:
@@ -18101,6 +18293,17 @@ components:
         data:
           $ref: '#/components/schemas/ItemCategoryVo'
       description: 响应信息主体
+    RReceiptDailyWeightDto:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/ReceiptDailyWeightDto'
+      description: 响应信息主体
     RListItemTypeTreeSelectVo:
       type: object
       properties:
@@ -18114,6 +18317,13 @@ components:
           items:
             $ref: '#/components/schemas/ItemTypeTreeSelectVo'
       description: 响应信息主体
+    ReceiptDailyWeightDto:
+      type: object
+      properties:
+        arrivalDate:
+          type: string
+        totalDryWeight:
+          type: number
     TableDataInfoItemCategoryVo:
       type: object
       properties:
@@ -19232,23 +19442,21 @@ components:
         deep:
           type: integer
           format: int32
-    AreaInventoryDto:
+    InventorySumDto:
       type: object
       properties:
+        wetWeight:
+          type: number
+          description: 原料湿重(吨)
         dryWeight:
           type: number
-          description: 干重
-        consignorName:
-          type: string
-          description: 委托方
-        areaId:
-          type: integer
-          description: 堆位
-          format: int64
-        areaItems:
-          type: string
-          description: 网格信息
-      description: AreaInventoryDto
+          description: 原料干重(吨)
+        prodWetWeight:
+          type: number
+          description: 成品湿重(吨)
+        prodDryWeight:
+          type: number
+          description: 成品干重(吨)
     RSysRoleVo:
       type: object
       properties:
@@ -19309,6 +19517,17 @@ components:
           type: string
         data:
           $ref: '#/components/schemas/AreaInventoryDto'
+      description: 响应信息主体
+    RInventorySumDto:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/InventorySumDto'
       description: 响应信息主体
     RListSysRoleVo:
       type: object
@@ -19398,6 +19617,27 @@ components:
           items:
             $ref: '#/components/schemas/AccountBookVo'
       description: 响应信息主体
+    AreaInventoryDto:
+      type: object
+      properties:
+        dryWeight:
+          type: number
+          description: 干重
+        consignorName:
+          type: string
+          description: 委托方
+        areaId:
+          type: integer
+          description: 堆位
+          format: int64
+        warehouseId:
+          type: integer
+          description: 仓库
+          format: int64
+        areaItems:
+          type: string
+          description: 网格信息
+      description: AreaInventoryDto
     SysPostVo:
       type: object
       properties:
@@ -19426,6 +19666,19 @@ components:
           description: 创建时间
           format: date-time
       description: 岗位信息视图对象 sys_post
+    RListAreaInventoryDto:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AreaInventoryDto'
+      description: 响应信息主体
     CheckOrderDetailVo:
       type: object
       properties:
@@ -19870,29 +20123,6 @@ components:
           items:
             $ref: '#/components/schemas/SysDictTypeVo'
       description: 响应信息主体
-    TreeLong:
-      type: object
-      properties:
-        name:
-          type: object
-          properties:
-            empty:
-              type: boolean
-        id:
-          type: integer
-          format: int64
-        parentId:
-          type: integer
-          format: int64
-        weight:
-          type: object
-          properties: {}
-        config:
-          $ref: '#/components/schemas/TreeNodeConfig'
-        empty:
-          type: boolean
-      additionalProperties:
-        type: object
     TableDataInfoSysDictTypeVo:
       type: object
       properties:
@@ -19937,6 +20167,29 @@ components:
           items:
             $ref: '#/components/schemas/SysDictDataVo'
       description: 响应信息主体
+    TreeLong:
+      type: object
+      properties:
+        name:
+          type: object
+          properties:
+            empty:
+              type: boolean
+        id:
+          type: integer
+          format: int64
+        weight:
+          type: object
+          properties: {}
+        parentId:
+          type: integer
+          format: int64
+        config:
+          $ref: '#/components/schemas/TreeNodeConfig'
+        empty:
+          type: boolean
+      additionalProperties:
+        type: object
     TableDataInfoSysDictDataVo:
       type: object
       properties:

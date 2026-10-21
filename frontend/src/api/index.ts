@@ -1,5 +1,13 @@
 import type { CargoLot } from '@/plan/model'
-import { clearDictCache } from './fenglian'
+import {
+  clearAllSessionLists,
+  clearDictCache,
+  clearSessionKey,
+  clearSessionList,
+  listSessionCaches,
+  SESSION_LIST,
+  type CacheEntry,
+} from './catalogCache'
 import { request } from './http'
 import type { AuthUser, FloorPlan, PageResult } from '@/types'
 
@@ -20,6 +28,23 @@ export const authApi = {
   setUserStatus: (id: string, body: B) => request('PUT', `/auth/users/${id}/status`, { body }),
   permissions: () => request<Record<string, string[]>>('GET', '/roles/permissions'),
   savePermissions: (role: string, pages: string[]) => request('PUT', `/roles/${role}/permissions`, { body: { pages } }),
+}
+
+export const roleApi = {
+  list: () => request<Record<string, unknown>[]>('GET', '/system/roles'),
+  options: () => request<{ label: string; value: string }[]>('GET', '/system/roles/options'),
+  menus: (id: string) => request<string[]>('GET', `/system/roles/${id}/menus`),
+  create: (body: B) => request('POST', '/system/roles', { body }),
+  update: (id: string, body: B) => request('PUT', `/system/roles/${id}`, { body }),
+  remove: (id: string) => request('DELETE', `/system/roles/${id}`),
+}
+
+export const menuApi = {
+  tree: () => request<Record<string, unknown>[]>('GET', '/system/menus'),
+  create: (body: B) => request('POST', '/system/menus', { body }),
+  update: (id: string, body: B) => request('PUT', `/system/menus/${id}`, { body }),
+  remove: (id: string) => request('DELETE', `/system/menus/${id}`),
+  init: () => request<{ created: number }>('POST', '/system/menus/init'),
 }
 
 export const settingsApi = {
@@ -58,6 +83,33 @@ export const dictApi = {
   removeData: (id: string) => request('DELETE', `/dicts/data/${id}`),
 }
 
+/** 前端会话缓存（字典、档案列表、平面图列表等）。字典清空时同步刷新后端字典缓存。 */
+export const cacheApi = {
+  list: (): CacheEntry[] => listSessionCaches(),
+  clearKey: async (key: string) => {
+    const dictHit = key === SESSION_LIST.dict || key.startsWith(SESSION_LIST.dict)
+    clearSessionKey(key)
+    if (dictHit) {
+      const res = await request('DELETE', '/dicts/cache')
+      return res.success ? { success: true as const, message: res.message || '已清空' } : res
+    }
+    return { success: true as const, message: '已清空' }
+  },
+  clearGroup: async (group: string) => {
+    clearSessionList(group)
+    if (group === SESSION_LIST.dict) {
+      const res = await request('DELETE', '/dicts/cache')
+      return res.success ? { success: true as const, message: res.message || '已清空' } : res
+    }
+    return { success: true as const, message: '已清空' }
+  },
+  clearAll: async () => {
+    clearAllSessionLists()
+    const res = await request('DELETE', '/dicts/cache')
+    return res.success ? { success: true as const, message: res.message || '已全部清空' } : { success: true as const, message: '前端缓存已清空' }
+  },
+}
+
 function splitCsvLine(line: string) {
   const cells: string[] = []
   let current = ''
@@ -83,23 +135,22 @@ function parseMaterialCsv(text: string) {
   if (!lines.length) return []
   const head = splitCsvLine(lines[0])
   const at = (names: string[]) => head.findIndex((cell) => names.includes(cell))
-  const codeAt = at(['物料编码', '编码'])
   const nameAt = at(['名称'])
-  if (codeAt < 0 || nameAt < 0) return null
-  const cargoAt = at(['货物类型'])
-  const kindAt = at(['类型'])
-  const sourceAt = at(['矿源'])
+  if (nameAt < 0) return null
+  const cargoAt = at(['矿种类型', '货物类型'])
+  const mineAt = at(['矿区'])
+  const originAt = at(['原产国', '备案原产国'])
+  const orderAt = at(['排序'])
   return lines.slice(1).map((line) => {
     const cells = splitCsvLine(line)
-    const source = sourceAt >= 0 ? cells[sourceAt] || '' : ''
     return {
-      code: cells[codeAt] || '',
       name: cells[nameAt] || '',
       cargoType: cargoAt >= 0 ? cells[cargoAt] || '' : '',
-      kind: kindAt >= 0 ? cells[kindAt] || '' : '',
-      source: source === '—' ? '' : source,
+      mineArea: mineAt >= 0 ? cells[mineAt] || '' : '',
+      originCountry: originAt >= 0 ? cells[originAt] || '' : '',
+      orderNum: orderAt >= 0 ? cells[orderAt] || '' : '',
     }
-  }).filter((row) => row.code || row.name)
+  }).filter((row) => row.name)
 }
 
 async function importMaterials(file: File) {
@@ -107,40 +158,35 @@ async function importMaterials(file: File) {
     return { success: false, data: null, message: '请上传 CSV。可先导出，再用表格软件另存为 CSV' }
   }
   const rows = parseMaterialCsv(await file.text())
-  if (!rows) return { success: false, data: null, message: '表头需要物料编码、名称、货物类型、类型、矿源' }
+  if (!rows) return { success: false, data: null, message: '表头需要名称、矿种类型、矿区、原产国、排序' }
   if (!rows.length) return { success: false, data: null, message: '没有可导入的物料' }
   const listed = await materialApi.list({ page: 1, pageSize: 500 })
   const existing = listed.success && listed.data ? listed.data.list : []
   let saved = 0
   const errors: string[] = []
   for (const row of rows) {
-    if (!row.code || !row.name) {
-      errors.push('缺少物料编码或名称')
+    if (!row.name) {
+      errors.push('缺少名称')
       continue
     }
-    const kind = row.kind || '原料'
-    const cargoType = kind === '成品' ? '混成品' : (row.cargoType || '达标矿')
-    if (kind === '原料' && !['达标矿', '报备矿'].includes(cargoType)) {
-      errors.push(`${row.code} 原料货物类型请填达标矿或报备矿`)
-      continue
-    }
-    if (kind === '原料' && !row.source) {
-      errors.push(`${row.code} 请填写矿源`)
+    const cargoType = row.cargoType || '达标矿'
+    if (!['报备矿', '达标矿', '混成品'].includes(cargoType)) {
+      errors.push(`${row.name} 矿种类型请填报备矿、达标矿或混成品`)
       continue
     }
     const body = {
-      code: row.code,
       name: row.name,
-      kind,
       cargoType,
-      source: kind === '原料' ? row.source : '',
+      mineArea: row.mineArea,
+      originCountry: row.originCountry,
+      orderNum: row.orderNum || 1,
     }
-    const found = existing.find((item) => String(item.code) === row.code)
+    const found = existing.find((item) => String(item.name) === row.name)
     const res = found
       ? await materialApi.update(String(found.id), body)
       : await materialApi.create(body)
     if (res.success) saved += 1
-    else errors.push(`${row.code} ${res.message}`)
+    else errors.push(`${row.name} ${res.message}`)
   }
   if (!saved) return { success: false, data: null, message: errors[0] || '导入失败' }
   if (errors.length) return { success: false, data: null, message: `已写入 ${saved} 条，其余未导入：${errors[0]}` }
@@ -195,7 +241,9 @@ export const floorApi = {
 }
 
 export const dashboardApi = {
-  cockpit: () => request<Record<string, unknown>>('GET', '/dashboard/cockpit'),
+  weight: () => request<{ rawWet: number; rawDry: number; fgWet: number; fgDry: number }>('GET', '/dashboard/weight'),
+  receiptDaily: () => request<{ day: string; dry: number }[]>('GET', '/dashboard/receipt-daily'),
+  areas: () => request<CargoLot[]>('GET', '/dashboard/areas'),
 }
 
 export const inboundApi = {

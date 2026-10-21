@@ -10,7 +10,7 @@ import YardBoard from '@/components/YardBoard.vue'
 
 interface LogItem { type: string; text: string; time: string }
 interface UsageItem { name: string; rate: number }
-interface TrendItem { day: string; inWet: number; outWet: number }
+interface TrendItem { day: string; dry: number }
 interface WarnItem { title: string; detail: string; time: string; link: string; tone?: string }
 
 const router = useRouter()
@@ -50,9 +50,6 @@ async function logout() {
   auth.logout()
   router.push('/login')
 }
-
-const showIn = ref(true)
-const showOut = ref(true)
 
 function tooltipBase() {
   return {
@@ -125,14 +122,13 @@ function renderCharts() {
     ])
     lineChart.setOption({
       backgroundColor: 'transparent',
-      legend: { show: false, data: ['入库湿吨', '出库湿吨'] },
       tooltip: {
         ...tooltipBase(),
         axisPointer: { type: 'line', lineStyle: { color: 'rgba(231, 201, 138, 0.45)' } },
         formatter: (items: { axisValueLabel?: string; marker?: string; seriesName?: string; value?: number }[]) => {
           const list = Array.isArray(items) ? items : [items]
           const title = list[0]?.axisValueLabel || ''
-          const rows = list.map((item) => `${item.marker || ''}${item.seriesName} ${item.value ?? 0} 湿吨`)
+          const rows = list.map((item) => `${item.marker || ''}${item.seriesName} ${item.value ?? 0} 干吨`)
           return [title, ...rows].join('<br/>')
         },
       },
@@ -148,8 +144,7 @@ function renderCharts() {
       yAxis: {
         type: 'value',
         min: 0,
-        max: 200,
-        interval: 50,
+        max: trendMax(trend.value.map((item) => item.dry)),
         axisLabel: label,
         axisLine: { show: false },
         axisTick: { show: false },
@@ -157,67 +152,43 @@ function renderCharts() {
       },
       series: [
         {
-          name: '入库湿吨',
+          name: '入库干吨',
           type: 'line',
           smooth: 0.45,
           symbol: 'circle',
           symbolSize: 7,
-          showSymbol: false,
-          triggerLineEvent: true,
+          showSymbol: trend.value.length < 2,
           cursor: 'pointer',
-          data: trend.value.map((item) => item.inWet),
+          data: trend.value.map((item) => item.dry),
           lineStyle: { color: '#3aa0ff', width: 2 },
           itemStyle: { color: '#3aa0ff' },
           areaStyle: { color: area('rgba(58, 160, 255, 0.55)') },
           emphasis: { focus: 'series', scale: true },
         },
-        {
-          name: '出库湿吨',
-          type: 'line',
-          smooth: 0.45,
-          symbol: 'circle',
-          symbolSize: 7,
-          showSymbol: false,
-          triggerLineEvent: true,
-          cursor: 'pointer',
-          data: trend.value.map((item) => item.outWet),
-          lineStyle: { color: '#e0a04a', width: 2 },
-          itemStyle: { color: '#e0a04a' },
-          areaStyle: { color: area('rgba(224, 160, 74, 0.5)') },
-          emphasis: { focus: 'series', scale: true },
-        },
       ],
     })
-    lineChart.on('click', (params) => {
-      router.push(params.seriesName === '出库湿吨' ? '/outbound' : '/inbound')
+    lineChart.on('click', () => {
+      router.push('/inbound')
     })
   }
 }
 
-function toggleSeries(name: '入库湿吨' | '出库湿吨') {
-  if (name === '入库湿吨') showIn.value = !showIn.value
-  else showOut.value = !showOut.value
-  lineChart?.dispatchAction({ type: 'legendToggleSelect', name })
+function trendMax(values: number[]) {
+  const peak = Math.max(0, ...values)
+  if (peak <= 0) return 10
+  const step = 10 ** Math.floor(Math.log10(peak))
+  return Math.ceil((peak * 1.2) / step) * step
 }
 
 onMounted(async () => {
-  const res = await dashboardApi.cockpit()
-  const data = res.data as {
-    kpi: typeof kpi.value
-    production: typeof production.value
-    logs: LogItem[]
-    usage: UsageItem[]
-    trend: TrendItem[]
-    warnings: WarnItem[]
-  } | null
-  if (res.success && data) {
-    kpi.value = data.kpi
-    production.value = data.production
-    logs.value = data.logs
-    usage.value = data.usage
-    trend.value = data.trend
-    warnings.value = data.warnings
+  const [weightRes, dailyRes] = await Promise.all([
+    dashboardApi.weight(),
+    dashboardApi.receiptDaily(),
+  ])
+  if (weightRes.success && weightRes.data) {
+    kpi.value = { ...kpi.value, ...weightRes.data }
   }
+  if (dailyRes.success && Array.isArray(dailyRes.data)) trend.value = dailyRes.data
   await nextTick()
   renderCharts()
   observer = new ResizeObserver(() => resizeCharts())
@@ -263,7 +234,7 @@ onBeforeUnmount(() => {
         <article><b>{{ num(kpi.rawWet) }}</b><span>原料湿吨</span></article>
         <article><b>{{ num(kpi.rawDry) }}</b><span>原料干吨</span></article>
         <article><b>{{ num(kpi.fgWet) }}</b><span>成品湿吨</span></article>
-        <article><b>{{ num(kpi.fgDry) }}</b><span>原料干吨</span></article>
+        <article><b>{{ num(kpi.fgDry) }}</b><span>成品干吨</span></article>
       </section>
 
       <YardBoard />
@@ -310,10 +281,9 @@ onBeforeUnmount(() => {
         </article>
         <article class="chart-card">
           <div class="card-head">
-            <h3><PulseDot />近七日入出库趋势</h3>
+            <h3><PulseDot />近七日入库</h3>
             <div class="legend">
-              <span class="in" :class="{ off: !showIn }" @click="toggleSeries('入库湿吨')">入库湿吨</span>
-              <span class="out" :class="{ off: !showOut }" @click="toggleSeries('出库湿吨')">出库湿吨</span>
+              <span class="in">入库干吨</span>
             </div>
           </div>
           <div ref="lineRef" class="chart" />

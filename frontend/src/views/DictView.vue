@@ -229,20 +229,6 @@ async function removeData(row: Row) {
   loadData()
 }
 
-async function refreshCache() {
-  try {
-    await ElMessageBox.confirm('确认刷新字典缓存？', '确认')
-  } catch {
-    return
-  }
-  const res = await dictApi.refresh()
-  if (!res.success) {
-    ElMessage.error(res.message)
-    return
-  }
-  ElMessage.success(res.message || '字典缓存已刷新')
-}
-
 function tagType(status: unknown) {
   return status === '正常' ? 'success' : 'info'
 }
@@ -280,7 +266,6 @@ onMounted(loadTypes)
         <div class="head-actions">
           <el-button link type="primary" @click="openTypeEdit(selected)">编辑</el-button>
           <el-button link type="danger" @click="removeType(selected)">删除</el-button>
-          <el-button link @click="refreshCache">刷新缓存</el-button>
         </div>
       </header>
 

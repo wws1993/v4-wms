@@ -26,7 +26,7 @@ export interface FieldSchema {
   key: string
   label: string
   type?: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea' | 'multi' | 'file' | 'image' | 'cells' | 'password'
-  optionsFrom?: 'stacks' | 'materials' | 'shipping' | 'consignors' | 'warehouses'
+  optionsFrom?: 'stacks' | 'materials' | 'shipping' | 'consignors' | 'warehouses' | 'roles'
   /** 选项来自字典类型，值为字典标签。 */
   dict?: string
   stackKey?: string
@@ -108,7 +108,7 @@ export interface ModuleSchema {
   dialogTitle?: string
   defaults?: () => Record<string, unknown>
   monthExport?: (month: string) => Promise<ApiResult<{ filename: string; content?: string; blob?: Blob }>>
-  onFormChange?: (form: Record<string, unknown>, key: string) => void
+  onFormChange?: (form: Record<string, unknown>, key: string, ctx?: { materials?: Record<string, unknown>[] }) => void
   assist?: { label: string; fill: () => Record<string, unknown> }
   toolbar?: { label: string; run: () => Promise<ApiResult> | void }[]
   createLabel?: string

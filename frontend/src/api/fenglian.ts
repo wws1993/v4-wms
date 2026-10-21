@@ -1,8 +1,10 @@
 import { presentAudit } from '@/audit/present'
-import { pagesFor } from '@/nav'
+import { pageIdsFromTitles, pagesFor } from '@/nav'
+import { menuSeed } from '@/system/menuSeed'
 import { defaultPlan, hostOf, stackCode, warehouseCodeOf, type CargoLot } from '@/plan/model'
 import { loadFloorPlan, parseFloorPlan, saveFloorPlan } from '@/plan/storage'
 import type { FloorPlan, RoleKey } from '@/types'
+import { clearSessionList, loadSessionList, SESSION_LIST } from '@/api/catalogCache'
 import { fail, ok, toCsv } from '@/api/result'
 import { passwordIssue } from '@/security/policy'
 import { isMediaPath, mediaUrl } from './media'
@@ -22,27 +24,6 @@ const ROLE_LABEL: Record<RoleKey, string> = {
   warehouse: '仓管员',
   customs: '关务员',
 }
-
-const MENU_WORDS: { id: string; words: string[] }[] = [
-  { id: 'dashboard', words: ['概览', '驾驶舱', '首页'] },
-  { id: 'warehouses', words: ['仓位管理', '仓库管理', '仓库'] },
-  { id: 'stacks', words: ['堆位', '库区'] },
-  { id: 'materials', words: ['物料', '商品'] },
-  { id: 'partners', words: ['往来'] },
-  { id: 'bonded', words: ['账册', '保税'] },
-  { id: 'settings', words: ['系统设置', '参数设置'] },
-  { id: 'inbound', words: ['入库'] },
-  { id: 'transfer', words: ['移库'] },
-  { id: 'inventory', words: ['库存'] },
-  { id: 'stocktake', words: ['盘点', '盘库'] },
-  { id: 'warningLogs', words: ['预警日志'] },
-  { id: 'outbound', words: ['出库'] },
-  { id: 'production', words: ['生产', '完工', '加工'] },
-  { id: 'customs', words: ['关务'] },
-  { id: 'ocr', words: ['ocr', '识别'] },
-  { id: 'audit', words: ['操作日志', '审计'] },
-  { id: 'dicts', words: ['字典'] },
-]
 
 const MERCHANT_FALLBACK = [
   { label: '委托方', value: '1' },
@@ -156,73 +137,24 @@ function pagesFromRouters(nodes: unknown) {
     })
   }
   walk(nodes)
-  const joined = titles.join(' ').toLowerCase()
-  const pages = MENU_WORDS.filter((item) => item.words.some((word) => joined.includes(word.toLowerCase()))).map((item) => item.id)
-  if (!pages.includes('dashboard')) pages.unshift('dashboard')
-  return pages
-}
-
-const DICT_CACHE_PREFIX = 'wms_dict_enum:'
-const dictPending = new Map<string, Promise<Row[]>>()
-let dictGeneration = 0
-
-function readDictCache(type: string) {
-  try {
-    const raw = sessionStorage.getItem(DICT_CACHE_PREFIX + type)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed as Row[] : null
-  } catch {
-    return null
-  }
-}
-
-function writeDictCache(type: string, rows: Row[], generation: number) {
-  if (generation !== dictGeneration) return
-  try {
-    sessionStorage.setItem(DICT_CACHE_PREFIX + type, JSON.stringify(rows))
-  } catch {
-    // 会话存储写满或被禁用时，本次仍返回查询结果
-  }
-}
-
-export function clearDictCache() {
-  dictGeneration += 1
-  dictPending.clear()
-  const keys: string[] = []
-  for (let index = 0; index < sessionStorage.length; index += 1) {
-    const key = sessionStorage.key(index)
-    if (key?.startsWith(DICT_CACHE_PREFIX)) keys.push(key)
-  }
-  keys.forEach((key) => sessionStorage.removeItem(key))
-}
-
-async function loadDictRows(type: string, generation: number) {
-  const result = await ruoyiGet(`/system/dict/data/type/${type}`)
-  let rows = result.ok ? (Array.isArray(result.data) ? result.data as Row[] : result.rows) : []
-  let loaded = result.ok && rows.length > 0
-  if (!rows.length) {
-    const listed = await ruoyiGet('/system/dict/data/list', { pageNum: 1, pageSize: 200, dictType: type })
-    if (listed.ok) {
-      rows = listed.rows
-      loaded = true
-    }
-  }
-  if (loaded) writeDictCache(type, rows, generation)
-  return rows
+  return pageIdsFromTitles(titles)
 }
 
 async function dictRows(type: string) {
-  const cached = readDictCache(type)
-  if (cached) return cached.map((row) => ({ ...row }))
-  const pending = dictPending.get(type)
-  if (pending) return (await pending).map((row) => ({ ...row }))
-  const generation = dictGeneration
-  const task = loadDictRows(type, generation).finally(() => {
-    if (dictPending.get(type) === task) dictPending.delete(type)
+  const listed = await loadSessionList(SESSION_LIST.dict, SESSION_LIST.dict + type, async () => {
+    const result = await ruoyiGet(`/system/dict/data/type/${type}`)
+    let rows = result.ok ? (Array.isArray(result.data) ? result.data as Row[] : result.rows) : []
+    let loaded = result.ok && rows.length > 0
+    if (!rows.length) {
+      const fallback = await ruoyiGet('/system/dict/data/list', { pageNum: 1, pageSize: 200, dictType: type })
+      if (fallback.ok) {
+        rows = fallback.rows
+        loaded = true
+      }
+    }
+    return { ok: loaded, rows }
   })
-  dictPending.set(type, task)
-  return (await task).map((row) => ({ ...row }))
+  return listed.rows
 }
 
 async function dictOf(type: string) {
@@ -268,13 +200,17 @@ function codeOf(options: { label: string; value: string }[], label: unknown) {
   return hit ? num(hit.value) : num(raw)
 }
 
-let roleCache: Row[] | null = null
+function clearRoleCache() {
+  clearSessionList(SESSION_LIST.role)
+}
 
 async function roles() {
-  if (roleCache) return roleCache
-  const result = await ruoyiGet('/system/role/optionselect')
-  roleCache = result.ok ? (Array.isArray(result.data) ? result.data as Row[] : result.rows) : []
-  return roleCache
+  const listed = await loadSessionList(SESSION_LIST.role, SESSION_LIST.role, async () => {
+    const result = await ruoyiGet('/system/role/optionselect')
+    const rows = result.ok ? (Array.isArray(result.data) ? result.data as Row[] : result.rows) : []
+    return { ok: result.ok, rows }
+  })
+  return listed.rows
 }
 
 async function roleIdFor(key: string) {
@@ -286,12 +222,15 @@ async function roleIdFor(key: string) {
 function userRow(row: Row) {
   const roleBlob = `${text(row.roleKey)} ${(Array.isArray(row.roles) ? row.roles as Row[] : []).map((item) => `${item.roleKey || ''} ${item.roleName || ''}`).join(' ')}`
   const roleKey = roleOf(roleBlob) || 'warehouse'
-  const named = (Array.isArray(row.roles) ? row.roles as Row[] : []).map((item) => text(item.roleName)).find(Boolean)
+  const roleRows = Array.isArray(row.roles) ? row.roles as Row[] : []
+  const named = roleRows.map((item) => text(item.roleName)).find(Boolean)
+  const roleId = text(row.roleId || roleRows[0]?.roleId || (Array.isArray(row.roleIds) ? row.roleIds[0] : ''))
   return {
     id: text(row.userId ?? row.id),
     username: text(row.userName),
     name: text(row.nickName),
     roleKey,
+    roleId,
     roleName: named || ROLE_LABEL[roleKey],
     phone: text(row.phonenumber),
     status: userStatusLabel(row.status),
@@ -349,117 +288,60 @@ function stackRow(row: Row) {
   }
 }
 
-const ITEM_SOURCE_KEY = 'wms_item_source'
-
-function readItemSources(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(ITEM_SOURCE_KEY)
-    const parsed = raw ? JSON.parse(raw) as Record<string, string> : {}
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function rememberItemSource(code: string, source: string) {
-  if (!code) return
-  const map = readItemSources()
-  if (source) map[code] = source
-  else delete map[code]
-  localStorage.setItem(ITEM_SOURCE_KEY, JSON.stringify(map))
-}
-
-function withItemSource<T extends { code: string; source: string }>(row: T): T {
-  const saved = readItemSources()[row.code]
-  return { ...row, source: row.source || saved || '' }
-}
-
 function itemRow(row: Row, categories: { label: string; value: string }[], kinds: { label: string; value: string }[]) {
-  return withItemSource({
+  const cargoType = labelOf(categories, row.itemCategory) || text(row.itemCategory)
+  /** 丰联现把 mineralSource 用作矿区。 */
+  const mineArea = text(row.mineralSource ?? row.mineArea ?? row.mineralArea)
+  return {
     id: text(row.id),
     code: text(row.itemCode),
     name: text(row.itemName),
-    cargoType: labelOf(categories, row.itemCategory) || text(row.itemCategory),
-    kind: labelOf(kinds, row.type) || text(row.type),
-    source: text(row.mineralSource),
-  })
-}
-
-const ITEM_CACHE_KEY = 'wms_item_list'
-let itemGeneration = 0
-let itemPending: Promise<Row[]> | null = null
-
-function readItemCache() {
-  try {
-    const raw = sessionStorage.getItem(ITEM_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed as Row[] : null
-  } catch {
-    return null
-  }
-}
-
-function writeItemCache(rows: Row[], generation: number) {
-  if (generation !== itemGeneration) return
-  try {
-    sessionStorage.setItem(ITEM_CACHE_KEY, JSON.stringify(rows))
-  } catch {
-    // 会话存储写满或被禁用时，本次仍返回查询结果
+    cargoType,
+    kind: labelOf(kinds, row.type) || (cargoType === '混成品' ? '成品' : '原料'),
+    source: mineArea,
+    mineArea,
+    originCountry: text(row.originCountry),
+    orderNum: orderNumOf(row.orderNum),
   }
 }
 
 function clearItemCache() {
-  itemGeneration += 1
-  itemPending = null
-  sessionStorage.removeItem(ITEM_CACHE_KEY)
-}
-
-async function loadItemCatalog(generation: number) {
-  const result = await ruoyiGet('/wms/item/list', { pageNum: 1, pageSize: 100 })
-  const rows = result.ok ? result.rows : []
-  if (result.ok) writeItemCache(rows, generation)
-  return rows
+  clearSessionList(SESSION_LIST.item)
 }
 
 async function itemCatalog() {
-  const cached = readItemCache()
-  if (cached) return cached.map((row) => ({ ...row }))
-  if (itemPending) return (await itemPending).map((row) => ({ ...row }))
-  const generation = itemGeneration
-  const task = loadItemCatalog(generation).finally(() => {
-    if (itemPending === task) itemPending = null
+  const listed = await loadSessionList(SESSION_LIST.item, SESSION_LIST.item, async () => {
+    const result = await catalog('/wms/item/listNoPage')
+    return { ok: result.ok, rows: result.ok ? result.rows : [] }
   })
-  itemPending = task
-  return (await task).map((row) => ({ ...row }))
+  return listed
 }
 
-function itemCatalogQuery(query: Query) {
-  return Number(query.page || 1) === 1
-    && Number(query.pageSize || 10) === 100
-    && !text(query.keyword)
-    && !text(query.kind)
-    && !text(query.cargoType)
+async function itemCatalogRows() {
+  return (await itemCatalog()).rows
 }
 
 async function listItems(query: Query) {
   const categories = await dictOf('wms_item_category')
   const kinds = await dictOf('wms_item_type')
-  if (itemCatalogQuery(query)) {
-    const rows = await itemCatalog()
-    return ok({
-      list: rows.map((row) => itemRow(row, categories, kinds)),
-      total: rows.length,
-      page: 1,
-      pageSize: 100,
-    })
-  }
-  const result = await ruoyiGet('/wms/item/list', pageParams(query, {
-    itemName: query.keyword || undefined,
-    type: query.kind ? await dictValue('wms_item_type', query.kind) : undefined,
-    itemCategory: query.cargoType ? await dictValue('wms_item_category', query.cargoType) : undefined,
-  }))
-  return pageOf(result, result.rows.map((row) => itemRow(row, categories, kinds)), query)
+  const listed = await itemCatalog()
+  if (!listed.ok) return fail('物料列表读取失败')
+  let mapped = byOrderNum(listed.rows.map((row) => itemRow(row, categories, kinds)))
+  const keyword = text(query.keyword).trim()
+  const cargoType = text(query.cargoType).trim()
+  const kind = text(query.kind).trim()
+  if (keyword) mapped = mapped.filter((row) => `${row.code}${row.name}${row.mineArea}${row.originCountry}`.includes(keyword))
+  if (cargoType) mapped = mapped.filter((row) => row.cargoType === cargoType)
+  if (kind) mapped = mapped.filter((row) => row.kind === kind)
+  const page = Number(query.page || 1)
+  const pageSize = Number(query.pageSize || 10)
+  const start = (page - 1) * pageSize
+  return ok({
+    list: mapped.slice(start, start + pageSize),
+    total: mapped.length,
+    page,
+    pageSize,
+  })
 }
 
 function merchantRow(row: Row, types: { label: string; value: string }[]) {
@@ -556,61 +438,25 @@ async function catalog(path: string) {
   return { ok: true as const, message: result.message, rows }
 }
 
-const WAREHOUSE_CACHE_KEY = 'wms_warehouse_list'
-let warehouseGeneration = 0
-let warehousePending: Promise<Row[]> | null = null
-
-function readWarehouseCache() {
-  try {
-    const raw = sessionStorage.getItem(WAREHOUSE_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed as Row[] : null
-  } catch {
-    return null
-  }
-}
-
-function writeWarehouseCache(rows: Row[], generation: number) {
-  if (generation !== warehouseGeneration) return
-  try {
-    sessionStorage.setItem(WAREHOUSE_CACHE_KEY, JSON.stringify(rows))
-  } catch {
-    // 会话存储写满或被禁用时，本次仍返回查询结果
-  }
-}
-
 export function clearWarehouseCache() {
-  warehouseGeneration += 1
-  warehousePending = null
-  sessionStorage.removeItem(WAREHOUSE_CACHE_KEY)
-}
-
-async function loadWarehouseRows(generation: number) {
-  const listed = await catalog('/wms/warehouse/listNoPage')
-  let rows = listed.rows
-  let loaded = listed.ok && rows.length > 0
-  if (!rows.length) {
-    const page = await ruoyiGet('/wms/warehouse/list', { pageNum: 1, pageSize: 200 })
-    if (page.ok) {
-      rows = page.rows
-      loaded = true
-    }
-  }
-  if (loaded) writeWarehouseCache(rows, generation)
-  return rows
+  clearSessionList(SESSION_LIST.warehouse)
 }
 
 async function warehouseRows() {
-  const cached = readWarehouseCache()
-  if (cached) return cached.map((row) => ({ ...row }))
-  if (warehousePending) return (await warehousePending).map((row) => ({ ...row }))
-  const generation = warehouseGeneration
-  const task = loadWarehouseRows(generation).finally(() => {
-    if (warehousePending === task) warehousePending = null
+  const listed = await loadSessionList(SESSION_LIST.warehouse, SESSION_LIST.warehouse, async () => {
+    const cataloged = await catalog('/wms/warehouse/listNoPage')
+    let rows = cataloged.rows
+    let loaded = cataloged.ok && rows.length > 0
+    if (!rows.length) {
+      const page = await ruoyiGet('/wms/warehouse/list', { pageNum: 1, pageSize: 200 })
+      if (page.ok) {
+        rows = page.rows
+        loaded = true
+      }
+    }
+    return { ok: loaded, rows }
   })
-  warehousePending = task
-  return (await task).map((row) => ({ ...row }))
+  return listed.rows
 }
 
 async function findWarehouseId(name: unknown) {
@@ -650,76 +496,40 @@ function areaNameValue(row: Row) {
   return flat(row.areaName || row.area_name || row.name)
 }
 
-const AREA_CACHE_KEY = 'wms_area_list'
-let areaGeneration = 0
-let areaPending: Promise<Row[]> | null = null
-
-function readAreaCache() {
-  try {
-    const raw = sessionStorage.getItem(AREA_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed as Row[] : null
-  } catch {
-    return null
-  }
-}
-
-function writeAreaCache(rows: Row[], generation: number) {
-  if (generation !== areaGeneration) return
-  try {
-    sessionStorage.setItem(AREA_CACHE_KEY, JSON.stringify(rows))
-  } catch {
-    // 会话存储写满或被禁用时，本次仍返回查询结果
-  }
-}
-
 export function clearAreaCache() {
-  areaGeneration += 1
-  areaPending = null
-  sessionStorage.removeItem(AREA_CACHE_KEY)
-}
-
-async function loadAreaRows(generation: number) {
-  const rows: Row[] = []
-  const seen = new Set<string>()
-  const push = (list: Row[]) => {
-    for (const row of list) {
-      const key = flat(row.id) || areaCodeValue(row) || areaNameValue(row)
-      if (!key || seen.has(key)) continue
-      seen.add(key)
-      rows.push(row)
-    }
-  }
-  const list = await catalog('/wms/area/listNoPage')
-  let loaded = list.ok
-  if (list.ok) push(list.rows)
-  if (!rows.length) {
-    let paged = 0
-    for (let page = 1; page <= 20; page += 1) {
-      const result = await ruoyiGet('/wms/area/list', { pageNum: page, pageSize: 200 })
-      if (!result.ok) break
-      loaded = true
-      if (!result.rows.length) break
-      push(result.rows)
-      paged += result.rows.length
-      if (result.rows.length < 200 || (result.total > 0 && paged >= result.total)) break
-    }
-  }
-  if (loaded) writeAreaCache(rows, generation)
-  return rows
+  clearSessionList(SESSION_LIST.area)
 }
 
 async function areaRows() {
-  const cached = readAreaCache()
-  if (cached) return cached.map((row) => ({ ...row }))
-  if (areaPending) return (await areaPending).map((row) => ({ ...row }))
-  const generation = areaGeneration
-  const task = loadAreaRows(generation).finally(() => {
-    if (areaPending === task) areaPending = null
+  const listed = await loadSessionList(SESSION_LIST.area, SESSION_LIST.area, async () => {
+    const rows: Row[] = []
+    const seen = new Set<string>()
+    const push = (list: Row[]) => {
+      for (const row of list) {
+        const key = flat(row.id) || areaCodeValue(row) || areaNameValue(row)
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        rows.push(row)
+      }
+    }
+    const list = await catalog('/wms/area/listNoPage')
+    let loaded = list.ok
+    if (list.ok) push(list.rows)
+    if (!rows.length) {
+      let paged = 0
+      for (let page = 1; page <= 20; page += 1) {
+        const result = await ruoyiGet('/wms/area/list', { pageNum: page, pageSize: 200 })
+        if (!result.ok) break
+        loaded = true
+        if (!result.rows.length) break
+        push(result.rows)
+        paged += result.rows.length
+        if (result.rows.length < 200 || (result.total > 0 && paged >= result.total)) break
+      }
+    }
+    return { ok: loaded, rows }
   })
-  areaPending = task
-  return (await task).map((row) => ({ ...row }))
+  return listed.rows
 }
 
 function normStack(value: string) {
@@ -800,16 +610,28 @@ async function findArea(code: unknown) {
     || (await listAreas({ warehouseId: idOf(houseId) })).find((row) => areaExact(row, raw) || areaSlotHit(row, slot))
 }
 
+async function merchantRows() {
+  const listed = await loadSessionList(SESSION_LIST.merchant, SESSION_LIST.merchant, async () => {
+    const result = await catalog('/wms/merchant/listNoPage')
+    return { ok: result.ok, rows: result.rows }
+  })
+  return listed
+}
+
+function clearMerchantCache() {
+  clearSessionList(SESSION_LIST.merchant)
+}
+
 async function findMerchant(name: unknown) {
-  const list = await catalog('/wms/merchant/listNoPage')
+  const list = await merchantRows()
   const raw = text(name)
   return list.rows.find((row) => text(row.merchantName) === raw || text(row.merchantCode) === raw || text(row.id) === raw)
 }
 
 async function findItem(value: unknown) {
-  const list = await catalog('/wms/item/listNoPage')
+  const rows = await itemCatalogRows()
   const raw = text(value)
-  return list.rows.find((row) => text(row.id) === raw || text(row.itemCode) === raw || text(row.itemName) === raw)
+  return rows.find((row) => text(row.id) === raw || text(row.itemCode) === raw || text(row.itemName) === raw)
 }
 
 async function findBook(name: unknown) {
@@ -833,9 +655,14 @@ function materialName(row: Row, items: Row[]) {
   return text(hit?.itemName)
 }
 
-function filingNoOf(row: Row) {
-  const filings = Array.isArray(row.mineralSourceFiling) ? row.mineralSourceFiling as Row[] : []
-  return text(filings[0]?.recordNumber)
+function filingNoOf(row?: Row | null) {
+  if (!row) return ''
+  const direct = text(row.filingNo).trim()
+  if (direct) return direct
+  const filings = row.mineralSourceFiling
+  if (Array.isArray(filings) && filings[0]) return text((filings[0] as Row).recordNumber)
+  if (filings && typeof filings === 'object') return text((filings as Row).recordNumber)
+  return ''
 }
 
 function shipModeOf(row: Row, translates: { label: string; value: string }[]) {
@@ -856,6 +683,7 @@ function receiptRow(row: Row, minerals: { label: string; value: string }[], stat
     operateTime: text(row.updateTime || row.createTime).replace('T', ' ').slice(0, 19),
     customsNo: text(row.recordNo),
     blNo: text(row.waybillNo),
+    blWeight: row.waybillWeight ?? row.blWeight ?? '',
     shipName: text(row.shipName),
     oreType: labelOf(minerals, row.mineralType) || text(row.mineralType),
     shipMode: shipModeOf(row, translates),
@@ -898,12 +726,27 @@ function elementFields(row: Row) {
   return fields
 }
 
+function normalizeResult(result: Row) {
+  const out: Row = {}
+  for (const [key, value] of Object.entries(result)) {
+    const name = key.trim()
+    if (!(name in out) || out[name] == null || out[name] === '') out[name] = value
+  }
+  return out
+}
+
 function resultObject(row: Row) {
-  if (row.result && typeof row.result === 'object') return row.result as Row
+  if (row.result && typeof row.result === 'object') return normalizeResult(row.result as Row)
   if (typeof row.resultJson === 'string' && row.resultJson) {
-    try { return JSON.parse(row.resultJson) as Row } catch { return {} }
+    try { return normalizeResult(JSON.parse(row.resultJson) as Row) } catch { return {} }
   }
   return {}
+}
+
+function blWeightOf(result: Row) {
+  const raw = result.waybillWeight ?? result.blWeight ?? result.netWeight ?? result.grossWeight
+  if (raw == null || raw === '') return ''
+  return raw
 }
 
 function ocrRow(row: Row) {
@@ -920,6 +763,7 @@ function ocrRow(row: Row) {
     consignee: text(result.consignee || result.merchantName),
     shipName: text(result.shipName),
     blNo: text(result.waybillNo || result.blNo),
+    blWeight: blWeightOf(result),
     amount: result.payableAmount ?? result.amount ?? '',
     currency: text(result.currency),
     wet: result.wetWeight ?? result.wet ?? '',
@@ -970,9 +814,18 @@ function rememberFloor(plan: FloorPlan) {
 }
 
 async function fetchFloorRows() {
-  const result = await ruoyiGet('/wms/floorPlan/listNoPage')
-  if (!result.ok) return { ok: false as const, message: result.message, rows: [] as Row[] }
-  return { ok: true as const, message: result.message, rows: floorRows(result) }
+  const listed = await loadSessionList(SESSION_LIST.floorPlan, SESSION_LIST.floorPlan, async () => {
+    const result = await ruoyiGet('/wms/floorPlan/listNoPage')
+    if (!result.ok) return { ok: false, rows: [] as Row[] }
+    return { ok: true, rows: floorRows(result) }
+  })
+  if (!listed.ok) return { ok: false as const, message: '平面图列表读取失败', rows: [] as Row[] }
+  return { ok: true as const, message: '', rows: listed.rows }
+}
+
+function clearFloorCache() {
+  clearSessionList(SESSION_LIST.floorPlan)
+  floorRead = null
 }
 
 async function publishFloor(plan: FloorPlan) {
@@ -981,6 +834,7 @@ async function publishFloor(plan: FloorPlan) {
     ? await ruoyiSend('PUT', '/wms/floorPlan', { id: floorRecordId, jsonData })
     : await ruoyiSend('POST', '/wms/floorPlan', { jsonData })
   if (!result.ok) return result
+  clearFloorCache()
   const created = result.data && typeof result.data === 'object' ? text((result.data as Row).id) : text(result.data)
   if (created && created !== '[object Object]') floorRecordId = created
   else if (!floorRecordId) {
@@ -1183,13 +1037,22 @@ async function captcha() {
 
 async function users(query: Query) {
   const result = await ruoyiGet('/system/user/list', pageParams(query, { userName: query.keyword || undefined }))
-  return pageOf(result, result.rows.map(userRow), query)
+  const list = result.rows.map(userRow)
+  for (const row of list) {
+    if (row.roleId || !row.roleKey) continue
+    const matched = await roleIdFor(row.roleKey)
+    if (matched) row.roleId = text(matched)
+  }
+  return pageOf(result, list, query)
 }
 
 async function saveUser(id: string | undefined, body: Row) {
+  const explicitRole = text(body.roleId).trim()
   const roleKey = text(body.roleKey || 'warehouse')
-  const matchedRole = await roleIdFor(roleKey)
-  if (!matchedRole) return fail(`丰联后台没有与「${ROLE_LABEL[roleKey as RoleKey] || roleKey}」对应的角色`)
+  const matchedRole = explicitRole ? idOf(explicitRole) : await roleIdFor(roleKey)
+  if (!matchedRole) {
+    return fail(explicitRole ? '没有找到对应角色' : `丰联后台没有与「${ROLE_LABEL[roleKey as RoleKey] || roleKey}」对应的角色`)
+  }
   const payload: Row = {
     userName: body.username,
     nickName: body.name,
@@ -1207,7 +1070,6 @@ async function saveUser(id: string | undefined, body: Row) {
   if (id) payload.userId = idOf(id)
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/system/user', payload)
   if (!result.ok) return fail(result.message)
-  roleCache = null
   return ok(true, id ? '已保存' : '账号已创建')
 }
 
@@ -1355,37 +1217,34 @@ async function saveStack(id: string | undefined, body: Row) {
 }
 
 async function removeItem(id: string) {
-  const detail = await ruoyiGet(`/wms/item/${id}`)
-  const code = detail.ok ? text((detail.data as Row | undefined)?.itemCode) : ''
   const result = await ruoyiSend('DELETE', `/wms/item/${id}`)
   if (!result.ok) return fail(result.message)
-  if (code) rememberItemSource(code, '')
   clearItemCache()
   return ok(true, '已删除')
 }
 
 async function saveItem(id: string | undefined, body: Row) {
-  const cargoType = text(body.cargoType)
-  const kind = text(body.kind)
-  const source = kind === '原料' ? text(body.source) : ''
-  if (kind === '原料' && !source) return fail('请填写矿源')
+  const name = text(body.name).trim()
+  const cargoType = text(body.cargoType).trim()
+  if (!name) return fail('请填写名称')
+  if (!cargoType) return fail('请选择矿种类型')
   const payload: Row = {
-    itemCode: body.code,
-    itemName: body.name,
+    itemName: name,
     itemCategory: await dictValue('wms_item_category', cargoType),
-    type: await dictValue('wms_item_type', kind),
-    mineralSource: source,
+    mineralSource: text(body.mineArea).trim(),
+    originCountry: text(body.originCountry).trim(),
+    orderNum: orderNumOf(body.orderNum) ?? 0,
   }
   if (id) payload.id = idOf(id)
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/item', payload)
   if (!result.ok) return fail(result.message)
-  rememberItemSource(text(body.code), source)
   clearItemCache()
   return ok(true, '已保存')
 }
 
 async function removeMerchant(id: string) {
   const result = await ruoyiSend('DELETE', `/wms/merchant/${id}`)
+  if (result.ok) clearMerchantCache()
   return result.ok ? ok(true, '已删除') : fail(result.message)
 }
 
@@ -1403,6 +1262,7 @@ async function saveMerchant(id: string | undefined, body: Row) {
   }
   if (id) payload.id = idOf(id)
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/merchant', payload)
+  if (result.ok) clearMerchantCache()
   return result.ok ? ok(true, '已保存') : fail(result.message)
 }
 
@@ -1470,7 +1330,7 @@ async function listReceipts(query: Query) {
   const currencies = await dictOf('wms_currency_type')
   const categories = await dictOf('wms_item_category')
   const translates = await dictOf('wms_translate_type')
-  const items = await catalog('/wms/item/listNoPage')
+  const items = await itemCatalog()
   const consignor = query.consignor ? await findMerchant(query.consignor) : undefined
   const filters: Query = {
     shippingMethodId: query.shipMode ? await codeFromDict('wms_translate_type', query.shipMode) ?? undefined : undefined,
@@ -1511,7 +1371,7 @@ async function getReceipt(id: string) {
     dictOf('wms_currency_type'),
     dictOf('wms_item_category'),
     dictOf('wms_translate_type'),
-    catalog('/wms/item/listNoPage'),
+    itemCatalog(),
   ])
   if (!detail.ok || !detail.data || typeof detail.data !== 'object') return fail(detail.message || '入库单不存在')
   return ok(receiptRow(detail.data as Row, minerals, statuses, currencies, categories, translates, items.rows))
@@ -1524,7 +1384,6 @@ async function createReceipt(body: Row) {
   const area = await findArea(body.areaId) || await findArea(body.stackCode)
   const item = await findItem(body.material)
   const shippingMethodId = await codeFromDict('wms_translate_type', body.shipMode)
-  const mineralType = await codeFromDict('wms_mineral_type', body.oreType)
   const shipName = text(body.shipName).trim()
 
   if (!consignor) return fail('委托方在往来单位中不存在')
@@ -1535,13 +1394,13 @@ async function createReceipt(body: Row) {
   }
   if (!item) return fail('请选择物料')
   if (shippingMethodId == null) return fail('货运方式需与后端字典编码一致')
-  if (mineralType == null) return fail('矿种需与后端字典编码一致')
   if (!shipName) return fail('请填写船名')
   const amount = num(body.amount)
   if (amount == null) return fail('请填写订单金额')
   const owner = body.logisticsOwner ? await findMerchant(body.logisticsOwner) : undefined
   const book = body.bondedBook ? await findBook(body.bondedBook) : undefined
   const currencies = await dictOf('wms_currency_type')
+  const blWeight = num(body.blWeight)
   const payload: Row = {
     orcId,
     consignorId: idOf(consignor.id),
@@ -1552,7 +1411,6 @@ async function createReceipt(body: Row) {
     payableAmount: amount,
     itemId: idOf(item.id),
     areaId: idOf(area.id),
-    mineralType,
     shippingMethodId,
     arrivalDate: arrivalOf(body.time),
     entityId: owner ? idOf(owner.id) : undefined,
@@ -1560,6 +1418,7 @@ async function createReceipt(body: Row) {
     areas: cellsBody(body.cells),
     shipName,
   }
+  if (blWeight != null) payload.waybillWeight = blWeight
   const result = await ruoyiSend('POST', '/wms/receiptOrder', payload)
   return result.ok ? ok(result.data, '入库预约已创建') : fail(result.message)
 }
@@ -1589,8 +1448,6 @@ async function receiveReceipt(id: string, body: Row) {
   if (wet == null || dry == null || moisture == null) return fail('到货收货需填写湿重、干重和水分。预约单不支持修改，请删除后重建。')
   const orderNo = text(row.receiptOrderNo || body.orderNo)
   if (!orderNo) return fail('未找到入库单号')
-  const mineralType = num(body.oreType ? await codeFromDict('wms_mineral_type', body.oreType) : row.mineralType)
-  if (mineralType == null) return fail('矿种需与后端字典编码一致')
   const method = nested(row, 'shippingMethod')
   const shippingMethodId = idOf(row.shippingMethodId)
     ?? idOf(method?.id)
@@ -1601,15 +1458,16 @@ async function receiveReceipt(id: string, body: Row) {
   const itemType = num(body.category ? await codeFromDict('wms_item_type', body.category) : row.receiptType)
   const ebookId = book ? idOf(book.id) : idOf(row.ebookId)
   const elements = harmfulElements(body)
+  const mineralType = num(row.mineralType)
   const payload: Row = {
     id: idOf(id),
     receiptOrdeCode: orderNo,
-    mineralType,
     shippingMethodId,
     wetWeight: wet,
     dryWeight: dry,
     moistureContent: moisture,
   }
+  if (mineralType != null) payload.mineralType = mineralType
   if (itemType != null) payload.itemType = itemType
   if (ebookId != null) payload.ebookId = ebookId
   const remark = text(body.remark).trim()
@@ -1624,91 +1482,91 @@ async function receiveReceipt(id: string, body: Row) {
 }
 
 async function exportItems(query: Query) {
-  const categories = await dictOf('wms_item_category')
-  const kinds = await dictOf('wms_item_type')
-  const result = await ruoyiGet('/wms/item/list', pageParams({ page: 1, pageSize: 500 }, {
-    itemName: query.keyword || undefined,
-    type: query.kind ? await dictValue('wms_item_type', query.kind) : undefined,
-    itemCategory: query.cargoType ? await dictValue('wms_item_category', query.cargoType) : undefined,
-  }))
-  if (!result.ok) return fail(result.message)
-  const rows = result.rows.map((row) => {
-    const item = itemRow(row, categories, kinds)
-    return { ...item, source: item.source || '—' }
-  })
+  const listed = await listItems({ ...query, page: 1, pageSize: 500 })
+  if (!listed.success || !listed.data) return fail(listed.message || '导出失败')
+  const data = listed.data as { list?: Row[] }
+  const rows = data.list || []
   const day = new Date().toISOString().slice(0, 10)
   return ok({
     filename: `物料档案_${day}.csv`,
     content: toCsv([
-      { key: 'code', label: '物料编码' },
       { key: 'name', label: '名称' },
-      { key: 'cargoType', label: '货物类型' },
-      { key: 'kind', label: '类型' },
-      { key: 'source', label: '矿源' },
-    ], rows),
+      { key: 'cargoType', label: '矿种类型' },
+      { key: 'mineArea', label: '矿区' },
+      { key: 'originCountry', label: '原产国' },
+      { key: 'orderNum', label: '排序' },
+    ], byOrderNum(rows)),
   })
 }
 
-const OCR_FIXED: Record<string, Row> = {
-  入库报关单: {
-    id: '100000000000000001',
-    docType: '入库报关单',
-    shipName: '海豚号',
-    blNo: 'BL20260804002',
-    customsNo: 'BG20260804088',
-    checklistNo: 'HZ20260804012',
-    amount: 218000,
-    currency: '2',
-    timeText: '2026-08-06',
-  },
-  提单: {
-    id: '100000000000000001',
-    docType: '提单',
-    shipName: '海洋之星',
-    blNo: 'BL20260801001',
-    customsNo: 'BG20260801088',
-    checklistNo: 'HZ20260801012',
-    amount: 1280000,
-    currency: '2',
-    timeText: '2026-08-05',
-  },
-  出库报关单: {
-    id: '100000000000000002',
-    docType: '出库报关单',
-    customsNo: 'BGCK2026080301',
-    checklistNo: 'HZCK2026080301',
-    consignee: '华东冶炼股份公司',
-    consumer: '华东冶炼冶炼一分厂',
-    wet: 100,
-    amount: 218000,
-    currency: 'USD',
-  },
-  重量单: {
-    id: '100000000000000003',
-    docType: '重量单',
-    wet: 820,
-    dry: 738,
-    moisture: '10%',
-  },
-  品质单: {
-    id: '100000000000000004',
-    docType: '品质单',
-    qualityNo: 'QA-20260803-001',
-    moisture: '10%',
-    cu: '22.5%',
-    ag: '45 g/t',
-    au: '0.8 g/t',
-    as: '0.12%',
-    pb: '0.05%',
-    cd: '0.01%',
-    f: '0.02%',
-    hg: '0.001%',
-  },
+function ocrStamp() {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return {
+    stamp: `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`,
+    day: `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`,
+    clock: `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`,
+    dateText: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+  }
+}
+
+function ocrWeight() {
+  return Math.floor(1000 + Math.random() * 9000)
+}
+
+function ocrFixed(docType: string): Row | undefined {
+  const { stamp, day, clock, dateText } = ocrStamp()
+  const wet = ocrWeight()
+  const dry = Math.max(1000, Math.min(9999, Math.round(wet * 0.9)))
+  const samples: Record<string, Row> = {
+    入库报关单: {
+      docType: '入库报关单',
+      shipName: '海豚号',
+      blNo: `BL${stamp}`,
+      blWeight: wet,
+      customsNo: `BG${stamp}`,
+      checklistNo: `HZ${stamp}`,
+      amount: 218000,
+      currency: '2',
+      timeText: dateText,
+    },
+    出库报关单: {
+      docType: '出库报关单',
+      customsNo: `BGCK${stamp}`,
+      checklistNo: `HZCK${stamp}`,
+      consignee: '华东冶炼股份公司',
+      consumer: '华东冶炼冶炼一分厂',
+      wet,
+      amount: 218000,
+      currency: 'USD',
+    },
+    重量单: {
+      docType: '重量单',
+      wet,
+      dry,
+      moisture: '10%',
+    },
+    品质单: {
+      id: '100000000000000004',
+      docType: '品质单',
+      qualityNo: `QA-${day}-${clock}`,
+      moisture: '10%',
+      cu: '22.5%',
+      ag: '45 g/t',
+      au: '0.8 g/t',
+      as: '0.12%',
+      pb: '0.05%',
+      cd: '0.01%',
+      f: '0.02%',
+      hg: '0.001%',
+    },
+  }
+  return samples[docType] || (docType === '品质证书' ? samples['品质单'] : undefined)
 }
 
 async function recognize(body: Row) {
   const docType = text(body.docType)
-  const sample = OCR_FIXED[docType] || (docType === '品质证书' ? OCR_FIXED['品质单'] : undefined)
+  const sample = ocrFixed(docType)
   if (!sample) return fail('当前写死识别仅支持入库报关单、出库报关单、提单、重量单、品质单')
   return ok({
     ...sample,
@@ -1733,6 +1591,10 @@ async function correctOcr(id: string, body: Row) {
       checklistNo: body.checklistNo,
       verificationCode: body.checklistNo,
       consignee: body.consignee,
+      waybillNo: body.blNo,
+      blNo: body.blNo,
+      waybillWeight: body.blWeight,
+      blWeight: body.blWeight,
     },
   })
   return result.ok ? ok(true, '修正已提交并回填') : fail(result.message)
@@ -1864,7 +1726,7 @@ function inventoryLot(
     consignorId: text(row.consignorId || consignor?.id),
     material: text(item?.itemName || row.itemName),
     cargoType,
-    filingNo: text(row.filingNo || receipt?.filingNo),
+    filingNo: filingNoOf(row) || filingNoOf(receipt),
     warehouse: text(house?.warehouseName || house?.warehouseCode || warehouseId),
     warehouseId,
     stackText: text(area?.areaCode || area?.areaName || row.areaCode),
@@ -1997,6 +1859,53 @@ async function inventoryHome() {
   return ok(lots)
 }
 
+async function cockpitWeight() {
+  const result = await ruoyiGet('/wms/home/weight')
+  if (!result.ok) return fail(brief(result.message))
+  const data = (result.data && typeof result.data === 'object' ? result.data : {}) as Row
+  return ok({
+    rawWet: num(data.wetWeight) ?? 0,
+    rawDry: num(data.dryWeight) ?? 0,
+    fgWet: num(data.prodWetWeight) ?? 0,
+    fgDry: num(data.prodDryWeight) ?? 0,
+  })
+}
+
+function receiptDailyRows(result: RuoyiResult) {
+  if (result.rows.length) return result.rows
+  const data = result.data
+  if (Array.isArray(data)) return objectRows(data)
+  if (!data || typeof data !== 'object') return []
+  const bag = data as Row
+  if (bag.arrivalDate != null || bag.totalDryWeight != null) return [bag]
+  return []
+}
+
+function receiptDay(value: unknown) {
+  const raw = text(value).replace('T', ' ')
+  return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(5, 10) : raw
+}
+
+async function cockpitReceiptDaily() {
+  const result = await ruoyiGet('/wms/home/receiptDailyWeight')
+  if (!result.ok) return fail(brief(result.message))
+  return ok(receiptDailyRows(result).map((row) => ({
+    day: receiptDay(row.arrivalDate),
+    dry: num(row.totalDryWeight) ?? 0,
+  })))
+}
+
+async function cockpitAreas() {
+  const [result, areas, houses] = await Promise.all([
+    ruoyiGet('/wms/home/areas'),
+    areaRows(),
+    warehouseRows(),
+  ])
+  if (!result.ok) return fail(brief(result.message))
+  const lots = homeSource(result).map((row) => homeLot(row, areas, houses)).filter((lot): lot is CargoLot => Boolean(lot))
+  return ok(lots)
+}
+
 async function listInventory(query: Query) {
   const [categories, kinds, houses, consignor, area, book, itemCategory, itemType] = await Promise.all([
     dictOf('wms_item_category'),
@@ -2027,6 +1936,8 @@ async function listInventory(query: Query) {
     itemCategory,
     itemType,
     country: country && country !== '—' ? country : undefined,
+    // 文档参数为 recordNumber；部分环境也认 filingNo，一并带上
+    recordNumber: query.filingNo || undefined,
     filingNo: query.filingNo || undefined,
     accountBookId: book ? idOf(book.id) : undefined,
     ...(span.from || span.to ? { params: { beginTime: span.from || undefined, endTime: span.to || undefined } } : {}),
@@ -2061,7 +1972,11 @@ async function listInventory(query: Query) {
     if (query.kind === '原料' && (row.cargoType === '混成品' || row.batchKind === '生产批次号')) return false
     if (!whole) return true
     if (query.cargoType && row.cargoType !== query.cargoType) return false
-    if (query.filingNo && !`${row.filingNo}`.includes(text(query.filingNo))) return false
+    // 已用 recordNumber 交给后端筛选；行上若未解析出 filingNo 则不再误杀
+    if (query.filingNo) {
+      const no = text(row.filingNo)
+      if (no && !no.includes(text(query.filingNo))) return false
+    }
     if (query.originCountry && row.originCountry !== query.originCountry) return false
     if (query.book && row.book !== query.book) return false
     if (query.warehouse && row.warehouse !== query.warehouse) return false
@@ -2191,7 +2106,7 @@ async function attachLotDocs(row: Row): Promise<Row> {
     wet: text(row.wet).trim() || pick(weightResult, ['wetWeight', 'wet']) || text(receipt?.wetWeight),
     dry: text(row.dry).trim() || pick(weightResult, ['dryWeight', 'dry']) || text(receipt?.dryWeight),
     moisture: text(row.moisture).trim() || pick(weightResult, ['moistureContent', 'moisture']) || text(receipt?.moistureContent),
-    filingNo: text(row.filingNo).trim() || text(receipt?.filingNo),
+    filingNo: text(row.filingNo).trim() || filingNoOf(receipt),
     originCountry: text(row.originCountry).trim() || text(receipt?.originCountry || receipt?.country),
     shipName: text(row.shipName) || pick(customsResult, ['shipName']) || text(receipt?.shipName),
     blNo: text(row.blNo) || pick(customsResult, ['waybillNo', 'blNo']) || text(receipt?.waybillNo),
@@ -2252,10 +2167,11 @@ async function inventoryBatch(batchNo: string, query: Query = {}) {
   return ok({ ...row, ledger, products: [] })
 }
 
-function movementOrderNo() {
+function movementOrderNo(seq = 0) {
   const now = new Date()
   const pad = (value: number) => String(value).padStart(2, '0')
-  return `YK${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  return seq > 0 ? `YK${stamp}${String(seq).padStart(3, '0')}` : `YK${stamp}`
 }
 
 function clockParts(value: unknown) {
@@ -2267,56 +2183,77 @@ function clockParts(value: unknown) {
   return { date, hour: `${hour}:00:00` }
 }
 
-async function createMovement(body: Row) {
+function movementTypeOf(scene: string) {
+  if (scene === '拆票移位') return 1
+  if (scene === '批量移位' || scene === '批量移库') return 2
+  return 0
+}
+
+async function buildMovementBo(body: Row, seq = 0): Promise<{ ok: true; data: Row; orderNo: string } | { ok: false; message: string; batchNo: string }> {
   const batchNo = text(body.batchNo)
   const source = await locateInventory(text(body.inventoryId) || batchNo)
-  if (!source) return fail('未找到在库批次')
+  if (!source) return { ok: false, message: '未找到在库批次', batchNo }
   const target = await findArea(body.areaId) || await findArea(body.toStack)
-  if (!target) return fail('目标堆位不存在')
+  if (!target) return { ok: false, message: '目标堆位不存在', batchNo }
   const sourceWarehouseId = idOf(source.warehouseId)
   const targetWarehouseId = idOf(target.warehouseId)
-  if (sourceWarehouseId == null) return fail('源仓库不能为空')
-  if (targetWarehouseId == null) return fail('目标堆位没有所属仓库')
+  if (sourceWarehouseId == null) return { ok: false, message: '源仓库不能为空', batchNo }
+  if (targetWarehouseId == null) return { ok: false, message: '目标堆位没有所属仓库', batchNo }
   const scene = text(body.scene) || '整票移位'
   const partial = scene === '拆票移位'
   const qty = partial
     ? num(body.weight)
     : (num(body.weight) ?? num(source.dryWeight) ?? num(source.quantity) ?? num(source.remainQuantity))
-  if (!(qty && qty > 0)) return fail(partial ? '请填写移库重量' : '该票没有可移重量')
-  const orderNo = movementOrderNo()
+  if (!(qty && qty > 0)) return { ok: false, message: partial ? '请填写移库重量' : '该票没有可移重量', batchNo }
+  const orderNo = movementOrderNo(seq)
   const from = clockParts(body.timeFrom)
   const to = clockParts(body.timeTo)
   const areas = cellsBody(body.cells)
-  const result = await ruoyiSend('POST', '/wms/movementOrder', {
-    movementOrderNo: orderNo,
-    movementType: partial ? 1 : scene === '批量移位' ? 2 : 0,
-    inventoryId: idOf(source.id),
-    sourceWarehouseId,
-    sourceAreaId: idOf(source.areaId),
-    targetWarehouseId,
-    targetAreaId: idOf(target.id),
-    quantity: qty,
-    totalQuantity: qty,
-    remark: scene,
-    ...(areas.length ? { areas } : {}),
-    ...(from.date ? { startDate: from.date, startHour: from.hour } : {}),
-    ...(to.date ? { endDate: to.date, endHour: to.hour } : {}),
-  })
+  return {
+    ok: true,
+    orderNo,
+    data: {
+      movementOrderNo: orderNo,
+      movementType: movementTypeOf(scene),
+      inventoryId: idOf(source.id),
+      sourceWarehouseId,
+      sourceAreaId: idOf(source.areaId),
+      targetWarehouseId,
+      targetAreaId: idOf(target.id),
+      quantity: qty,
+      totalQuantity: qty,
+      remark: scene,
+      ...(areas.length ? { areas } : {}),
+      ...(from.date ? { startDate: from.date, startHour: from.hour } : {}),
+      ...(to.date ? { endDate: to.date, endHour: to.hour } : {}),
+    },
+  }
+}
+
+async function createMovement(body: Row) {
+  const built = await buildMovementBo(body)
+  if (!built.ok) return fail(built.message)
+  const result = await ruoyiSend('POST', '/wms/movementOrder', built.data)
   if (!result.ok) return fail(brief(result.message))
-  return ok({ orderNo, id: text((result.data as Row | undefined)?.id || result.data) }, '移库单已生成')
+  return ok({ orderNo: built.orderNo, id: text((result.data as Row | undefined)?.id || result.data) }, '移库单已生成')
 }
 
 async function createMovements(body: Row) {
-  const ids = Array.isArray(body.batchNos) ? body.batchNos.map(String) : []
-  if (!ids.length) return fail('请勾选矿批次')
-  if (!text(body.toStack)) return fail('请选择目标堆位')
-  let count = 0
-  for (const batchNo of ids) {
-    const saved = await createMovement({ ...body, batchNo })
-    if (!saved.success) return fail(`${batchNo} ${saved.message}`)
-    count += 1
+  const rawItems = Array.isArray(body.items) ? body.items as Row[]
+    : Array.isArray(body.list) ? body.list as Row[]
+      : (Array.isArray(body.batchNos) ? body.batchNos.map((batchNo) => ({ ...body, batchNo: String(batchNo) })) : [])
+  if (!rawItems.length) return fail('请勾选矿批次')
+  const list: Row[] = []
+  for (let index = 0; index < rawItems.length; index += 1) {
+    const item = rawItems[index]
+    if (!text(item.toStack) && !text(item.areaId)) return fail(`${text(item.batchNo) || '所选批次'}：请选择目标堆位`)
+    const built = await buildMovementBo(item, index + 1)
+    if (!built.ok) return fail(`${built.batchNo || '所选批次'}：${built.message}`)
+    list.push(built.data)
   }
-  return ok({ count }, `已生成 ${count} 条移库单`)
+  const result = await ruoyiSend('POST', '/wms/movementOrder/batch', { list })
+  if (!result.ok) return fail(brief(result.message))
+  return ok({ count: list.length }, `已生成 ${list.length} 条移库单`)
 }
 
 async function listMovements(query: Query) {
@@ -2446,6 +2383,7 @@ function filingRow(
     originCountry: text(row.originCountry),
     code: text(row.recordNumber),
     filingDate: dayText(row.recordTime),
+    harmfulContent: text(row.hazardousElementsRemark ?? row.harmfulElementContent ?? row.harmfulContent),
     status: labelOf(statuses, row.status) || '有效',
     qty,
     usedQty: used,
@@ -2459,61 +2397,39 @@ function filingRow(
 }
 
 async function filingRows(rows: Row[]) {
-  const [sources, kinds, statuses] = await Promise.all([
+  const [sources, kinds, statuses, categories, typeKinds, items] = await Promise.all([
     dictOf('wms_mineral_source'),
     dictOf('wms_mineral_type'),
     filingStatusOptions(),
+    dictOf('wms_item_category'),
+    dictOf('wms_item_type'),
+    itemCatalogRows(),
   ])
-  return rows.map((row) => filingRow(row, sources, kinds, statuses))
-}
-
-const FILING_CACHE_KEY = 'wms_filing_list'
-let filingGeneration = 0
-let filingPending: Promise<Row[]> | null = null
-
-function readFilingCache() {
-  try {
-    const raw = sessionStorage.getItem(FILING_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed as Row[] : null
-  } catch {
-    return null
-  }
-}
-
-function writeFilingCache(rows: Row[], generation: number) {
-  if (generation !== filingGeneration) return
-  try {
-    sessionStorage.setItem(FILING_CACHE_KEY, JSON.stringify(rows))
-  } catch {
-    // 会话存储写满或被禁用时，本次仍返回查询结果
-  }
+  const materials = items.map((row) => itemRow(row, categories, typeKinds))
+  return rows.map((row) => {
+    const mapped = filingRow(row, sources, kinds, statuses)
+    const hit = materials.find((item) => {
+      if (mapped.originCountry && item.originCountry && mapped.originCountry !== item.originCountry) return false
+      return Boolean(mapped.source) && (item.mineArea === mapped.source || item.source === mapped.source || item.name === mapped.source)
+    })
+    return {
+      ...mapped,
+      materialId: hit ? String(hit.id) : '',
+      materialName: hit ? text(hit.name) : (text(mapped.source) || '—'),
+    }
+  })
 }
 
 function clearFilingCache() {
-  filingGeneration += 1
-  filingPending = null
-  sessionStorage.removeItem(FILING_CACHE_KEY)
-}
-
-async function loadFilingCatalog(generation: number) {
-  const result = await ruoyiGet('/wms/mineralSourceFiling/list', { pageNum: 1, pageSize: 500 })
-  const rows = result.ok ? result.rows : []
-  if (result.ok) writeFilingCache(rows, generation)
-  return rows
+  clearSessionList(SESSION_LIST.filing)
 }
 
 async function filingCatalog() {
-  const cached = readFilingCache()
-  if (cached) return cached.map((row) => ({ ...row }))
-  if (filingPending) return (await filingPending).map((row) => ({ ...row }))
-  const generation = filingGeneration
-  const task = loadFilingCatalog(generation).finally(() => {
-    if (filingPending === task) filingPending = null
+  const listed = await loadSessionList(SESSION_LIST.filing, SESSION_LIST.filing, async () => {
+    const result = await ruoyiGet('/wms/mineralSourceFiling/list', { pageNum: 1, pageSize: 500 })
+    return { ok: result.ok, rows: result.ok ? result.rows : [] }
   })
-  filingPending = task
-  return (await task).map((row) => ({ ...row }))
+  return listed.rows
 }
 
 function filingCatalogQuery(query: Query, filters: Query) {
@@ -2573,13 +2489,23 @@ async function uploadFilingFile(file: Blob) {
 }
 
 async function saveFiling(id: string | undefined, body: Row) {
-  const source = text(body.source).trim()
-  const sourceKind = text(body.sourceKind).trim()
-  const originCountry = text(body.originCountry).trim()
+  const materialId = text(body.materialId).trim()
+  if (!materialId) return fail('请选择物料')
+  const [categories, typeKinds, items] = await Promise.all([
+    dictOf('wms_item_category'),
+    dictOf('wms_item_type'),
+    itemCatalogRows(),
+  ])
+  const material = items.map((row) => itemRow(row, categories, typeKinds)).find((item) => String(item.id) === materialId)
+  if (!material) return fail('所选物料不存在，请先在物料档案维护')
+  const source = text(material.mineArea || material.source || material.name).trim()
+  const originCountry = text(material.originCountry).trim()
+  const sourceKind = text(material.cargoType).trim()
   const code = text(body.code).trim()
   const filingDate = dayText(body.filingDate)
   const qty = num(body.qty)
-  if (!source || !originCountry || !code) return fail('请填写矿源、备案原产国和备案编号')
+  if (!source || !originCountry) return fail('所选物料缺少矿区或原产国，请先在物料档案补全')
+  if (!code) return fail('请填写矿源备案编号')
   if (qty != null && qty <= 0) return fail('备案数量须大于 0')
   let fileUrl = text(body.attachment).trim()
   const file = body.__file
@@ -2589,9 +2515,11 @@ async function saveFiling(id: string | undefined, body: Row) {
     fileUrl = uploaded.data
   }
   const payload: Row = {
+    itemId: idOf(materialId) ?? materialId,
     mineralSource: source,
     originCountry,
     recordNumber: code,
+    hazardousElementsRemark: text(body.harmfulContent).trim(),
   }
   if (sourceKind) payload.category = sourceKind
   if (filingDate) payload.recordTime = filingDate
@@ -2803,13 +2731,48 @@ function shipmentNo(detail: Row) {
   return text(shipment.recordNo || shipment.customsNo || shipment.orderNo || shipment.shipmentOrderNo)
 }
 
+function merchantLabel(row: Row | undefined) {
+  if (!row) return ''
+  const linked = nested(row, 'consignor')
+  return text(linked?.merchantName || row.merchantName || row.consignorName)
+}
+
+async function merchantNameMap() {
+  const list = await merchantRows()
+  const map = new Map<string, string>()
+  if (!list.ok) return map
+  for (const row of list.rows) {
+    const id = text(row.id)
+    const name = text(row.merchantName)
+    if (id && name) map.set(id, name)
+  }
+  return map
+}
+
+function namedMerchant(id: unknown, names: Map<string, string>) {
+  return names.get(text(id)) || ''
+}
+
+function lineConsignor(detail: Row, order: Row, names: Map<string, string>) {
+  const inventory = nested(detail, 'inventory')
+  const receipt = nested(detail, 'receiptOrder')
+  return merchantLabel(order)
+    || merchantLabel(detail)
+    || merchantLabel(inventory)
+    || merchantLabel(receipt)
+    || namedMerchant(detail.consignorId, names)
+    || namedMerchant(inventory?.consignorId, names)
+    || namedMerchant(receipt?.consignorId, names)
+    || namedMerchant(order.consignorId, names)
+}
+
 function productionLines(
   row: Row,
   categories: { label: string; value: string }[],
   areaNames: { label: string; value: string }[],
+  merchants: Map<string, string>,
 ) {
   const details = Array.isArray(row.productionOrderDetails) ? row.productionOrderDetails as Row[] : []
-  const consignor = text(nested(row, 'consignor')?.merchantName)
   return details.filter((detail) => num(detail.direction) !== 1).map((detail) => {
     const receipt = nested(detail, 'receiptOrder')
     const item = nested(detail, 'item')
@@ -2819,7 +2782,7 @@ function productionLines(
     return {
       inventoryId: text(detail.inventoryId),
       customsNo: text(receipt?.recordNo || detail.batchNo),
-      consignor: consignor || text(detail.consignorName),
+      consignor: lineConsignor(detail, row, merchants),
       cargoType: labelOf(categories, item?.itemCategory ?? detail.itemCategory),
       material: text(item?.itemName || detail.itemName),
       voyage: [ship, voyage].filter(Boolean).join(' / '),
@@ -2839,9 +2802,11 @@ function productionDoc(
   row: Row,
   categories: { label: string; value: string }[],
   areaNames: { label: string; value: string }[],
+  merchants: Map<string, string>,
   asFinish: boolean,
 ) {
-  const lines = productionLines(row, categories, areaNames)
+  const lines = productionLines(row, categories, areaNames, merchants)
+  const consignorNames = [...new Set(lines.map((line) => line.consignor).filter(Boolean))]
   const area = nested(row, 'area')
   const item = nested(row, 'item')
   const kind = num(row.productionType)
@@ -2857,7 +2822,8 @@ function productionDoc(
     docType,
     finished,
     stage: finished ? '完工' : kind === 1 ? '加工' : '投料',
-    consignor: text(nested(row, 'consignor')?.merchantName),
+    consignor: consignorNames.join('、') || merchantLabel(row) || namedMerchant(row.consignorId, merchants),
+    consignorId: text(row.consignorId || nested(row, 'consignor')?.id),
     prodBatch: text(row.batchNo),
     workOrder: text(row.workOrderNo),
     process: text(row.processName),
@@ -2902,14 +2868,14 @@ function productionKind(query: Query) {
 }
 
 async function listProduction(query: Query) {
-  const { categories, areaNames } = await productionDicts()
+  const [{ categories, areaNames }, merchants] = await Promise.all([productionDicts(), merchantNameMap()])
   const consignor = query.consignor ? await findMerchant(query.consignor) : undefined
   const filters = productionFilters(query, consignor ? idOf(consignor.id) : undefined)
   const kind = productionKind(query)
   const result = await ruoyiGet('/wms/productionOrder/list', pageParams(query, { ...filters, type: kind }))
   if (!result.ok) return fail(brief(result.message))
   const word = text(query.keyword).trim()
-  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, kind === 2)).filter((row) => {
+  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, kind === 2)).filter((row) => {
     if (!word) return true
     const lines = Array.isArray(row.feedLines) ? row.feedLines as Row[] : []
     return `${row.id}${row.orderNo}${row.prodBatch}${row.customsNos}${row.outCustomsNo}${lines.map((line) => line.customsNo).join('')}`.includes(word)
@@ -2919,10 +2885,10 @@ async function listProduction(query: Query) {
 }
 
 async function productionBatch(batchNo: string) {
-  const { categories, areaNames } = await productionDicts()
+  const [{ categories, areaNames }, merchants] = await Promise.all([productionDicts(), merchantNameMap()])
   const result = await ruoyiGet('/wms/productionOrder/listNoPage', { batchNo })
   if (!result.ok) return fail(result.message)
-  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, num(row.productionOrderStatus) === 1))
+  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, num(row.productionOrderStatus) === 1))
   return ok({ list, prodBatch: batchNo })
 }
 
@@ -2946,6 +2912,31 @@ async function joinedConsignorId(lines: Row[], fallback: unknown) {
   return ids.join(',')
 }
 
+const CONSIGNOR_MARKS = ['五矿', '金川', '南国']
+
+function consignorToken(id: string, name: string) {
+  const mark = CONSIGNOR_MARKS.find((item) => name.includes(item))
+  return mark || id || name
+}
+
+async function batchConsignorClash(batchNo: string, consignorId: string, lines: Row[]) {
+  const existing = await ruoyiGet('/wms/productionOrder/listNoPage', { batchNo })
+  if (!existing.ok) return brief(existing.message)
+  const rows = existing.rows.filter((row) => text(row.batchNo) === batchNo)
+  const known = new Set<string>()
+  for (const row of rows) {
+    const id = text(row.consignorId || nested(row, 'consignor')?.id)
+    const name = text(nested(row, 'consignor')?.merchantName || row.consignorName)
+    const token = consignorToken(id, name)
+    if (token) known.add(token)
+  }
+  const incoming = new Set(lines.map((line) => consignorToken(text(line.consignorId), text(line.consignor))).filter(Boolean))
+  if (consignorId && !incoming.size) incoming.add(consignorId)
+  const tokens = new Set([...known, ...incoming])
+  if (tokens.size > 1) return '同一生产批次不能添加不同委托方的原料'
+  return ''
+}
+
 async function createProductionFeed(body: Row) {
   const batchNo = text(body.prodBatch || body.batchNo).trim()
   const lines = Array.isArray(body.feedLines) ? body.feedLines as Row[] : []
@@ -2957,7 +2948,13 @@ async function createProductionFeed(body: Row) {
   if (!details.length) return fail('请勾选报关单')
   const consignorId = await joinedConsignorId(lines, body.consignorId)
   if (!consignorId) return fail('请选择委托方')
-  const result = await ruoyiSend('POST', '/wms/productionOrder', { batchNo, consignorId, productionOrderDetails: details })
+  const ids = consignorId.split(',').filter(Boolean)
+  const tokens = new Set(lines.map((line) => consignorToken(text(line.consignorId), text(line.consignor))).filter(Boolean))
+  if (!tokens.size) ids.forEach((id) => tokens.add(id))
+  if (tokens.size > 1) return fail('同一生产批次不能添加不同委托方的原料')
+  const clash = await batchConsignorClash(batchNo, ids[0], lines)
+  if (clash) return fail(clash)
+  const result = await ruoyiSend('POST', '/wms/productionOrder', { batchNo, consignorId: ids[0], productionOrderDetails: details })
   return result.ok ? ok(result.data, '投料已登记') : fail(brief(result.message))
 }
 
@@ -3002,6 +2999,300 @@ async function finishProduction(id: string, body: Row) {
   return result.ok ? ok(true, '已完工入库') : fail(brief(result.message))
 }
 
+function roleStatusLabel(value: unknown) {
+  const raw = text(value)
+  if (raw === '1' || raw === '正常' || raw === '启用') return '启用'
+  if (raw === '0' || raw === '停用') return '停用'
+  return raw || '启用'
+}
+
+function roleStatusCode(value: unknown) {
+  return text(value) === '停用' || text(value) === '0' ? '0' : '1'
+}
+
+function menuStatusLabel(value: unknown) {
+  const raw = text(value)
+  if (raw === '0' || raw === '正常') return '正常'
+  if (raw === '1' || raw === '停用') return '停用'
+  return raw || '正常'
+}
+
+function menuStatusCode(value: unknown) {
+  return text(value) === '停用' || text(value) === '1' ? '1' : '0'
+}
+
+function visibleLabel(value: unknown) {
+  const raw = text(value)
+  if (raw === '0' || raw === '隐藏') return '隐藏'
+  return '显示'
+}
+
+function visibleCode(value: unknown) {
+  return text(value) === '隐藏' || text(value) === '0' ? '0' : '1'
+}
+
+function isRootParent(value: unknown) {
+  const raw = text(value)
+  return !raw || raw === '0'
+}
+
+function flattenMenuRows(rows: Row[]) {
+  const out: Row[] = []
+  const seen = new Set<string>()
+  const walk = (list: Row[]) => {
+    list.forEach((row) => {
+      const id = text(row.menuId)
+      if (id && seen.has(id)) return
+      if (id) seen.add(id)
+      out.push(row)
+      if (Array.isArray(row.children)) walk(row.children as Row[])
+    })
+  }
+  walk(rows)
+  return out
+}
+
+interface MenuNode {
+  id: string
+  parentId: string
+  name: string
+  menuType: string
+  orderNum: number
+  path: string
+  perms: string
+  icon: string
+  visible: string
+  status: string
+  children?: MenuNode[]
+}
+
+function menuNode(row: Row): MenuNode {
+  return {
+    id: text(row.menuId),
+    parentId: isRootParent(row.parentId) ? '0' : text(row.parentId),
+    name: text(row.menuName),
+    menuType: text(row.menuType || 'C'),
+    orderNum: Number(row.orderNum ?? 0),
+    path: text(row.path),
+    perms: text(row.perms),
+    icon: text(row.icon),
+    visible: visibleLabel(row.visible),
+    status: menuStatusLabel(row.status),
+  }
+}
+
+function menuTree(rows: Row[]) {
+  const byId = new Map<string, MenuNode>()
+  flattenMenuRows(rows).forEach((row) => {
+    const node = menuNode(row)
+    if (node.id) byId.set(node.id, node)
+  })
+  const roots: MenuNode[] = []
+  byId.forEach((node) => {
+    const parent = node.parentId !== '0' ? byId.get(node.parentId) : undefined
+    if (parent) {
+      parent.children = parent.children || []
+      parent.children.push(node)
+    } else roots.push(node)
+  })
+  const sort = (list: MenuNode[]) => {
+    list.sort((left, right) => left.orderNum - right.orderNum || left.name.localeCompare(right.name, 'zh'))
+    list.forEach((node) => {
+      if (node.children?.length) sort(node.children)
+      else delete node.children
+    })
+  }
+  sort(roots)
+  return roots
+}
+
+function roleRecord(row: Row) {
+  return {
+    id: text(row.roleId),
+    name: text(row.roleName),
+    key: text(row.roleKey),
+    sort: Number(row.roleSort ?? 0),
+    status: roleStatusLabel(row.status),
+    remark: text(row.remark),
+    dataScope: text(row.dataScope || '1'),
+    admin: row.admin === true,
+  }
+}
+
+async function loadMenuRows() {
+  const result = await ruoyiGet('/system/menu/list')
+  if (!result.ok) return { ok: false as const, message: result.message, rows: [] as Row[] }
+  const rows = result.rows.length ? result.rows : (Array.isArray(result.data) ? result.data as Row[] : [])
+  return { ok: true as const, message: result.message, rows: flattenMenuRows(rows) }
+}
+
+function menuPayload(body: Row, id?: string): { payload: Row } | { message: string } {
+  const name = text(body.name).trim()
+  const menuType = text(body.menuType || 'C')
+  if (!name) return { message: '请填写菜单名称' }
+  if (name.length > 50) return { message: '菜单名称不能超过 50 个字' }
+  if (!['M', 'C', 'F'].includes(menuType)) return { message: '菜单类型不正确' }
+  const sort = num(body.orderNum)
+  if (sort == null) return { message: '请填写显示顺序' }
+  const perms = text(body.perms).trim()
+  if (perms && !/^([A-Za-z0-9_]+:){2}[A-Za-z0-9_]+$/.test(perms)) return { message: '权限标识格式为 模块:资源:操作' }
+  const path = text(body.path).trim()
+  if (path.length > 200) return { message: '路由地址不能超过 200 个字符' }
+  const component = text(body.component).trim() || (menuType === 'C' && path ? `${path}/index` : '')
+  if (component.length > 200) return { message: '组件路径不能超过 200 个字符' }
+  const payload: Row = {
+    parentId: idOf(body.parentId) ?? 0,
+    menuName: name,
+    orderNum: Math.trunc(sort),
+    path,
+    component: menuType === 'M' ? '' : component,
+    isFrame: '1',
+    isCache: '1',
+    menuType,
+    visible: visibleCode(body.visible || '显示'),
+    status: menuStatusCode(body.status || '正常'),
+    perms,
+    icon: text(body.icon).trim() || '#',
+  }
+  if (id) payload.menuId = idOf(id)
+  return { payload }
+}
+
+async function saveMenu(id: string | undefined, body: Row) {
+  const built = menuPayload(body, id)
+  if (!('payload' in built)) return fail(built.message)
+  const result = await ruoyiSend(id ? 'PUT' : 'POST', '/system/menu', built.payload)
+  return result.ok ? ok(true, id ? '菜单已保存' : '菜单已创建') : fail(result.message)
+}
+
+async function initMenus() {
+  let loaded = await loadMenuRows()
+  if (!loaded.ok) return fail(loaded.message)
+  let created = 0
+  for (const group of menuSeed()) {
+    if (loaded.rows.some((row) => text(row.menuName) === group.name && isRootParent(row.parentId))) continue
+    const built = menuPayload({
+      name: group.name,
+      menuType: 'M',
+      orderNum: group.orderNum,
+      path: group.path,
+      icon: group.icon,
+      parentId: 0,
+      visible: '显示',
+      status: '正常',
+    })
+    if (!('payload' in built)) return fail(built.message)
+    const result = await ruoyiSend('POST', '/system/menu', built.payload)
+    if (!result.ok) return fail(result.message)
+    created += 1
+  }
+  loaded = await loadMenuRows()
+  if (!loaded.ok) return fail(loaded.message)
+  for (const group of menuSeed()) {
+    const parent = loaded.rows.find((row) => text(row.menuName) === group.name && isRootParent(row.parentId))
+    if (!parent) return fail(`没有找到目录「${group.name}」`)
+    for (const child of group.children) {
+      const exists = loaded.rows.some((row) => text(row.menuName) === child.name && text(row.parentId) === text(parent.menuId))
+      if (exists) continue
+      const built = menuPayload({
+        name: child.name,
+        menuType: 'C',
+        orderNum: child.orderNum,
+        path: child.path,
+        perms: child.perms,
+        component: child.component,
+        icon: child.icon,
+        parentId: parent.menuId,
+        visible: '显示',
+        status: '正常',
+      })
+      if (!('payload' in built)) return fail(built.message)
+      const result = await ruoyiSend('POST', '/system/menu', built.payload)
+      if (!result.ok) return fail(result.message)
+      created += 1
+      loaded = await loadMenuRows()
+      if (!loaded.ok) return fail(loaded.message)
+    }
+  }
+  return ok({ created }, created ? `已新增 ${created} 个菜单` : '这些菜单已经存在')
+}
+
+function firstPermissionMenu(nodes: MenuNode[]): MenuNode | undefined {
+  for (const node of nodes) {
+    if (node.menuType === 'C') return node
+    if (node.menuType !== 'M') continue
+    const direct = (node.children || []).find((child) => child.menuType === 'C')
+    if (direct) return direct
+    for (const child of node.children || []) {
+      if (child.menuType !== 'M') continue
+      const nested = (child.children || []).find((item) => item.menuType === 'C')
+      if (nested) return nested
+    }
+  }
+  return undefined
+}
+
+async function settingsMenuIds() {
+  const loaded = await loadMenuRows()
+  if (!loaded.ok) return { message: loaded.message }
+  const menu = firstPermissionMenu(menuTree(loaded.rows))
+  if (!menu) return { message: '还没有可绑定的菜单' }
+  const ids: unknown[] = []
+  const seen = new Set<string>()
+  let cursor: Row | undefined = loaded.rows.find((row) => text(row.menuId) === menu.id)
+  while (cursor) {
+    const currentId = text(cursor.menuId)
+    if (!currentId || seen.has(currentId)) break
+    seen.add(currentId)
+    ids.push(cursor.menuId)
+    const parentId = text(cursor.parentId)
+    if (!parentId || parentId === '0') break
+    cursor = loaded.rows.find((row) => text(row.menuId) === parentId)
+  }
+  return { ids }
+}
+
+async function saveRole(id: string | undefined, body: Row) {
+  const name = text(body.name).trim()
+  const key = text(body.key).trim()
+  if (!name) return fail('请填写角色名称')
+  if (name.length > 30) return fail('角色名称不能超过 30 个字')
+  if (!key) return fail('请填写权限字符')
+  if (!/^[A-Za-z0-9_]+$/.test(key)) return fail('权限字符只能包含字母、数字和下划线')
+  if (key.length > 100) return fail('权限字符不能超过 100 个字符')
+  const sort = num(body.sort)
+  if (sort == null) return fail('请填写显示顺序')
+  const payload: Row = {
+    roleName: name,
+    roleKey: key,
+    roleSort: Math.trunc(sort),
+    status: roleStatusCode(body.status || '启用'),
+    remark: text(body.remark),
+    dataScope: text(body.dataScope || '1'),
+    menuCheckStrictly: true,
+    deptCheckStrictly: true,
+  }
+  const givenMenus = Array.isArray(body.menuIds) ? body.menuIds as unknown[] : []
+  if (givenMenus.length) {
+    payload.menuIds = givenMenus.map((item) => idOf(item)).filter((item) => item !== undefined)
+  } else if (!id) {
+    const settings = await settingsMenuIds()
+    if ('message' in settings) return fail(settings.message)
+    payload.menuIds = settings.ids.map((item) => idOf(item)).filter((item) => item !== undefined)
+  }
+  if (!id) payload.deptIds = []
+  if (id) payload.roleId = idOf(id)
+  const result = await ruoyiSend(id ? 'PUT' : 'POST', '/system/role', payload)
+  if (result.ok) clearRoleCache()
+  return result.ok ? ok(true, id ? '角色已保存' : '角色已创建') : fail(result.message)
+}
+
+function checkedMenuIds(data: unknown, raw: Row) {
+  const packet = data && typeof data === 'object' ? data as Row : {}
+  const list = packet.checkedKeys ?? raw.checkedKeys ?? packet.checked ?? []
+  return Array.isArray(list) ? list.map((item) => text(item)).filter(Boolean) : []
+}
+
 export async function handleLive(method: string, url: string, body?: unknown, params?: Query) {
   const path = url.split('?')[0]
   const payload = (body || {}) as Row
@@ -3035,7 +3326,41 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
     return ok({ admin: pagesFor('admin'), warehouse: pagesFor('warehouse'), customs: pagesFor('customs') })
   }
   if (upper === 'PUT' && /^\/roles\/[^/]+\/permissions$/.test(path)) {
-    return fail('角色菜单在丰联后台维护。重新登录后按后端路由显示可访问菜单。')
+    return fail('请在系统设置的角色管理中保存菜单')
+  }
+  if (upper === 'GET' && path === '/system/roles/options') {
+    const list = await roles()
+    return ok(list.map((row) => ({ label: text(row.roleName), value: text(row.roleId) })).filter((item) => item.label && item.value))
+  }
+  if (upper === 'GET' && path === '/system/roles') {
+    const result = await ruoyiGet('/system/role/list', { pageNum: 1, pageSize: 200, roleName: query.keyword || undefined })
+    if (!result.ok) return fail(result.message)
+    return ok(result.rows.map(roleRecord).filter((row) => row.id))
+  }
+  if (upper === 'POST' && path === '/system/roles') return saveRole(undefined, payload)
+  const roleMenus = path.match(/^\/system\/roles\/([^/]+)\/menus$/)
+  if (roleMenus && upper === 'GET') {
+    const result = await ruoyiGet(`/system/menu/roleMenuTreeselect/${decodeURIComponent(roleMenus[1])}`)
+    return result.ok ? ok(checkedMenuIds(result.data, result.raw as Row)) : fail(result.message)
+  }
+  const roleId = path.match(/^\/system\/roles\/([^/]+)$/)
+  if (roleId && upper === 'PUT') return saveRole(decodeURIComponent(roleId[1]), payload)
+  if (roleId && upper === 'DELETE') {
+    const result = await ruoyiSend('DELETE', `/system/role/${decodeURIComponent(roleId[1])}`)
+    if (result.ok) clearRoleCache()
+    return result.ok ? ok(true, '已删除') : fail(result.message)
+  }
+  if (upper === 'GET' && path === '/system/menus') {
+    const loaded = await loadMenuRows()
+    return loaded.ok ? ok(menuTree(loaded.rows)) : fail(loaded.message)
+  }
+  if (upper === 'POST' && path === '/system/menus/init') return initMenus()
+  if (upper === 'POST' && path === '/system/menus') return saveMenu(undefined, payload)
+  const menuId = path.match(/^\/system\/menus\/([^/]+)$/)
+  if (menuId && upper === 'PUT') return saveMenu(decodeURIComponent(menuId[1]), payload)
+  if (menuId && upper === 'DELETE') {
+    const result = await ruoyiSend('DELETE', `/system/menu/${decodeURIComponent(menuId[1])}`)
+    return result.ok ? ok(true, '已删除') : fail(result.message)
   }
 
   if (upper === 'GET' && path === '/settings/params') return loadParams()
@@ -3178,7 +3503,7 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
   if (upper === 'GET' && path === '/partners/consignors') {
     const types = await merchantTypes()
     const consignor = types.find((item) => item.label === '委托方')
-    const list = await catalog('/wms/merchant/listNoPage')
+    const list = await merchantRows()
     if (!list.ok) return fail(list.message)
     const names = list.rows
       .filter((row) => !consignor || text(row.merchantType) === consignor.value)
@@ -3224,6 +3549,9 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
   if (receiptId && upper === 'GET') return getReceipt(decodeURIComponent(receiptId[1]))
   if (receiptId && upper === 'PUT') return receiveReceipt(decodeURIComponent(receiptId[1]), payload)
 
+  if (upper === 'GET' && path === '/dashboard/weight') return cockpitWeight()
+  if (upper === 'GET' && path === '/dashboard/receipt-daily') return cockpitReceiptDaily()
+  if (upper === 'GET' && path === '/dashboard/areas') return cockpitAreas()
   if (upper === 'GET' && path === '/inventory/home') return inventoryHome()
   if (upper === 'GET' && path === '/inventory') return listInventory(query)
   const inventoryBatchNo = path.match(/^\/inventory\/batches\/([^/]+)$/)
@@ -3239,15 +3567,24 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
 
   if (upper === 'GET' && path === '/ocr/tasks') {
     if (text(query.docType) === '提单') return fail('后端暂不支持提单识别')
-    const result = await ruoyiGet('/wms/ocr/list', pageParams(query, {
+    const statusCode = Object.entries(OCR_STATUS).find(([, label]) => label === text(query.status))?.[0]
+    const keyword = text(query.keyword)
+    const listQuery = keyword ? { ...query, page: 1, pageSize: 500 } : query
+    const result = await ruoyiGet('/wms/ocr/list', pageParams(listQuery, {
       ocrLogType: query.docType ? OCR_TYPE[text(query.docType)] : undefined,
+      ocrLogStatus: statusCode != null ? Number(statusCode) : undefined,
     }))
     if (!result.ok) return fail(result.message)
     const rows = result.rows.map(ocrRow).filter((row) => {
-      if (!query.keyword) return true
-      return `${row.customsNo}${row.fileName}${row.docType}${row.id}${row.orderNo || ''}`.includes(text(query.keyword))
+      if (!keyword) return true
+      return `${row.customsNo}${row.fileName}${row.docType}${row.id}${row.orderNo || ''}`.includes(keyword)
     })
-    if (query.keyword) return ok({ list: rows, total: rows.length, page: 1, pageSize: rows.length || 1 })
+    if (keyword) {
+      const page = Number(query.page || 1)
+      const pageSize = Number(query.pageSize || 10)
+      const start = (page - 1) * pageSize
+      return ok({ list: rows.slice(start, start + pageSize), total: rows.length, page, pageSize })
+    }
     return pageOf(result, rows, query)
   }
   if (upper === 'POST' && path === '/ocr/recognize') return recognize(payload)
