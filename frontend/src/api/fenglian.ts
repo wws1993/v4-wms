@@ -2205,17 +2205,123 @@ function wantsDocs(value: unknown) {
   return flag === '1' || flag === 'true' || flag === 'yes'
 }
 
+/** 库存台账业务类型：1 入库 2 移库 3 出库 */
+const LEDGER_ACTION: Record<number, string> = { 1: '入库', 2: '移库', 3: '出库' }
+
+function ledgerAction(row: Row) {
+  const kind = num(row.inventoryType)
+  if (kind != null && LEDGER_ACTION[kind]) return LEDGER_ACTION[kind]
+  const source = num(row.type)
+  if (source === 2) return '生产'
+  if (source === 1) return '入库'
+  return text(row.orderNo) || '其它'
+}
+
+function ledgerAreaCode(row: Row, areas: Row[], idKey: string, objectKey: string) {
+  const object = nested(row, objectKey)
+  if (object) return text(object.areaCode || object.areaName)
+  const raw = row[objectKey]
+  const id = text(row[idKey] || (typeof raw === 'number' || typeof raw === 'string' ? raw : ''))
+  if (!id) return ''
+  const known = areas.find((item) => text(item.id) === id)
+  return text(known?.areaCode || known?.areaName)
+}
+
+function ledgerStack(row: Row, areas: Row[]) {
+  const code = ledgerAreaCode(row, areas, 'areaId', 'area') || text(row.areaCode)
+  const old = ledgerAreaCode(row, areas, 'oldAreaId', 'oldArea')
+  if (code && old && code !== old) return `${old}→${code}`
+  return code || old
+}
+
+function ledgerConsignee(row: Row) {
+  const company = nested(row, 'receivingCompany')
+  return text(company?.merchantName || row.receivingCompanyName || row.merchantName)
+}
+
+function mapLedgerRow(row: Row, areas: Row[]) {
+  return {
+    time: hourText(row.oprDate || row.createTime),
+    action: ledgerAction(row),
+    wet: row.wetWeight ?? '',
+    dry: row.dryWeight ?? '',
+    stack: ledgerStack(row, areas),
+    consignee: ledgerConsignee(row),
+    orderNo: text(row.orderNo),
+  }
+}
+
+function ledgerFilter(raw: Row): Query | null {
+  const inventoryId = idOf(raw.id || raw.inventoryId)
+  const receipt = nested(raw, 'receiptOrder') || nested(raw, 'receipt')
+  const recordNo = text(raw.recordNo || receipt?.recordNo || raw.customsNo)
+  const batchNo = text(raw.batchNo)
+  const query: Query = {}
+  if (inventoryId != null) query.inventoryId = inventoryId
+  else if (recordNo) query.recordNo = recordNo
+  else if (batchNo) query.batchNo = batchNo
+  else return null
+  return query
+}
+
+/** 库存台账：/wms/inventoryDetail/listNoPage */
+async function inventoryLedger(raw: Row) {
+  const query = ledgerFilter(raw)
+  if (!query) return [] as Row[]
+  const [result, areas] = await Promise.all([
+    ruoyiGet('/wms/inventoryDetail/listNoPage', query),
+    areaRows(),
+  ])
+  if (!result.ok) return [] as Row[]
+  const rows = Array.isArray(result.data) ? result.data as Row[] : result.rows
+  return rows.map((row) => mapLedgerRow(row, areas))
+}
+
+/** 库存台账导出：/wms/inventoryDetail/export */
+async function exportInventoryLedger(query: Query) {
+  let filters: Query | null = null
+  const inventoryId = idOf(query.inventoryId)
+  const recordNo = text(query.recordNo || query.customsNo)
+  const batchNo = text(query.batchNo || query.keyword)
+  if (inventoryId != null) filters = { inventoryId }
+  else if (recordNo) filters = { recordNo }
+  else if (batchNo) {
+    const raw = await locateInventory(batchNo)
+    if (!raw) return fail('批次不存在')
+    filters = ledgerFilter(raw)
+  }
+  if (!filters) return fail('请指定库存或批次')
+  const label = batchNo || recordNo || text(filters.inventoryId) || '台账'
+  try {
+    const response = await ruoyiBlob('/wms/inventoryDetail/export', filters)
+    const blob = response.data
+    const type = blob.type || ''
+    if (type.includes('json') || type.includes('text')) {
+      const raw = await blob.text()
+      try {
+        const body = JSON.parse(raw) as { code?: number; msg?: string }
+        if (body.code != null && body.code !== 200 && body.code !== 0) return fail(body.msg || '导出失败')
+      } catch {
+        return ok({ filename: `重量台账_${label}.csv`, content: raw })
+      }
+    }
+    return ok({ filename: `重量台账_${label}.xlsx`, blob })
+  } catch {
+    return fail('导出失败')
+  }
+}
+
 async function inventoryBatch(batchNo: string, query: Query = {}) {
   const raw = await locateInventory(batchNo)
   if (!raw) return fail('批次不存在')
-  const [categories, kinds, houses] = await Promise.all([
+  const [categories, kinds, houses, ledger] = await Promise.all([
     dictOf('wms_item_category'),
     dictOf('wms_item_type'),
     loadHouses(),
+    inventoryLedger(raw),
   ])
   const enriched = await enrichLot(inventoryLot(raw, categories, kinds, houses))
   const row = wantsDocs(query.docs) ? await attachLotDocs(enriched) : enriched
-  const ledger = row.inDate ? [{ time: row.inDate, action: '入库', wet: row.wet, dry: row.dry, stack: row.stackText, consignee: '' }] : []
   return ok({ ...row, ledger, products: [] })
 }
 
@@ -3622,6 +3728,7 @@ export async function handleLive(method: string, url: string, body?: unknown, pa
   if (upper === 'GET' && path === '/dashboard/areas') return cockpitAreas()
   if (upper === 'GET' && path === '/inventory/home') return inventoryHome()
   if (upper === 'GET' && path === '/inventory') return listInventory(query)
+  if (upper === 'GET' && path === '/inventory/ledger/export') return exportInventoryLedger(query)
   const inventoryBatchNo = path.match(/^\/inventory\/batches\/([^/]+)$/)
   if (inventoryBatchNo && upper === 'GET') return inventoryBatch(decodeURIComponent(inventoryBatchNo[1]), query)
 

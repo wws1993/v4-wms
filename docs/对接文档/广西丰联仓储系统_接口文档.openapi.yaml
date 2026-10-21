@@ -627,6 +627,14 @@ paths:
           schema:
             type: string
             description: 币制
+        - name: ladingWeight
+          in: query
+          description: 提单重量(吨)
+          required: false
+          example: ''
+          schema:
+            type: number
+            description: 提单重量(吨)
         - name: payableAmount
           in: query
           description: 订单金额
@@ -679,7 +687,7 @@ paths:
           schema:
             type: integer
             description: 装运方式
-            format: int64
+            format: int32
         - name: arrivalDate
           in: query
           description: 到货日期
@@ -689,24 +697,6 @@ paths:
             type: string
             description: 到货日期
             format: date-time
-        - name: entityId
-          in: query
-          description: 物流账册主体id
-          required: false
-          example: ''
-          schema:
-            type: integer
-            description: 物流账册主体id
-            format: int64
-        - name: ebookId
-          in: query
-          description: 账册id
-          required: false
-          example: ''
-          schema:
-            type: integer
-            description: 账册id
-            format: int64
         - name: areas
           in: query
           description: 存放位置
@@ -832,10 +822,7 @@ paths:
           in: query
           description: 请求参数
           required: false
-          example:
-            keyword: gggggggg
-            beginTime: '2026-08-01 00:00:00'
-            endTime: '2026-08-01 23:59:59'
+          example: {}
           schema:
             type: object
             additionalProperties:
@@ -907,6 +894,14 @@ paths:
           schema:
             type: string
             description: 币制
+        - name: ladingWeight
+          in: query
+          description: 提单重量(吨)
+          required: false
+          example: ''
+          schema:
+            type: number
+            description: 提单重量(吨)
         - name: payableAmount
           in: query
           description: 订单金额
@@ -959,7 +954,7 @@ paths:
           schema:
             type: integer
             description: 装运方式
-            format: int64
+            format: int32
         - name: arrivalDate
           in: query
           description: 到货日期
@@ -969,24 +964,6 @@ paths:
             type: string
             description: 到货日期
             format: date-time
-        - name: entityId
-          in: query
-          description: 物流账册主体id
-          required: false
-          example: ''
-          schema:
-            type: integer
-            description: 物流账册主体id
-            format: int64
-        - name: ebookId
-          in: query
-          description: 账册id
-          required: false
-          example: ''
-          schema:
-            type: integer
-            description: 账册id
-            format: int64
         - name: areas
           in: query
           description: 存放位置
@@ -1177,6 +1154,14 @@ paths:
           schema:
             type: string
             description: 币制
+        - name: ladingWeight
+          in: query
+          description: 提单重量(吨)
+          required: false
+          example: ''
+          schema:
+            type: number
+            description: 提单重量(吨)
         - name: payableAmount
           in: query
           description: 订单金额
@@ -1229,7 +1214,7 @@ paths:
           schema:
             type: integer
             description: 装运方式
-            format: int64
+            format: int32
         - name: arrivalDate
           in: query
           description: 到货日期
@@ -1239,24 +1224,6 @@ paths:
             type: string
             description: 到货日期
             format: date-time
-        - name: entityId
-          in: query
-          description: 物流账册主体id
-          required: false
-          example: ''
-          schema:
-            type: integer
-            description: 物流账册主体id
-            format: int64
-        - name: ebookId
-          in: query
-          description: 账册id
-          required: false
-          example: ''
-          schema:
-            type: integer
-            description: 账册id
-            format: int64
         - name: areas
           in: query
           description: 存放位置
@@ -1286,6 +1253,147 @@ paths:
           headers: {}
       security:
         - apiKey: []
+  /wms/mineralSourceFiling:
+    post:
+      summary: 上传附件
+      deprecated: false
+      description: ''
+      tags: []
+      parameters:
+        - name: file
+          in: query
+          description: ''
+          required: false
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  format: binary
+                  type: string
+                  description: 附件
+                  example: ''
+            example:
+              file: ''
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+      security:
+        - apiKey: []
+    put:
+      summary: 修改矿源
+      deprecated: false
+      description: 修改矿源
+      operationId: edit_5
+      tags:
+        - 矿源备案
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                createBy:
+                  type: string
+                  description: 创建者
+                createTime:
+                  type: string
+                  description: 创建时间
+                  format: date-time
+                updateBy:
+                  type: string
+                  description: 更新者
+                updateTime:
+                  type: string
+                  description: 更新时间
+                  format: date-time
+                params:
+                  type: object
+                  additionalProperties:
+                    type: object
+                  description: 请求参数
+                  properties: {}
+                id:
+                  type: integer
+                  description: id
+                  format: int64
+                mineralSource:
+                  type: string
+                  description: 矿源
+                originCountry:
+                  type: string
+                  description: 备案原产国
+                recordNumber:
+                  type: string
+                  description: 矿源备案编号
+                category:
+                  type: string
+                  description: 矿源种类
+                recordTime:
+                  type: string
+                  description: 备案日期
+                  format: date
+                filingsNum:
+                  type: number
+                  description: 备案数量
+                batchNumber:
+                  type: string
+                  description: 生产批次号
+                fileUrl:
+                  type: string
+                  description: 附件url
+                status:
+                  type: string
+                  description: 状态
+                startTime:
+                  type: string
+                  description: 开始日期
+                endTime:
+                  type: string
+                  description: 结束日期
+                verifiedTonnage:
+                  type: number
+                  description: 核销吨数
+                remainingTonnage:
+                  type: number
+                  description: 剩余吨数
+                dosage:
+                  type: string
+                  description: 用量
+                hazardousElementsRemark:
+                  type: string
+                  description: 有害元素含量
+                itemId:
+                  type: integer
+              required:
+                - id
+                - mineralSource
+                - originCountry
+                - recordNumber
+                - itemId
+            examples: {}
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RVoid'
+          headers: {}
+      security:
+        - apiKey: []
   /wms/merchant:
     put:
       summary: 修改往来单位
@@ -1299,7 +1407,45 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MerchantBo'
+              type: object
+              properties:
+                merchantCode:
+                  type: string
+                  description: 编号
+                merchantName:
+                  type: string
+                  description: 名称
+                merchantType:
+                  type: integer
+                  description: 角色
+                  format: int32
+                mobile:
+                  type: string
+                  description: 联系电话
+                contactPerson:
+                  type: string
+                  description: 联系人
+                qualifications:
+                  type: string
+                  description: 资质状态
+                fileUrl:
+                  type: string
+                  description: 附件URL
+                status:
+                  type: string
+                  description: 状态
+                remark:
+                  type: string
+                  description: 备注
+                source:
+                  type: integer
+                  description: 来源 （0 手工维护 1 入库自动录入 2 出库自动录入）
+                  format: int32
+              required:
+                - merchantCode
+                - merchantName
+                - merchantType
+            examples: {}
         required: true
       responses:
         '200':
@@ -1323,7 +1469,50 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MerchantBo'
+              type: object
+              properties:
+                id:
+                  type: integer
+                  description: id
+                  format: int64
+                merchantCode:
+                  type: string
+                  description: 编号
+                merchantName:
+                  type: string
+                  description: 名称
+                merchantType:
+                  type: integer
+                  description: 角色
+                  format: int32
+                mobile:
+                  type: string
+                  description: 联系电话
+                contactPerson:
+                  type: string
+                  description: 联系人
+                qualifications:
+                  type: string
+                  description: 资质状态
+                fileUrl:
+                  type: string
+                  description: 附件URL
+                status:
+                  type: string
+                  description: 状态
+                remark:
+                  type: string
+                  description: 备注
+                source:
+                  type: integer
+                  description: 来源 （0 手工维护 1 入库自动录入 2 出库自动录入）
+                  format: int32
+              required:
+                - id
+                - merchantCode
+                - merchantName
+                - merchantType
+            examples: {}
         required: true
       responses:
         '200':
@@ -9369,6 +9558,14 @@ paths:
           schema:
             type: string
             description: 报关单号
+        - name: itemId
+          in: query
+          description: 物料
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 物料
         - name: areaId
           in: query
           description: 所属仓库
@@ -9445,6 +9642,15 @@ paths:
             type: integer
             description: 账册id
             format: int64
+        - name: inventoryStatus
+          in: query
+          description: 状态 0 已入库 1 已用尽
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 状态 0 已入库 1 已用尽
+            format: int32
       responses:
         '200':
           description: OK
@@ -9539,6 +9745,14 @@ paths:
           schema:
             type: string
             description: 报关单号
+        - name: itemId
+          in: query
+          description: 物料
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 物料
         - name: areaId
           in: query
           description: 所属仓库
@@ -9615,6 +9829,15 @@ paths:
             type: integer
             description: 账册id
             format: int64
+        - name: inventoryStatus
+          in: query
+          description: 状态 0 已入库 1 已用尽
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 状态 0 已入库 1 已用尽
+            format: int32
         - name: pageSize
           in: query
           description: 分页大小
@@ -9728,6 +9951,14 @@ paths:
           schema:
             type: string
             description: 报关单号
+        - name: itemId
+          in: query
+          description: 物料
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 物料
         - name: areaId
           in: query
           description: 所属仓库
@@ -9804,6 +10035,15 @@ paths:
             type: integer
             description: 账册id
             format: int64
+        - name: inventoryStatus
+          in: query
+          description: 状态 0 已入库 1 已用尽
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 状态 0 已入库 1 已用尽
+            format: int32
       responses:
         '200':
           description: OK
@@ -9819,7 +10059,7 @@ paths:
       summary: 新增库存盘点单据
       deprecated: false
       description: 新增库存盘点单据
-      operationId: add_12
+      operationId: add_13
       tags:
         - 库存盘点单据
       parameters:
@@ -10089,7 +10329,7 @@ paths:
       summary: 获取库存盘点单据详细信息
       deprecated: false
       description: 获取库存盘点单据详细信息
-      operationId: getInfo_15
+      operationId: getInfo_16
       tags:
         - 库存盘点单据
       parameters:
@@ -10116,7 +10356,7 @@ paths:
       summary: 查询库存盘点单据列表
       deprecated: false
       description: 查询库存盘点单据列表
-      operationId: list_19
+      operationId: list_21
       tags:
         - 库存盘点单据
       parameters:
@@ -10728,144 +10968,6 @@ paths:
           headers: {}
       security:
         - apiKey: []
-  /wms/mineralSourceFiling:
-    post:
-      summary: 上传附件
-      deprecated: false
-      description: ''
-      tags: []
-      parameters:
-        - name: file
-          in: query
-          description: ''
-          required: false
-          schema:
-            type: string
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                file:
-                  format: binary
-                  type: string
-                  description: 附件
-                  example: ''
-            example:
-              file: ''
-        required: true
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: object
-                properties: {}
-      security:
-        - apiKey: []
-    put:
-      summary: 修改矿源
-      deprecated: false
-      description: 修改矿源
-      operationId: edit_5
-      tags:
-        - 矿源备案
-      parameters: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                createBy:
-                  type: string
-                  description: 创建者
-                createTime:
-                  type: string
-                  description: 创建时间
-                  format: date-time
-                updateBy:
-                  type: string
-                  description: 更新者
-                updateTime:
-                  type: string
-                  description: 更新时间
-                  format: date-time
-                params:
-                  type: object
-                  additionalProperties:
-                    type: object
-                  description: 请求参数
-                  properties: {}
-                id:
-                  type: integer
-                  description: id
-                  format: int64
-                mineralSource:
-                  type: string
-                  description: 矿源
-                originCountry:
-                  type: string
-                  description: 备案原产国
-                recordNumber:
-                  type: string
-                  description: 矿源备案编号
-                category:
-                  type: string
-                  description: 矿源种类
-                recordTime:
-                  type: string
-                  description: 备案日期
-                  format: date
-                filingsNum:
-                  type: number
-                  description: 备案数量
-                batchNumber:
-                  type: string
-                  description: 生产批次号
-                fileUrl:
-                  type: string
-                  description: 附件url
-                status:
-                  type: string
-                  description: 状态
-                startTime:
-                  type: string
-                  description: 开始日期
-                endTime:
-                  type: string
-                  description: 结束日期
-                verifiedTonnage:
-                  type: number
-                  description: 核销吨数
-                remainingTonnage:
-                  type: number
-                  description: 剩余吨数
-                dosage:
-                  type: string
-                  description: 用量
-                hazardousElementsRemark:
-                  type: string
-                  description: 有害元素含量
-              required:
-                - id
-                - mineralSource
-                - originCountry
-                - recordNumber
-            examples: {}
-        required: true
-      responses:
-        '200':
-          description: OK
-          content:
-            '*/*':
-              schema:
-                $ref: '#/components/schemas/RVoid'
-          headers: {}
-      security:
-        - apiKey: []
   /wms/mineralSourceFiling/export:
     post:
       summary: 导出矿源备案列表
@@ -11157,30 +11259,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                id:
-                  type: integer
-                  format: int64
-                productionWeight:
-                  type: number
-                  description: 产出干重(吨)
-                targetWarehouseId:
-                  type: integer
-                  description: 目标仓库（成品入库）
-                  format: int64
-                targetAreaId:
-                  type: integer
-                  description: 目标库区/堆位（成品入库）
-                  format: int64
-                areas:
-                  type: array
-                  description: 存放位置
-                  items:
-                    $ref: '#/components/schemas/AreaItemBo'
-              required:
-                - id
-            examples: {}
+              $ref: '#/components/schemas/ProductionOrderBo'
         required: true
       responses:
         '200':
@@ -11204,26 +11283,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                workOrderNo:
-                  type: string
-                  description: 生产工单（通常后端生成，可不传）
-                consignorId:
-                  type: integer
-                  description: 委托方
-                  format: int64
-                batchNo:
-                  type: string
-                  description: 生产批次
-                productionOrderDetails:
-                  type: array
-                  description: 投料报关单
-                  items:
-                    $ref: '#/components/schemas/ProductionOrderDetailBo'
-              required:
-                - batchNo
-            examples: {}
+              $ref: '#/components/schemas/ProductionOrderBo'
         required: true
       responses:
         '200':
@@ -11248,25 +11308,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                id:
-                  type: integer
-                  format: int64
-                processName:
-                  type: string
-                  description: 工序名称
-                startTime:
-                  type: string
-                  description: 开始时间
-                  format: date-time
-                endTime:
-                  type: string
-                  description: 结束时间
-                  format: date-time
-              required:
-                - id
-            examples: {}
+              $ref: '#/components/schemas/ProductionOrderBo'
         required: true
       responses:
         '200':
@@ -13654,7 +13696,7 @@ paths:
           content:
             '*/*':
               schema:
-                $ref: '#/components/schemas/RReceiptDailyWeightDto'
+                $ref: '#/components/schemas/RListReceiptDailyWeightDto'
           headers: {}
       security:
         - apiKey: []
@@ -13674,6 +13716,44 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/RListAreaInventoryDto'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/home/warningRecord:
+    get:
+      summary: 7日告警统计
+      deprecated: false
+      description: 7日告警统计
+      operationId: selectWarningRecord
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RListWarningRecordVo'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/home/today:
+    get:
+      summary: 今日记录
+      deprecated: false
+      description: 今日记录
+      operationId: selectTodayNum
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RMapStringLong'
           headers: {}
       security:
         - apiKey: []
@@ -13848,8 +13928,13 @@ components:
       description: 出库单详情业务对象 wms_shipment_order_detail
     SystemParamBo:
       required:
+        - accountLockTime
         - agingAlert
         - dockAlert
+        - passwordComplexity
+        - passwordErrorNum
+        - passwordLength
+        - sessionFreeTime
         - thresholdAlter
         - usageAlert
       type: object
@@ -13869,6 +13954,25 @@ components:
         usageAlert:
           type: integer
           description: 矿源备案用量预警（%）
+          format: int32
+        passwordLength:
+          type: integer
+          description: 密码最低长度
+          format: int32
+        passwordComplexity:
+          type: string
+          description: 密码复杂度
+        passwordErrorNum:
+          type: integer
+          description: 密码错误次数后锁定
+          format: int32
+        accountLockTime:
+          type: integer
+          description: 账号异常尝试登录锁定时长
+          format: int32
+        sessionFreeTime:
+          type: integer
+          description: 系统未操作分钟数后退出
           format: int32
         elements:
           type: array
@@ -14541,8 +14645,7 @@ components:
     MineralSourceFilingBo:
       required:
         - id
-        - mineralSource
-        - originCountry
+        - itemId
         - recordNumber
       type: object
       properties:
@@ -14570,12 +14673,10 @@ components:
           type: integer
           description: id
           format: int64
-        mineralSource:
-          type: string
-          description: 矿源
-        originCountry:
-          type: string
-          description: 备案原产国
+        itemId:
+          type: integer
+          description: 物料id
+          format: int64
         recordNumber:
           type: string
           description: 矿源备案编号
@@ -14589,6 +14690,9 @@ components:
         filingsNum:
           type: number
           description: 备案数量
+        hazardousElementsRemark:
+          type: string
+          description: 有害元素含量
         batchNumber:
           type: string
           description: 生产批次号
@@ -14617,9 +14721,7 @@ components:
       required:
         - id
         - itemCategory
-        - itemCode
         - itemName
-        - type
       type: object
       properties:
         createBy:
@@ -14652,21 +14754,18 @@ components:
           items:
             type: integer
             format: int64
-        itemCode:
-          type: string
-          description: 物料编码
         itemName:
           type: string
           description: 物料名称
         itemCategory:
           type: string
-          description: 货物类型
-        type:
-          type: string
-          description: 货物类型
+          description: 矿种类型
         mineralSource:
           type: string
           description: 矿源
+        originCountry:
+          type: string
+          description: 备案原产国
         orderNum:
           type: integer
           description: 排序
@@ -15025,11 +15124,11 @@ components:
         parentMenuName:
           type: string
           description: 上级菜单名称字段
+        sub:
+          type: boolean
         tree:
           type: boolean
         crud:
-          type: boolean
-        sub:
           type: boolean
       description: 业务表 gen_table
     SysDept:
@@ -15189,26 +15288,26 @@ components:
           type: integer
           description: 排序
           format: int32
-        query:
-          type: boolean
-        capJavaField:
-          type: string
-        increment:
-          type: boolean
         required:
           type: boolean
         list:
-          type: boolean
-        pk:
-          type: boolean
-        usableColumn:
-          type: boolean
-        superColumn:
           type: boolean
         edit:
           type: boolean
         insert:
           type: boolean
+        usableColumn:
+          type: boolean
+        superColumn:
+          type: boolean
+        pk:
+          type: boolean
+        increment:
+          type: boolean
+        query:
+          type: boolean
+        capJavaField:
+          type: string
       description: 代码生成业务字段表 gen_table_column
     SysRole:
       required:
@@ -16176,6 +16275,9 @@ components:
         currency:
           type: string
           description: 币制
+        ladingWeight:
+          type: number
+          description: 提单重量(吨)
         payableAmount:
           type: number
           description: 订单金额
@@ -16330,21 +16432,18 @@ components:
         id:
           type: integer
           format: int64
-        itemCode:
-          type: string
-          description: 物料编码
         itemName:
           type: string
           description: 物料名称
         itemCategory:
           type: string
-          description: 货物类型
-        type:
-          type: string
-          description: 类型
+          description: 矿种类型
         mineralSource:
           type: string
-          description: 矿源
+          description: 矿区
+        originCountry:
+          type: string
+          description: 备案原产国
         orderNum:
           type: integer
           description: 排序
@@ -16364,53 +16463,6 @@ components:
           description: 列索引
           format: int32
       description: AreaItemBo
-    MineralSourceFilingVo:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: ID
-          format: int64
-        mineralSource:
-          type: string
-          description: 矿源
-        originCountry:
-          type: string
-          description: 名称
-        recordNumber:
-          type: string
-          description: 矿源备案编号
-        category:
-          type: string
-          description: 矿源种类
-        recordTime:
-          type: string
-          description: 备案日期
-          format: date
-        status:
-          type: string
-          description: 状态
-        filingsNum:
-          type: number
-          description: 备案数量
-        verifiedTonnage:
-          type: number
-          description: 核销吨数
-        remainingTonnage:
-          type: number
-          description: 剩余吨数
-        dosage:
-          type: string
-          description: 用量
-        batchNumber:
-          type: string
-          description: 生产批次号
-        fileUrl:
-          type: string
-          description: 附件
-        remark:
-          type: string
-          description: 备注
     LoginBody:
       required:
         - password
@@ -16455,6 +16507,60 @@ components:
           description: 列索引
           format: int32
       description: AreaItemVo
+    MineralSourceFilingVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID
+          format: int64
+        itemId:
+          type: integer
+          description: 物料id
+          format: int64
+        itemName:
+          type: string
+          description: 物料名称
+        originCountry:
+          type: string
+          description: 名称
+        recordNumber:
+          type: string
+          description: 矿源备案编号
+        category:
+          type: string
+          description: 矿源种类
+        recordTime:
+          type: string
+          description: 备案日期
+          format: date
+        status:
+          type: string
+          description: 状态
+        filingsNum:
+          type: number
+          description: 备案数量
+        verifiedTonnage:
+          type: number
+          description: 核销吨数
+        remainingTonnage:
+          type: number
+          description: 剩余吨数
+        hazardousElementsRemark:
+          type: string
+          description: 有害元素含量
+        dosage:
+          type: string
+          description: 用量
+        batchNumber:
+          type: string
+          description: 生产批次号
+        fileUrl:
+          type: string
+          description: 附件
+        remark:
+          type: string
+          description: 备注
     ReceiptOrderElementVo:
       type: object
       properties:
@@ -16603,6 +16709,9 @@ components:
         dryWeight:
           type: number
           description: 干重(吨)
+        ladingWeight:
+          type: number
+          description: 提单重量(吨)
         moistureContent:
           type: number
           description: 水分
@@ -17568,6 +17677,9 @@ components:
         recordNo:
           type: string
           description: 报关单号
+        itemId:
+          type: string
+          description: 物料
         areaId:
           type: integer
           description: 所属仓库
@@ -17861,30 +17973,6 @@ components:
           type: string
           description: 是否报税元素（0 否 1是）
       description: SystemElementVo
-    SystemParamVo:
-      type: object
-      properties:
-        thresholdAlter:
-          type: integer
-          description: 库存预警阈值（库容占用%）
-          format: int32
-        agingAlert:
-          type: integer
-          description: 原料库龄预警（天）
-          format: int32
-        dockAlert:
-          type: integer
-          description: 码头仓库预警（天）
-          format: int32
-        usageAlert:
-          type: integer
-          description: 矿源备案用量预警（%）
-          format: int32
-        elements:
-          type: array
-          items:
-            $ref: '#/components/schemas/SystemElementVo'
-      description: SystemParamVo
     MovementOrderDetailVo:
       type: object
       properties:
@@ -18225,6 +18313,49 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    SystemParamVo:
+      type: object
+      properties:
+        thresholdAlter:
+          type: integer
+          description: 库存预警阈值（库容占用%）
+          format: int32
+        agingAlert:
+          type: integer
+          description: 原料库龄预警（天）
+          format: int32
+        dockAlert:
+          type: integer
+          description: 码头仓库预警（天）
+          format: int32
+        usageAlert:
+          type: integer
+          description: 矿源备案用量预警（%）
+          format: int32
+        passwordLength:
+          type: integer
+          description: 密码最低长度
+          format: int32
+        passwordComplexity:
+          type: string
+          description: 密码复杂度
+        passwordErrorNum:
+          type: integer
+          description: 密码错误次数后锁定
+          format: int32
+        accountLockTime:
+          type: integer
+          description: 账号异常尝试登录锁定时长
+          format: int32
+        sessionFreeTime:
+          type: integer
+          description: 系统未操作分钟数后退出
+          format: int32
+        elements:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemElementVo'
+      description: SystemParamVo
     RListMerchantVo:
       type: object
       properties:
@@ -19265,6 +19396,10 @@ components:
           type: integer
           description: 业务单id
           format: int64
+        consignorId:
+          type: integer
+          description: 委托方
+          format: int64
         recordNo:
           type: string
           description: 报关单号
@@ -19553,6 +19688,19 @@ components:
         data:
           $ref: '#/components/schemas/AccountBookVo'
       description: 响应信息主体
+    RListWarningRecordVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WarningRecordVo'
+      description: 响应信息主体
     TableDataInfoSysRoleVo:
       type: object
       properties:
@@ -19593,6 +19741,21 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    RMapStringLong:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          properties: {}
+      description: 响应信息主体
     RSysPostVo:
       type: object
       properties:
@@ -19639,8 +19802,21 @@ components:
           description: 网格信息
         itemCategory:
           type: string
-          description: 货物类型（字典 wms_item_category：达标矿 / 报备矿 / 成品）
+          description: 矿种类型
       description: AreaInventoryDto
+    RListReceiptDailyWeightDto:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReceiptDailyWeightDto'
+      description: 响应信息主体
     SysPostVo:
       type: object
       properties:
@@ -20181,14 +20357,14 @@ components:
         id:
           type: integer
           format: int64
-        weight:
-          type: object
-          properties: {}
         parentId:
           type: integer
           format: int64
         config:
           $ref: '#/components/schemas/TreeNodeConfig'
+        weight:
+          type: object
+          properties: {}
         empty:
           type: boolean
       additionalProperties:

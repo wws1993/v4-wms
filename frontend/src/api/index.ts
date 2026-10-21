@@ -262,6 +262,7 @@ export const inventoryApi = {
   list: (params: Q) => request<Page>('GET', '/inventory', { params }),
   home: () => request<CargoLot[]>('GET', '/inventory/home'),
   detail: (batchNo: string, params?: Q) => request<Record<string, unknown>>('GET', `/inventory/batches/${encodeURIComponent(batchNo)}`, { params }),
+  exportLedger: (params: Q = {}) => request<FilePayload>('GET', '/inventory/ledger/export', { params }),
   alerts: (params: Q) => request<Page>('GET', '/inventory/alerts', { params }),
 }
 

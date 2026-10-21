@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { inboundApi, inventoryApi, outboundApi, productionApi, transferApi } from '@/api'
 import ImageViewer from './ImageViewer.vue'
 import { dash } from '../views/ops/samples'
-import { downloadText } from '@/api/result'
+import { downloadBlob, downloadText } from '@/api/result'
 
 type Row = Record<string, unknown>
 
@@ -393,9 +394,25 @@ function openLedger() {
   emit('update:ledger', true)
 }
 
-function exportLedger() {
-  const lines = ['时间,业务,湿吨,干吨,堆位,流向企业', ...ledgerRows.value.map((row) => [row.time, row.action, row.wet, row.dry, row.stack, row.consignee].join(','))]
-  downloadText(`${current.value?.batchNo || '台账'}.csv`, lines.join('\n'))
+const exportingLedger = ref(false)
+
+async function exportLedger() {
+  const lot = current.value
+  if (!lot) return
+  exportingLedger.value = true
+  const res = await inventoryApi.exportLedger({
+    inventoryId: lot.inventoryId || lot.id,
+    batchNo: lot.batchNo,
+    recordNo: lot.customsNo || lot.recordNo,
+  })
+  exportingLedger.value = false
+  if (!res.success || !res.data) {
+    ElMessage.error(res.message || '导出失败')
+    return
+  }
+  if (res.data.blob) downloadBlob(res.data.filename, res.data.blob)
+  else if (res.data.content != null) downloadText(res.data.filename, res.data.content)
+  else ElMessage.error('导出失败')
 }
 
 function openCustoms(value: unknown) {
@@ -728,7 +745,7 @@ function productOut(row: Row) {
     </el-table>
     <template #footer>
       <el-button @click="emit('update:ledger', false)">关闭</el-button>
-      <el-button type="primary" @click="exportLedger">导出台账</el-button>
+      <el-button type="primary" :loading="exportingLedger" @click="exportLedger">导出台账</el-button>
     </template>
   </el-dialog>
 </template>
