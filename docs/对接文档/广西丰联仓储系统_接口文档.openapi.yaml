@@ -37,6 +37,7 @@ tags:
   - name: 角色信息
   - name: 菜单信息
   - name: 驾驶舱
+  - name: 出库单
 paths:
   /wms/warehouse:
     put:
@@ -587,6 +588,24 @@ paths:
             type: integer
             description: 委托方
             format: int64
+        - name: areaId
+          in: query
+          description: 堆位id(查询参数)
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 堆位id(查询参数)
+            format: int64
+        - name: warehouseId
+          in: query
+          description: 仓库id(查询参数)
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 仓库id(查询参数)
+            format: int64
         - name: shipName
           in: query
           description: 船名
@@ -661,15 +680,6 @@ paths:
             type: integer
             description: 物料备案id
             format: int64
-        - name: areaId
-          in: query
-          description: 堆位id
-          required: true
-          example: ''
-          schema:
-            type: integer
-            description: 堆位id
-            format: int64
         - name: mineralType
           in: query
           description: 矿种
@@ -697,16 +707,16 @@ paths:
             type: string
             description: 到货日期
             format: date-time
-        - name: areas
+        - name: receiptOrderAreas
           in: query
-          description: 存放位置
+          description: 堆位信息
           required: false
           example: ''
           schema:
             type: array
-            description: 存放位置
+            description: 堆位信息
             items:
-              $ref: '#/components/schemas/AreaItemBo'
+              $ref: '#/components/schemas/ReceiptOrderAreaBo'
         - name: receiptOrderStatus
           in: query
           description: 入库状态
@@ -854,6 +864,24 @@ paths:
             type: integer
             description: 委托方
             format: int64
+        - name: areaId
+          in: query
+          description: 堆位id(查询参数)
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 堆位id(查询参数)
+            format: int64
+        - name: warehouseId
+          in: query
+          description: 仓库id(查询参数)
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 仓库id(查询参数)
+            format: int64
         - name: shipName
           in: query
           description: 船名
@@ -928,15 +956,6 @@ paths:
             type: integer
             description: 物料备案id
             format: int64
-        - name: areaId
-          in: query
-          description: 堆位id
-          required: true
-          example: ''
-          schema:
-            type: integer
-            description: 堆位id
-            format: int64
         - name: mineralType
           in: query
           description: 矿种
@@ -964,16 +983,16 @@ paths:
             type: string
             description: 到货日期
             format: date-time
-        - name: areas
+        - name: receiptOrderAreas
           in: query
-          description: 存放位置
+          description: 堆位信息
           required: false
           example: ''
           schema:
             type: array
-            description: 存放位置
+            description: 堆位信息
             items:
-              $ref: '#/components/schemas/AreaItemBo'
+              $ref: '#/components/schemas/ReceiptOrderAreaBo'
         - name: receiptOrderStatus
           in: query
           description: 入库状态
@@ -1114,6 +1133,24 @@ paths:
             type: integer
             description: 委托方
             format: int64
+        - name: areaId
+          in: query
+          description: 堆位id(查询参数)
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 堆位id(查询参数)
+            format: int64
+        - name: warehouseId
+          in: query
+          description: 仓库id(查询参数)
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 仓库id(查询参数)
+            format: int64
         - name: shipName
           in: query
           description: 船名
@@ -1188,15 +1225,6 @@ paths:
             type: integer
             description: 物料备案id
             format: int64
-        - name: areaId
-          in: query
-          description: 堆位id
-          required: true
-          example: ''
-          schema:
-            type: integer
-            description: 堆位id
-            format: int64
         - name: mineralType
           in: query
           description: 矿种
@@ -1224,16 +1252,16 @@ paths:
             type: string
             description: 到货日期
             format: date-time
-        - name: areas
+        - name: receiptOrderAreas
           in: query
-          description: 存放位置
+          description: 堆位信息
           required: false
           example: ''
           schema:
             type: array
-            description: 存放位置
+            description: 堆位信息
             items:
-              $ref: '#/components/schemas/AreaItemBo'
+              $ref: '#/components/schemas/ReceiptOrderAreaBo'
         - name: receiptOrderStatus
           in: query
           description: 入库状态
@@ -11325,7 +11353,7 @@ paths:
       summary: 获取生产加工详细信息
       deprecated: false
       description: 获取生产加工详细信息
-      operationId: getInfo_5
+      operationId: getInfo_6
       tags:
         - 生产加工
       parameters:
@@ -11351,7 +11379,7 @@ paths:
       summary: 删除生产加工
       deprecated: false
       description: 删除生产加工
-      operationId: remove_4
+      operationId: remove_5
       tags:
         - 生产加工
       parameters:
@@ -11378,7 +11406,7 @@ paths:
       summary: 查询生产加工列表
       deprecated: false
       description: 查询生产加工列表
-      operationId: list_6
+      operationId: list_7
       tags:
         - 生产加工
       parameters:
@@ -11658,7 +11686,7 @@ paths:
       summary: 查询生产加工列表
       deprecated: false
       description: 查询生产加工列表
-      operationId: list_7
+      operationId: list_8
       tags:
         - 生产加工
       parameters:
@@ -13681,25 +13709,6 @@ paths:
           headers: {}
       security:
         - apiKey: []
-  /wms/home/receiptDailyWeight:
-    get:
-      summary: 7日入库统计
-      deprecated: false
-      description: 7日入库统计
-      operationId: selectReceiptDailyWeight
-      tags:
-        - 驾驶舱
-      parameters: []
-      responses:
-        '200':
-          description: OK
-          content:
-            '*/*':
-              schema:
-                $ref: '#/components/schemas/RListReceiptDailyWeightDto'
-          headers: {}
-      security:
-        - apiKey: []
   /wms/home/areas:
     get:
       summary: 堆位信息
@@ -13738,6 +13747,25 @@ paths:
           headers: {}
       security:
         - apiKey: []
+  /wms/home/receiptDailyWeight:
+    get:
+      summary: 7日入库统计
+      deprecated: false
+      description: 7日入库统计
+      operationId: selectReceiptDailyWeight
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RListDailyWeightDto'
+          headers: {}
+      security:
+        - apiKey: []
   /wms/home/today:
     get:
       summary: 今日记录
@@ -13754,6 +13782,568 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/RMapStringLong'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/home/shipmentDailyWeight:
+    get:
+      summary: 7日出库统计
+      deprecated: false
+      description: 7日出库统计
+      operationId: selectShipmentDailyWeight
+      tags:
+        - 驾驶舱
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RListDailyWeightDto'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/shipmentOrder:
+    put:
+      summary: 审核出库单
+      deprecated: false
+      description: 审核出库单
+      operationId: edit_2
+      tags:
+        - 出库单
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentOrderBo'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RVoid'
+          headers: {}
+      security:
+        - apiKey: []
+    post:
+      summary: 新增出库单
+      deprecated: false
+      description: 新增出库单
+      operationId: add_2
+      tags:
+        - 出库单
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentOrderBo'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RVoid'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/shipmentOrder/export:
+    post:
+      summary: 导出出库单列表
+      deprecated: false
+      description: 导出出库单列表
+      operationId: export_1
+      tags:
+        - 出库单
+      parameters:
+        - name: createBy
+          in: query
+          description: 创建者
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 创建者
+        - name: createTime
+          in: query
+          description: 创建时间
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 创建时间
+            format: date-time
+        - name: updateBy
+          in: query
+          description: 更新者
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 更新者
+        - name: updateTime
+          in: query
+          description: 更新时间
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 更新时间
+            format: date-time
+        - name: params
+          in: query
+          description: 请求参数
+          required: false
+          example: {}
+          schema:
+            type: object
+            additionalProperties:
+              type: object
+            description: 请求参数
+        - name: id
+          in: query
+          description: ''
+          required: true
+          example: ''
+          schema:
+            type: integer
+            format: int64
+        - name: shipmentOrderNo
+          in: query
+          description: 出库单号（后端生成，前端可不传）
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 出库单号（后端生成，前端可不传）
+        - name: consignorId
+          in: query
+          description: 委托方id
+          required: true
+          example: ''
+          schema:
+            type: integer
+            description: 委托方id
+            format: int64
+        - name: receivingCompany
+          in: query
+          description: 流向企业
+          required: true
+          example: ''
+          schema:
+            type: string
+            description: 流向企业
+        - name: consumer
+          in: query
+          description: 消费使用单位
+          required: true
+          example: ''
+          schema:
+            type: string
+            description: 消费使用单位
+        - name: inventoryId
+          in: query
+          description: 库存id
+          required: true
+          example: ''
+          schema:
+            type: integer
+            description: 库存id
+            format: int64
+        - name: recordNo
+          in: query
+          description: 出库报关单号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 出库报关单号
+        - name: ebookNo
+          in: query
+          description: 匹配保税账册号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 匹配保税账册号
+        - name: verificationCode
+          in: query
+          description: 核注清单号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 核注清单号
+        - name: batchNo
+          in: query
+          description: 生产批次
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 生产批次
+        - name: shipmentWeight
+          in: query
+          description: 出库重量(吨)
+          required: true
+          example: ''
+          schema:
+            minimum: 0.001
+            type: number
+            description: 出库重量(吨)
+        - name: recordAmount
+          in: query
+          description: 报关单金额
+          required: false
+          example: ''
+          schema:
+            minimum: 0
+            type: number
+            description: 报关单金额
+        - name: planShipmentTime
+          in: query
+          description: 计划出库时间
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 计划出库时间
+            format: date-time
+        - name: remark
+          in: query
+          description: 备注
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 备注
+        - name: shipmentOrderStatus
+          in: query
+          description: 出库状态
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 出库状态
+            format: int32
+      responses:
+        '200':
+          description: OK
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/shipmentOrder/shipment:
+    put:
+      summary: 出库
+      deprecated: false
+      description: 出库
+      operationId: shipment
+      tags:
+        - 出库单
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentOrderBo'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RVoid'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/shipmentOrder/{id}:
+    get:
+      summary: 获取出库单详细信息
+      deprecated: false
+      description: 获取出库单详细信息
+      operationId: getInfo_3
+      tags:
+        - 出库单
+      parameters:
+        - name: id
+          in: path
+          description: 主键
+          required: true
+          example: ''
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RShipmentOrderVo'
+          headers: {}
+      security:
+        - apiKey: []
+    delete:
+      summary: 删除出库单
+      deprecated: false
+      description: 删除出库单
+      operationId: remove_2
+      tags:
+        - 出库单
+      parameters:
+        - name: id
+          in: path
+          description: 主键
+          required: true
+          example: ''
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/RVoid'
+          headers: {}
+      security:
+        - apiKey: []
+  /wms/shipmentOrder/list:
+    get:
+      summary: 查询出库单列表
+      deprecated: false
+      description: 查询出库单列表
+      operationId: list_3
+      tags:
+        - 出库单
+      parameters:
+        - name: createBy
+          in: query
+          description: 创建者
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 创建者
+        - name: createTime
+          in: query
+          description: 创建时间
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 创建时间
+            format: date-time
+        - name: updateBy
+          in: query
+          description: 更新者
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 更新者
+        - name: updateTime
+          in: query
+          description: 更新时间
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 更新时间
+            format: date-time
+        - name: params
+          in: query
+          description: 请求参数
+          required: false
+          example: {}
+          schema:
+            type: object
+            additionalProperties:
+              type: object
+            description: 请求参数
+        - name: id
+          in: query
+          description: ''
+          required: true
+          example: ''
+          schema:
+            type: integer
+            format: int64
+        - name: shipmentOrderNo
+          in: query
+          description: 出库单号（后端生成，前端可不传）
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 出库单号（后端生成，前端可不传）
+        - name: consignorId
+          in: query
+          description: 委托方id
+          required: true
+          example: ''
+          schema:
+            type: integer
+            description: 委托方id
+            format: int64
+        - name: receivingCompany
+          in: query
+          description: 流向企业
+          required: true
+          example: ''
+          schema:
+            type: string
+            description: 流向企业
+        - name: consumer
+          in: query
+          description: 消费使用单位
+          required: true
+          example: ''
+          schema:
+            type: string
+            description: 消费使用单位
+        - name: inventoryId
+          in: query
+          description: 库存id
+          required: true
+          example: ''
+          schema:
+            type: integer
+            description: 库存id
+            format: int64
+        - name: recordNo
+          in: query
+          description: 出库报关单号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 出库报关单号
+        - name: ebookNo
+          in: query
+          description: 匹配保税账册号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 匹配保税账册号
+        - name: verificationCode
+          in: query
+          description: 核注清单号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 核注清单号
+        - name: batchNo
+          in: query
+          description: 生产批次
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 生产批次
+        - name: shipmentWeight
+          in: query
+          description: 出库重量(吨)
+          required: true
+          example: ''
+          schema:
+            minimum: 0.001
+            type: number
+            description: 出库重量(吨)
+        - name: recordAmount
+          in: query
+          description: 报关单金额
+          required: false
+          example: ''
+          schema:
+            minimum: 0
+            type: number
+            description: 报关单金额
+        - name: planShipmentTime
+          in: query
+          description: 计划出库时间
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 计划出库时间
+            format: date-time
+        - name: remark
+          in: query
+          description: 备注
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 备注
+        - name: shipmentOrderStatus
+          in: query
+          description: 出库状态
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 出库状态
+            format: int32
+        - name: pageSize
+          in: query
+          description: 分页大小
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 分页大小
+            format: int32
+        - name: pageNum
+          in: query
+          description: 当前页数
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 当前页数
+            format: int32
+        - name: orderByColumn
+          in: query
+          description: 排序列
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 排序列
+        - name: isAsc
+          in: query
+          description: 排序的方向desc或者asc
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 排序的方向desc或者asc
+        - name: firstNum
+          in: query
+          description: ''
+          required: false
+          example: ''
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/TableDataInfoShipmentOrderVo'
           headers: {}
       security:
         - apiKey: []
@@ -13934,6 +14524,7 @@ components:
         - passwordComplexity
         - passwordErrorNum
         - passwordLength
+        - refreshInterval
         - sessionFreeTime
         - thresholdAlter
         - usageAlert
@@ -13973,6 +14564,10 @@ components:
         sessionFreeTime:
           type: integer
           description: 系统未操作分钟数后退出
+          format: int32
+        refreshInterval:
+          type: integer
+          description: 首页数据刷新时效
           format: int32
         elements:
           type: array
@@ -14023,9 +14618,12 @@ components:
       description: 装运方式
     ShipmentOrderBo:
       required:
+        - consignorId
+        - consumer
         - id
-        - shipmentOrderNo
-        - shipmentOrderType
+        - inventoryId
+        - receivingCompany
+        - shipmentWeight
       type: object
       properties:
         createBy:
@@ -14053,40 +14651,149 @@ components:
           format: int64
         shipmentOrderNo:
           type: string
-          description: 出库单号，系统自动生成
-        shipmentOrderType:
+          description: 出库单号（后端生成，前端可不传）
+        consignorId:
           type: integer
-          description: 出库类型
+          description: 委托方id
           format: int64
-        orderNo:
+        receivingCompany:
           type: string
-          description: 出库订单
-        merchantId:
+          description: 流向企业
+        consumer:
+          type: string
+          description: 消费使用单位
+        inventoryId:
           type: integer
-          description: 客户
+          description: 库存id
           format: int64
-        receivableAmount:
+        recordNo:
+          type: string
+          description: 出库报关单号
+        ebookNo:
+          type: string
+          description: 匹配保税账册号
+        verificationCode:
+          type: string
+          description: 核注清单号
+        batchNo:
+          type: string
+          description: 生产批次
+        shipmentWeight:
+          minimum: 0.001
           type: number
-          description: 订单金额
-        totalQuantity:
+          description: 出库重量(吨)
+        recordAmount:
+          minimum: 0
           type: number
-          description: 出库数量
+          description: 报关单金额
+        planShipmentTime:
+          type: string
+          description: 计划出库时间
+          format: date-time
+        remark:
+          type: string
+          description: 备注
         shipmentOrderStatus:
           type: integer
-          description: 出库单状态
+          description: 出库状态
           format: int32
+      description: 出库单业务对象 wms_shipment_order
+    ToxicElementsBo:
+      required:
+        - elementCode
+        - elementValue
+      type: object
+      properties:
+        elementCode:
+          type: string
+          description: 编号
+        elementValue:
+          type: number
+          description: 值
+      description: 入库单-五项有害元素
+    ReceiptOrderElementBo:
+      required:
+        - elementCode
+        - elementValue
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        elementCode:
+          type: string
+          description: 编号
+        elementValue:
+          type: number
+          description: 值
+      description: 入库单-五项有害元素
+    ReceiptOrderAreaBo:
+      required:
+        - areaId
+        - warehouseId
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        areaId:
+          type: integer
+          description: 堆位id
+          format: int64
         warehouseId:
           type: integer
           description: 仓库id
           format: int64
-        areaId:
+        receiptOrderId:
           type: integer
-          description: 库区id
+          description: 入库单id
           format: int64
-        remark:
-          type: string
-          description: 备注
-      description: 出库单业务对象 wms_shipment_order
+        wetWeight:
+          type: number
+          description: 湿重(吨)
+        dryWeight:
+          type: number
+          description: 干重(吨)
+        areas:
+          type: array
+          description: 存放位置
+          items:
+            $ref: '#/components/schemas/AreaItemBo'
+      description: 库位列表详细信息
     ReceiptOrderDetailBo:
       required:
         - dryWeight
@@ -14146,53 +14853,12 @@ components:
           description: 五项有害元素
           items:
             $ref: '#/components/schemas/ReceiptOrderElementBo'
+        receiptOrderAreas:
+          type: array
+          description: 堆位信息
+          items:
+            $ref: '#/components/schemas/ReceiptOrderAreaBo'
       description: 入库单-收货
-    ToxicElementsBo:
-      required:
-        - elementCode
-        - elementValue
-      type: object
-      properties:
-        elementCode:
-          type: string
-          description: 编号
-        elementValue:
-          type: number
-          description: 值
-      description: 入库单-五项有害元素
-    ReceiptOrderElementBo:
-      required:
-        - elementCode
-        - elementValue
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        params:
-          type: object
-          additionalProperties:
-            type: object
-          description: 请求参数
-          properties: {}
-        elementCode:
-          type: string
-          description: 编号
-        elementValue:
-          type: number
-          description: 值
-      description: 入库单-五项有害元素
     OcrLogBo:
       required:
         - id
@@ -14506,71 +15172,6 @@ components:
           type: number
           description: 消耗湿重(吨)
       description: ProductionOrderDetailBo
-    MerchantBo:
-      required:
-        - id
-        - merchantCode
-        - merchantName
-        - merchantType
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        params:
-          type: object
-          additionalProperties:
-            type: object
-          description: 请求参数
-          properties: {}
-        id:
-          type: integer
-          description: id
-          format: int64
-        merchantCode:
-          type: string
-          description: 编号
-        merchantName:
-          type: string
-          description: 名称
-        merchantType:
-          type: integer
-          description: 角色
-          format: int32
-        mobile:
-          type: string
-          description: 联系电话
-        contactPerson:
-          type: string
-          description: 联系人
-        qualifications:
-          type: string
-          description: 资质状态
-        fileUrl:
-          type: string
-          description: 附件URL
-        status:
-          type: string
-          description: 状态
-        remark:
-          type: string
-          description: 备注
-        source:
-          type: integer
-          description: 来源 （0 手工维护 1 入库自动录入 2 出库自动录入）
-          format: int32
-      description: 往来单位业务对象 wms_merchant
     ItemCategoryBo:
       required:
         - categoryName
@@ -14723,6 +15324,111 @@ components:
         dosage:
           type: string
           description: 用量
+    ProductionOrderInspectionBo:
+      required:
+        - id
+        - productionOrderId
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        id:
+          type: integer
+          description: id
+          format: int64
+        productionOrderId:
+          type: integer
+          description: id
+          format: int64
+        fileUrl:
+          type: string
+          description: 附件URL
+        remark:
+          type: string
+          description: 备注
+    MerchantBo:
+      required:
+        - id
+        - merchantCode
+        - merchantName
+        - merchantType
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        id:
+          type: integer
+          description: id
+          format: int64
+        merchantCode:
+          type: string
+          description: 编号
+        merchantName:
+          type: string
+          description: 名称
+        merchantType:
+          type: integer
+          description: 角色
+          format: int32
+        mobile:
+          type: string
+          description: 联系电话
+        contactPerson:
+          type: string
+          description: 联系人
+        credentialStatus:
+          type: string
+          description: 资质状态
+        fileUrl:
+          type: string
+          description: 附件Url
+        status:
+          type: string
+          description: 状态
+        remark:
+          type: string
+          description: 备注
+        source:
+          type: integer
+          description: 来源 （0 手工维护 1 入库自动录入 2 出库自动录入）
+          format: int32
+      description: 往来单位业务对象 wms_merchant
     ItemBo:
       required:
         - id
@@ -14958,6 +15664,161 @@ components:
         remark:
           type: string
           description: 备注
+    SysDept:
+      required:
+        - deptName
+        - orderNum
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        deptId:
+          type: integer
+          description: 部门ID
+          format: int64
+        deptName:
+          maxLength: 30
+          minLength: 0
+          type: string
+          description: 部门名称
+        orderNum:
+          type: integer
+          description: 显示顺序
+          format: int32
+        leader:
+          type: string
+          description: 负责人
+        phone:
+          maxLength: 11
+          minLength: 0
+          type: string
+          description: 联系电话
+        email:
+          maxLength: 50
+          minLength: 0
+          type: string
+          description: 邮箱
+        status:
+          type: string
+          description: 部门状态:0正常,1停用
+        delFlag:
+          type: string
+          description: 删除标志（0代表存在 1代表删除）
+        ancestors:
+          type: string
+          description: 祖级列表
+        parentName:
+          type: string
+          description: 父菜单名称
+        parentId:
+          type: integer
+          description: 父菜单ID
+          format: int64
+        children:
+          type: array
+          description: 子部门
+          items:
+            $ref: '#/components/schemas/SysDept'
+      description: 部门表 sys_dept
+    SysRole:
+      required:
+        - roleKey
+        - roleName
+        - roleSort
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        roleId:
+          type: integer
+          description: 角色ID
+          format: int64
+        roleName:
+          maxLength: 30
+          minLength: 0
+          type: string
+          description: 角色名称
+        roleKey:
+          maxLength: 100
+          minLength: 0
+          type: string
+          description: 角色权限
+        roleSort:
+          type: integer
+          description: 角色排序
+          format: int32
+        dataScope:
+          type: string
+          description: 数据范围（1：所有数据权限；2：自定义数据权限；3：本部门数据权限；4：本部门及以下数据权限；5：仅本人数据权限）
+        menuCheckStrictly:
+          type: boolean
+          description: 菜单树选择项是否关联显示（ 0：父子不互相关联显示 1：父子互相关联显示）
+        deptCheckStrictly:
+          type: boolean
+          description: 部门树选择项是否关联显示（0：父子不互相关联显示 1：父子互相关联显示 ）
+        status:
+          type: string
+          description: 角色状态（0正常 1停用）
+        delFlag:
+          type: string
+          description: 删除标志（0代表存在 1代表删除）
+        remark:
+          type: string
+          description: 备注
+        flag:
+          type: boolean
+          description: 用户是否存在此角色标识 默认不存在
+        menuIds:
+          type: array
+          description: 菜单组
+          items:
+            type: integer
+            format: int64
+        deptIds:
+          type: array
+          description: 部门组（数据权限）
+          items:
+            type: integer
+            format: int64
+        admin:
+          type: boolean
+      description: 角色表 sys_role
     AccountBookBo:
       required:
         - accountCode
@@ -15130,272 +15991,13 @@ components:
         parentMenuName:
           type: string
           description: 上级菜单名称字段
-        sub:
+        crud:
           type: boolean
         tree:
           type: boolean
-        crud:
+        sub:
           type: boolean
       description: 业务表 gen_table
-    SysDept:
-      required:
-        - deptName
-        - orderNum
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        params:
-          type: object
-          additionalProperties:
-            type: object
-          description: 请求参数
-          properties: {}
-        deptId:
-          type: integer
-          description: 部门ID
-          format: int64
-        deptName:
-          maxLength: 30
-          minLength: 0
-          type: string
-          description: 部门名称
-        orderNum:
-          type: integer
-          description: 显示顺序
-          format: int32
-        leader:
-          type: string
-          description: 负责人
-        phone:
-          maxLength: 11
-          minLength: 0
-          type: string
-          description: 联系电话
-        email:
-          maxLength: 50
-          minLength: 0
-          type: string
-          description: 邮箱
-        status:
-          type: string
-          description: 部门状态:0正常,1停用
-        delFlag:
-          type: string
-          description: 删除标志（0代表存在 1代表删除）
-        ancestors:
-          type: string
-          description: 祖级列表
-        parentName:
-          type: string
-          description: 父菜单名称
-        parentId:
-          type: integer
-          description: 父菜单ID
-          format: int64
-        children:
-          type: array
-          description: 子部门
-          items:
-            $ref: '#/components/schemas/SysDept'
-      description: 部门表 sys_dept
-    GenTableColumn:
-      required:
-        - javaField
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        params:
-          type: object
-          additionalProperties:
-            type: object
-          description: 请求参数
-          properties: {}
-        columnId:
-          type: integer
-          description: 编号
-          format: int64
-        tableId:
-          type: integer
-          description: 归属表编号
-          format: int64
-        columnName:
-          type: string
-          description: 列名称
-        columnComment:
-          type: string
-          description: 列描述
-        columnType:
-          type: string
-          description: 列类型
-        javaType:
-          type: string
-          description: JAVA类型
-        javaField:
-          type: string
-          description: JAVA字段名
-        isPk:
-          type: string
-          description: 是否主键（1是）
-        isIncrement:
-          type: string
-          description: 是否自增（1是）
-        isRequired:
-          type: string
-          description: 是否必填（1是）
-        isInsert:
-          type: string
-          description: 是否为插入字段（1是）
-        isEdit:
-          type: string
-          description: 是否编辑字段（1是）
-        isList:
-          type: string
-          description: 是否列表字段（1是）
-        isQuery:
-          type: string
-          description: 是否查询字段（1是）
-        queryType:
-          type: string
-          description: 查询方式（EQ等于、NE不等于、GT大于、LT小于、LIKE模糊、BETWEEN范围）
-        htmlType:
-          type: string
-          description: >-
-            显示类型（input文本框、textarea文本域、select下拉框、checkbox复选框、radio单选框、datetime日期控件、image图片上传控件、upload文件上传控件、editor富文本控件）
-        dictType:
-          type: string
-          description: 字典类型
-        sort:
-          type: integer
-          description: 排序
-          format: int32
-        required:
-          type: boolean
-        list:
-          type: boolean
-        edit:
-          type: boolean
-        insert:
-          type: boolean
-        usableColumn:
-          type: boolean
-        superColumn:
-          type: boolean
-        pk:
-          type: boolean
-        increment:
-          type: boolean
-        query:
-          type: boolean
-        capJavaField:
-          type: string
-      description: 代码生成业务字段表 gen_table_column
-    SysRole:
-      required:
-        - roleKey
-        - roleName
-        - roleSort
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        params:
-          type: object
-          additionalProperties:
-            type: object
-          description: 请求参数
-          properties: {}
-        roleId:
-          type: integer
-          description: 角色ID
-          format: int64
-        roleName:
-          maxLength: 30
-          minLength: 0
-          type: string
-          description: 角色名称
-        roleKey:
-          maxLength: 100
-          minLength: 0
-          type: string
-          description: 角色权限
-        roleSort:
-          type: integer
-          description: 角色排序
-          format: int32
-        dataScope:
-          type: string
-          description: 数据范围（1：所有数据权限；2：自定义数据权限；3：本部门数据权限；4：本部门及以下数据权限；5：仅本人数据权限）
-        menuCheckStrictly:
-          type: boolean
-          description: 菜单树选择项是否关联显示（ 0：父子不互相关联显示 1：父子互相关联显示）
-        deptCheckStrictly:
-          type: boolean
-          description: 部门树选择项是否关联显示（0：父子不互相关联显示 1：父子互相关联显示 ）
-        status:
-          type: string
-          description: 角色状态（0正常 1停用）
-        delFlag:
-          type: string
-          description: 删除标志（0代表存在 1代表删除）
-        remark:
-          type: string
-          description: 备注
-        flag:
-          type: boolean
-          description: 用户是否存在此角色标识 默认不存在
-        menuIds:
-          type: array
-          description: 菜单组
-          items:
-            type: integer
-            format: int64
-        deptIds:
-          type: array
-          description: 部门组（数据权限）
-          items:
-            type: integer
-            format: int64
-        admin:
-          type: boolean
-      description: 角色表 sys_role
     SysUserBo:
       required:
         - nickName
@@ -15501,6 +16103,110 @@ components:
           format: int64
         admin:
           type: boolean
+    GenTableColumn:
+      required:
+        - javaField
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        columnId:
+          type: integer
+          description: 编号
+          format: int64
+        tableId:
+          type: integer
+          description: 归属表编号
+          format: int64
+        columnName:
+          type: string
+          description: 列名称
+        columnComment:
+          type: string
+          description: 列描述
+        columnType:
+          type: string
+          description: 列类型
+        javaType:
+          type: string
+          description: JAVA类型
+        javaField:
+          type: string
+          description: JAVA字段名
+        isPk:
+          type: string
+          description: 是否主键（1是）
+        isIncrement:
+          type: string
+          description: 是否自增（1是）
+        isRequired:
+          type: string
+          description: 是否必填（1是）
+        isInsert:
+          type: string
+          description: 是否为插入字段（1是）
+        isEdit:
+          type: string
+          description: 是否编辑字段（1是）
+        isList:
+          type: string
+          description: 是否列表字段（1是）
+        isQuery:
+          type: string
+          description: 是否查询字段（1是）
+        queryType:
+          type: string
+          description: 查询方式（EQ等于、NE不等于、GT大于、LT小于、LIKE模糊、BETWEEN范围）
+        htmlType:
+          type: string
+          description: >-
+            显示类型（input文本框、textarea文本域、select下拉框、checkbox复选框、radio单选框、datetime日期控件、image图片上传控件、upload文件上传控件、editor富文本控件）
+        dictType:
+          type: string
+          description: 字典类型
+        sort:
+          type: integer
+          description: 排序
+          format: int32
+        required:
+          type: boolean
+        list:
+          type: boolean
+        insert:
+          type: boolean
+        edit:
+          type: boolean
+        pk:
+          type: boolean
+        usableColumn:
+          type: boolean
+        superColumn:
+          type: boolean
+        query:
+          type: boolean
+        increment:
+          type: boolean
+        capJavaField:
+          type: string
+      description: 代码生成业务字段表 gen_table_column
     SysUserProfileBo:
       type: object
       properties:
@@ -16223,9 +16929,40 @@ components:
           type: string
           description: 短信code
       description: 短信登录对象
+    RegisterBody:
+      required:
+        - password
+        - username
+      type: object
+      properties:
+        username:
+          type: string
+          description: 用户名
+        password:
+          type: string
+          description: 用户密码
+        code:
+          type: string
+          description: 验证码
+        uuid:
+          type: string
+          description: 唯一标识
+        userType:
+          type: string
+      description: 用户注册对象
+    RShippingMethodVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/ShippingMethodVo'
+      description: 响应信息主体
     ReceiptOrderBo:
       required:
-        - areaId
         - consignorId
         - id
         - itemId
@@ -16266,6 +17003,14 @@ components:
           type: integer
           description: 委托方
           format: int64
+        areaId:
+          type: integer
+          description: 堆位id(查询参数)
+          format: int64
+        warehouseId:
+          type: integer
+          description: 仓库id(查询参数)
+          format: int64
         shipName:
           type: string
           description: 船名
@@ -16295,10 +17040,6 @@ components:
           type: integer
           description: 物料备案id
           format: int64
-        areaId:
-          type: integer
-          description: 堆位id
-          format: int64
         mineralType:
           type: integer
           description: 矿种
@@ -16311,48 +17052,16 @@ components:
           type: string
           description: 到货日期
           format: date-time
-        areas:
+        receiptOrderAreas:
           type: array
-          description: 存放位置
+          description: 堆位信息
           items:
-            $ref: '#/components/schemas/AreaItemBo'
+            $ref: '#/components/schemas/ReceiptOrderAreaBo'
         receiptOrderStatus:
           type: integer
           description: 入库状态
           format: int32
       description: 入库单业务对象 wms_receipt_order
-    RegisterBody:
-      required:
-        - password
-        - username
-      type: object
-      properties:
-        username:
-          type: string
-          description: 用户名
-        password:
-          type: string
-          description: 用户密码
-        code:
-          type: string
-          description: 验证码
-        uuid:
-          type: string
-          description: 唯一标识
-        userType:
-          type: string
-      description: 用户注册对象
-    RShippingMethodVo:
-      type: object
-      properties:
-        code:
-          type: integer
-          format: int32
-        msg:
-          type: string
-        data:
-          $ref: '#/components/schemas/ShippingMethodVo'
-      description: 响应信息主体
     AreaVo:
       type: object
       properties:
@@ -16501,6 +17210,42 @@ components:
           type: string
           description: 邮箱code
       description: 邮箱登录对象
+    MerchantVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: id
+          format: int64
+        merchantCode:
+          type: string
+          description: 编码
+        merchantName:
+          type: string
+          description: 企业名称
+        merchantType:
+          type: integer
+          description: 角色
+          format: int32
+        mobile:
+          type: string
+          description: 联系电话
+        status:
+          type: string
+          description: 状态
+        credentialStatus:
+          type: string
+          description: 资质状态
+        fileUrl:
+          type: string
+          description: 附件Url
+        statusName:
+          type: string
+          description: 状态
+        remark:
+          type: string
+          description: 备注
+      description: 往来单位视图对象 wms_merchant
     AreaItemVo:
       type: object
       properties:
@@ -16612,7 +17357,7 @@ components:
         data:
           $ref: '#/components/schemas/WarehouseVo'
       description: 响应信息主体
-    ReceiptOrderVo:
+    ReceiptOrderAreaVo:
       type: object
       properties:
         createBy:
@@ -16632,150 +17377,25 @@ components:
         id:
           type: integer
           format: int64
-        receiptOrderNo:
-          type: string
-          description: 入库单号
-        orcId:
-          type: integer
-          description: OCR日志主键
-          format: int64
-        consignorId:
-          type: integer
-          description: 委托方id
-          format: int64
-        shipName:
-          type: string
-          description: 船名
-        waybillNo:
-          type: string
-          description: 提运单号
-        verificationCode:
-          type: string
-          description: 核注清单号
-        recordNo:
-          type: string
-          description: 报关单号
-        currency:
-          type: string
-          description: 币制
-        payableAmount:
-          type: number
-          description: 金额
-        itemId:
-          type: integer
-          description: 物料id
-          format: int64
-        itemBookId:
-          type: string
-          description: 矿源备案id
         areaId:
           type: integer
           description: 堆位id
           format: int64
-        mineralType:
+        warehouseId:
           type: integer
-          description: 矿种
-          format: int32
-        shippingMethod:
-          type: integer
-          description: 货运方式
-          format: int32
-        arrivalDate:
-          type: string
-          description: 到货日期
-          format: date-time
-        entityId:
-          type: integer
-          description: 物流账册主体id
+          description: 仓库id
           format: int64
-        ebookId:
-          type: integer
-          description: 账册id
-          format: int64
-        receiptOrderStatus:
-          type: integer
-          description: 入库状态
-          format: int32
-        areaItems:
-          type: string
-          description: 存放位置(json字符串)
-        item:
-          $ref: '#/components/schemas/ItemVo'
-        consignor:
-          $ref: '#/components/schemas/MerchantVo'
-        receiptType:
-          type: integer
-          description: 分类
-          format: int32
-        area:
-          $ref: '#/components/schemas/AreaVo'
         wetWeight:
           type: number
           description: 湿重(吨)
         dryWeight:
           type: number
           description: 干重(吨)
-        ladingWeight:
-          type: number
-          description: 提单重量(吨)
-        moistureContent:
-          type: number
-          description: 水分
-        weightOrcId:
-          type: integer
-          description: OCR入库重量单主键
-          format: int64
-        elementsOrcId:
-          type: integer
-          description: OCR入库单五项有害元素主键
-          format: int64
-        elements:
-          type: array
-          description: 五项有害元素
-          items:
-            $ref: '#/components/schemas/ReceiptOrderElementVo'
-        mineralSourceFiling:
-          type: array
-          description: 矿源备案信息
-          items:
-            $ref: '#/components/schemas/MineralSourceFilingVo'
-      description: 入库单视图对象 wms_receipt_order
-    MerchantVo:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: id
-          format: int64
-        merchantCode:
+        areaItems:
           type: string
-          description: 编码
-        merchantName:
-          type: string
-          description: 企业名称
-        merchantType:
-          type: integer
-          description: 角色
-          format: int32
-        mobile:
-          type: string
-          description: 联系电话
-        qualifications:
-          type: string
-          description: 资质状态
-        fileUrl:
-          type: string
-          description: 附件URL
-        status:
-          type: string
-          description: 状态
-        statusName:
-          type: string
-          description: 状态
-        remark:
-          type: string
-          description: 备注
-      description: 往来单位视图对象 wms_merchant
+          description: 存放位置(json字符串)
+        area:
+          $ref: '#/components/schemas/AreaVo'
     WarehouseVo:
       type: object
       properties:
@@ -16854,6 +17474,130 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    ReceiptOrderVo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        receiptOrderNo:
+          type: string
+          description: 入库单号
+        orcId:
+          type: integer
+          description: OCR日志主键
+          format: int64
+        consignorId:
+          type: integer
+          description: 委托方id
+          format: int64
+        shipName:
+          type: string
+          description: 船名
+        waybillNo:
+          type: string
+          description: 提运单号
+        verificationCode:
+          type: string
+          description: 核注清单号
+        recordNo:
+          type: string
+          description: 报关单号
+        currency:
+          type: string
+          description: 币制
+        payableAmount:
+          type: number
+          description: 金额
+        itemId:
+          type: integer
+          description: 物料id
+          format: int64
+        itemBookId:
+          type: string
+          description: 矿源备案id
+        mineralType:
+          type: integer
+          description: 矿种
+          format: int32
+        shippingMethod:
+          type: integer
+          description: 货运方式
+          format: int32
+        arrivalDate:
+          type: string
+          description: 到货日期
+          format: date-time
+        entityId:
+          type: integer
+          description: 物流账册主体id
+          format: int64
+        ebookId:
+          type: integer
+          description: 账册id
+          format: int64
+        receiptOrderStatus:
+          type: integer
+          description: 入库状态
+          format: int32
+        item:
+          $ref: '#/components/schemas/ItemVo'
+        consignor:
+          $ref: '#/components/schemas/MerchantVo'
+        receiptType:
+          type: integer
+          description: 分类
+          format: int32
+        wetWeight:
+          type: number
+          description: 湿重(吨)
+        dryWeight:
+          type: number
+          description: 干重(吨)
+        ladingWeight:
+          type: number
+          description: 提单重量(吨)
+        moistureContent:
+          type: number
+          description: 水分
+        weightOrcId:
+          type: integer
+          description: OCR入库重量单主键
+          format: int64
+        elementsOrcId:
+          type: integer
+          description: OCR入库单五项有害元素主键
+          format: int64
+        elements:
+          type: array
+          description: 五项有害元素
+          items:
+            $ref: '#/components/schemas/ReceiptOrderElementVo'
+        mineralSourceFiling:
+          type: array
+          description: 矿源备案信息
+          items:
+            $ref: '#/components/schemas/MineralSourceFilingVo'
+        receiptOrderAreas:
+          type: array
+          description: 堆位信息
+          items:
+            $ref: '#/components/schemas/ReceiptOrderAreaVo'
+      description: 入库单视图对象 wms_receipt_order
     ProductionOrderDetailVo:
       type: object
       properties:
@@ -17254,14 +17998,6 @@ components:
             type: object
           description: 识别结果
           properties: {}
-    MovementOrderBatchBo:
-      type: object
-      properties:
-        list:
-          type: array
-          items:
-            $ref: '#/components/schemas/MovementOrderBo'
-      description: MovementOrderBatchBo
     RShipmentOrderDetailVo:
       type: object
       properties:
@@ -17273,6 +18009,80 @@ components:
         data:
           $ref: '#/components/schemas/ShipmentOrderDetailVo'
       description: 响应信息主体
+    ShipmentOrderVo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        shipmentOrderNo:
+          type: string
+          description: 出库单号
+        consignorId:
+          type: integer
+          format: int64
+        consignorName:
+          type: string
+          description: 委托方
+        receivingCompanyId:
+          type: integer
+          format: int64
+        receivingCompany:
+          type: string
+          description: 流向企业
+        consumerId:
+          type: integer
+          format: int64
+        consumerName:
+          type: string
+          description: 消费使用单位
+        recordNo:
+          type: string
+          description: 报关单号
+        verificationCode:
+          type: string
+          description: 核注清单
+        batchNo:
+          type: string
+          description: 批次号
+        shipmentWeight:
+          type: number
+          description: 重量
+        recordAmount:
+          type: number
+          description: 报关单金额
+        planShipmentTime:
+          type: string
+          description: 计划时间
+          format: date-time
+        shipmentTime:
+          type: string
+          description: 出库时间
+          format: date-time
+        remark:
+          type: string
+          description: 备注
+        shipmentOrderStatus:
+          type: integer
+          description: 出库状态
+          format: int32
+        consignor:
+          $ref: '#/components/schemas/MerchantVo'
+      description: 出库单视图对象 wms_shipment_order
     ROcrLogVo:
       type: object
       properties:
@@ -17663,6 +18473,26 @@ components:
           description: 请求参数
           properties: {}
       description: 操作日志记录业务对象 sys_oper_log
+    MovementOrderBatchBo:
+      type: object
+      properties:
+        startDate:
+          type: string
+          description: 开始日期
+        startHour:
+          type: string
+          description: 开始时间
+        endDate:
+          type: string
+          description: 结束日期
+        endHour:
+          type: string
+          description: 结束时间
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/MovementOrderBo'
+      description: MovementOrderBatchBo
     InventoryBo:
       type: object
       properties:
@@ -18107,62 +18937,6 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
-    ShipmentOrderVo:
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        id:
-          type: integer
-          format: int64
-        shipmentOrderNo:
-          type: string
-          description: 出库单号，系统自动生成
-        shipmentOrderType:
-          type: integer
-          description: 出库类型
-          format: int64
-        orderNo:
-          type: string
-          description: 出库订单
-        merchantId:
-          type: integer
-          description: 客户
-          format: int64
-        receivableAmount:
-          type: number
-          description: 订单金额
-        totalQuantity:
-          type: number
-          description: 出库数量
-        shipmentOrderStatus:
-          type: integer
-          description: 出库单状态
-          format: int32
-        warehouseId:
-          type: integer
-          description: 仓库id
-          format: int64
-        areaId:
-          type: integer
-          description: 库区id
-          format: int64
-        remark:
-          type: string
-          description: 备注
-      description: 出库单视图对象 wms_shipment_order
     RListMovementOrderDetailVo:
       type: object
       properties:
@@ -18325,6 +19099,30 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    RListMerchantVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MerchantVo'
+      description: 响应信息主体
+    RItemSkuVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/ItemSkuVo'
+      description: 响应信息主体
     SystemParamVo:
       type: object
       properties:
@@ -18363,35 +19161,15 @@ components:
           type: integer
           description: 系统未操作分钟数后退出
           format: int32
+        refreshInterval:
+          type: integer
+          description: 首页数据刷新时效
+          format: int32
         elements:
           type: array
           items:
             $ref: '#/components/schemas/SystemElementVo'
       description: SystemParamVo
-    RListMerchantVo:
-      type: object
-      properties:
-        code:
-          type: integer
-          format: int32
-        msg:
-          type: string
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/MerchantVo'
-      description: 响应信息主体
-    RItemSkuVo:
-      type: object
-      properties:
-        code:
-          type: integer
-          format: int32
-        msg:
-          type: string
-        data:
-          $ref: '#/components/schemas/ItemSkuVo'
-      description: 响应信息主体
     TableDataInfoItemSkuVo:
       type: object
       properties:
@@ -18460,7 +19238,7 @@ components:
           items:
             $ref: '#/components/schemas/ItemTypeTreeSelectVo'
       description: 响应信息主体
-    ReceiptDailyWeightDto:
+    ReceiptDailyWeightDto: &ref_0
       type: object
       properties:
         arrivalDate:
@@ -18612,6 +19390,22 @@ components:
         data:
           $ref: '#/components/schemas/ItemBrandVo'
       description: 响应信息主体
+    ProductionOrderInspectionVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        productionOrderId:
+          type: integer
+          description: 成品ID
+          format: int64
+        fileUrl:
+          type: string
+          description: 附件URL
+        remark:
+          type: string
+          description: 备注
     MovementOrderVo:
       type: object
       properties:
@@ -18735,6 +19529,17 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    RProductionOrderInspectionVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/ProductionOrderInspectionVo'
+      description: 响应信息主体
     RListItemBrandVo:
       type: object
       properties:
@@ -18748,6 +19553,26 @@ components:
           items:
             $ref: '#/components/schemas/ItemBrandVo'
       description: 响应信息主体
+    TableDataInfoProductionOrderInspectionVo:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: 总记录数
+          format: int64
+        rows:
+          type: array
+          description: 列表数据
+          items:
+            $ref: '#/components/schemas/ProductionOrderInspectionVo'
+        code:
+          type: integer
+          description: 消息状态码
+          format: int32
+        msg:
+          type: string
+          description: 消息内容
+      description: 表格分页数据对象
     RItemVo:
       type: object
       properties:
@@ -18758,6 +19583,19 @@ components:
           type: string
         data:
           $ref: '#/components/schemas/ItemVo'
+      description: 响应信息主体
+    RListProductionOrderInspectionVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductionOrderInspectionVo'
       description: 响应信息主体
     TableDataInfoItemVo:
       type: object
@@ -19206,6 +20044,38 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    TableDataInfoGenTableColumn:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: 总记录数
+          format: int64
+        rows:
+          type: array
+          description: 列表数据
+          items:
+            $ref: '#/components/schemas/GenTableColumn'
+        code:
+          type: integer
+          description: 消息状态码
+          format: int32
+        msg:
+          type: string
+          description: 消息内容
+      description: 表格分页数据对象
+    ProfileVo:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/SysUserVo'
+        roleGroup:
+          type: string
+          description: 用户所属角色组
+        postGroup:
+          type: string
+          description: 用户所属岗位组
+      description: 用户个人信息
     InventoryDetailVo:
       type: object
       properties:
@@ -19303,48 +20173,16 @@ components:
           $ref: '#/components/schemas/ItemVo'
         receiptOrder:
           $ref: '#/components/schemas/ReceiptOrderVo'
+        productionOrder:
+          $ref: '#/components/schemas/ProductionOrderVo'
         area:
-          type: integer
-          description: 所属库区/堆位
-          format: int64
+          $ref: '#/components/schemas/AreaVo'
         oldArea:
           $ref: '#/components/schemas/AreaVo'
         createUser:
           type: string
           description: 操作人
       description: 库存详情视图对象 wms_inventory_detail
-    TableDataInfoGenTableColumn:
-      type: object
-      properties:
-        total:
-          type: integer
-          description: 总记录数
-          format: int64
-        rows:
-          type: array
-          description: 列表数据
-          items:
-            $ref: '#/components/schemas/GenTableColumn'
-        code:
-          type: integer
-          description: 消息状态码
-          format: int32
-        msg:
-          type: string
-          description: 消息内容
-      description: 表格分页数据对象
-    ProfileVo:
-      type: object
-      properties:
-        user:
-          $ref: '#/components/schemas/SysUserVo'
-        roleGroup:
-          type: string
-          description: 用户所属角色组
-        postGroup:
-          type: string
-          description: 用户所属岗位组
-      description: 用户个人信息
     RProfileVo:
       type: object
       properties:
@@ -19398,72 +20236,6 @@ components:
         admin:
           type: boolean
       description: 角色信息视图对象 sys_role
-    InventoryVo:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        orderId:
-          type: integer
-          description: 业务单id
-          format: int64
-        consignorId:
-          type: integer
-          description: 委托方
-          format: int64
-        recordNo:
-          type: string
-          description: 报关单号
-        batchNo:
-          type: string
-          description: 生产批次
-        type:
-          type: integer
-          description: 库存来源 1 入库 2 生产
-          format: int32
-        itemId:
-          type: integer
-          description: 物料ID
-          format: int64
-        warehouseId:
-          type: integer
-          description: 所属仓库
-          format: int64
-        areaId:
-          type: integer
-          description: 所属库区/堆位
-          format: int64
-        areaItems:
-          type: string
-          description: 存放位置(json字符串)
-        wetWeight:
-          type: number
-          description: 湿重(吨)
-        dryWeight:
-          type: number
-          description: 干重(吨)
-        inboundTime:
-          type: string
-          description: 入库时间
-          format: date-time
-        consignor:
-          $ref: '#/components/schemas/MerchantVo'
-        item:
-          $ref: '#/components/schemas/ItemVo'
-        receiptOrder:
-          $ref: '#/components/schemas/ReceiptOrderVo'
-        productionOrder:
-          $ref: '#/components/schemas/ProductionOrderVo'
-        area:
-          $ref: '#/components/schemas/AreaVo'
-        accountBook:
-          $ref: '#/components/schemas/AccountBookVo'
-        inventoryStatus:
-          type: integer
-          description: 状态
-          format: int32
-      description: 库存视图对象 wms_inventory
     SysUserVo:
       type: object
       properties:
@@ -19560,6 +20332,72 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    InventoryVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        orderId:
+          type: integer
+          description: 业务单id
+          format: int64
+        consignorId:
+          type: integer
+          description: 委托方
+          format: int64
+        recordNo:
+          type: string
+          description: 报关单号
+        batchNo:
+          type: string
+          description: 生产批次
+        type:
+          type: integer
+          description: 库存来源 1 入库 2 生产
+          format: int32
+        itemId:
+          type: integer
+          description: 物料ID
+          format: int64
+        warehouseId:
+          type: integer
+          description: 所属仓库
+          format: int64
+        areaId:
+          type: integer
+          description: 所属库区/堆位
+          format: int64
+        areaItems:
+          type: string
+          description: 存放位置(json字符串)
+        wetWeight:
+          type: number
+          description: 湿重(吨)
+        dryWeight:
+          type: number
+          description: 干重(吨)
+        inboundTime:
+          type: string
+          description: 入库时间
+          format: date-time
+        consignor:
+          $ref: '#/components/schemas/MerchantVo'
+        item:
+          $ref: '#/components/schemas/ItemVo'
+        receiptOrder:
+          $ref: '#/components/schemas/ReceiptOrderVo'
+        productionOrder:
+          $ref: '#/components/schemas/ProductionOrderVo'
+        area:
+          $ref: '#/components/schemas/AreaVo'
+        accountBook:
+          $ref: '#/components/schemas/AccountBookVo'
+        inventoryStatus:
+          type: integer
+          description: 状态 0 在库 1 原料出清 2 生产中 3 出清，产品在库 4 已出库
+          format: int32
+      description: 库存视图对象 wms_inventory
     RListTreeLong:
       type: object
       properties:
@@ -19909,6 +20747,7 @@ components:
           items:
             $ref: '#/components/schemas/SysPostVo'
       description: 响应信息主体
+    DailyWeightDto: *ref_0
     TableDataInfoSysPostVo:
       type: object
       properties:
@@ -19929,6 +20768,19 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    RListDailyWeightDto:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyWeightDto'
+      description: 响应信息主体
     SysOssBo:
       type: object
       properties:
