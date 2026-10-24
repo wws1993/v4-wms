@@ -2,14 +2,19 @@ import type { Route } from '@/api-map/types'
 import { fail, ok } from '@/api/result'
 import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
-import { brief, idOf, inDayRange, nested, num, stamp, text } from '@/controller/shared/coerce'
+import { brief, idOf, nested, num, stamp, text } from '@/controller/shared/coerce'
 import { pageParams, range } from '@/controller/shared/page'
 import { codeFromDict, codeOf, dictOf, labelOf, merchantTypes } from '@/controller/shared/dict'
 import {
-  areaLabelText, clearMerchantCache, findArea, findMerchant, merchantRows,
+  clearMerchantCache, findArea, findMerchant, merchantRows,
 } from '@/controller/shared/catalog'
 import { locateInventory } from '@/controller/inventory'
+import type { MerchantBo, MerchantVo, ShipmentOrderBo, ShipmentOrderVo } from '@/typings/openapi'
 
+/** 出库单 Vo + 运行时扩展字段 */
+type ShipmentRow = ShipmentOrderVo & Row
+
+/** 生成出库单号。 */
 function shipmentOrderNo(seq = 0) {
   const now = new Date()
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -17,6 +22,7 @@ function shipmentOrderNo(seq = 0) {
   return seq > 0 ? `CK${stamp}${String(seq).padStart(3, '0')}` : `CK${stamp}`
 }
 
+/** 将核注/消费等元数据打包进备注。 */
 function packShipmentRemark(body: Row) {
   const meta: string[] = []
   if (text(body.checklistNo)) meta.push(`核注=${text(body.checklistNo)}`)
@@ -29,6 +35,7 @@ function packShipmentRemark(body: Row) {
   return [head, note].filter(Boolean).join(' ')
 }
 
+/** 从备注中解析打包的元数据。 */
 function parseShipmentRemark(remark: unknown) {
   const raw = text(remark)
   const match = raw.match(/^\[([^\]]+)\]\s*(.*)$/s)
@@ -49,6 +56,7 @@ function parseShipmentRemark(remark: unknown) {
   return bag
 }
 
+/** 确保流向企业存在，不存在则自动建档。 */
 async function ensureFlowMerchant(name: unknown) {
   const raw = text(name).trim()
   if (!raw) return undefined
@@ -57,24 +65,26 @@ async function ensureFlowMerchant(name: unknown) {
   const types = await merchantTypes()
   const merchantType = codeOf(types, '流向企业')
   if (merchantType == null) return undefined
-  const result = await ruoyiSend('POST', '/wms/merchant', {
+  const payload: Partial<MerchantBo> = {
     merchantCode: `FL${Date.now()}`,
     merchantName: raw,
-    merchantType,
+    merchantType: Number(merchantType),
     mobile: '',
     status: '0',
     source: 2,
-  })
+  }
+  const result = await ruoyiSend('POST', '/wms/merchant', payload)
   if (!result.ok) return undefined
   clearMerchantCache()
   return findMerchant(raw)
 }
 
+/** 将出库单 Vo 映射为前端展示行。 */
 function shipmentView(
-  row: Row,
+  row: ShipmentRow | Row,
   statuses: { label: string; value: string }[],
   types: { label: string; value: string }[],
-  merchants: Row[],
+  merchants: MerchantVo[],
 ): Row {
   const merchant = nested(row, 'merchant') || nested(row, 'consignee')
   const merchantId = text(row.merchantId || merchant?.id)
@@ -84,7 +94,7 @@ function shipmentView(
     || row.merchantName,
   )
   const meta = parseShipmentRemark(row.remark)
-  const customsNo = text(row.orderNo || row.recordNo || row.customsNo)
+  const customsNo = text(row.recordNo || row.customsNo)
   return {
     id: text(row.id),
     orderNo: text(row.shipmentOrderNo || row.id),
@@ -107,6 +117,7 @@ function shipmentView(
   }
 }
 
+/** 分页查询出库单。 */
 async function listShipments(query: Query) {
   const [statuses, types, merchants] = await Promise.all([
     dictOf('wms_shipment_status'),
@@ -119,10 +130,12 @@ async function listShipments(query: Query) {
   const statusCode = query.status ? await codeFromDict('wms_shipment_status', query.status) : undefined
   const typeCode = query.shipmentType ? await codeFromDict('wms_shipment_type', query.shipmentType) : undefined
   const hasRange = Boolean(query.from || query.to)
-  const ask = (withRange: boolean) => ruoyiGet('/wms/shipmentOrder/list', pageParams(query, {
+  const word = text(query.keyword).trim()
+  const ask = (withRange: boolean) => ruoyiGet<ShipmentOrderVo>('/wms/shipmentOrder/list', pageParams(query, {
     shipmentOrderStatus: statusCode,
     shipmentOrderType: typeCode,
     merchantId: merchant ? idOf(merchant.id) : undefined,
+    orderNo: word || undefined,
     ...(withRange ? range(query) : {}),
   }))
   let useRange = hasRange
@@ -134,59 +147,40 @@ async function listShipments(query: Query) {
     if (result.ok) note = '出库列表暂不支持起止日期，已按其它条件查询'
   }
   if (!result.ok) return fail(brief(result.message))
-  const word = text(query.keyword).trim()
-  const rows = result.rows
-    .map((row) => shipmentView(row, statuses, types, merchants.rows))
-    .filter((row) => {
-      if (query.consignor) {
-        const who = text(query.consignor)
-        if (row.consignor !== who && row.consignee !== who) return false
-      }
-      if (!word) return true
-      return `${row.orderNo}${row.customsNo}${row.checklistNo}${row.batchNo}${row.consignee}${row.consumer}`.includes(word)
-    })
-    .filter((row) => inDayRange(row.time, query.from, query.to))
-  const local = Boolean(word || query.consignor || query.from || query.to) || rows.length !== result.rows.length
+  const rows = result.rows.map((row) => shipmentView(row as ShipmentRow, statuses, types, merchants.rows))
   return ok({
     list: rows,
-    total: local ? rows.length : result.total,
+    total: result.total,
     page: Number(query.page || 1),
     pageSize: Number(query.pageSize || 10),
   }, note || result.message)
 }
 
+/** 按 id 查询出库单详情。 */
 async function getShipment(id: string) {
   const [detail, statuses, types, merchants] = await Promise.all([
-    ruoyiGet(`/wms/shipmentOrder/${encodeURIComponent(id)}`),
+    ruoyiGet<ShipmentOrderVo, ShipmentOrderVo>(`/wms/shipmentOrder/${encodeURIComponent(id)}`),
     dictOf('wms_shipment_status'),
     dictOf('wms_shipment_type'),
     merchantRows(),
   ])
   if (!detail.ok || !detail.data || typeof detail.data !== 'object') return fail(brief(detail.message) || '出库单不存在')
-  return ok(shipmentView(detail.data as Row, statuses, types, merchants.rows))
+  return ok(shipmentView(detail.data as ShipmentRow, statuses, types, merchants.rows))
 }
 
-async function finishedAreaLot(body: Row) {
+/** 根据库存 id / 批次定位出库票货。 */
+async function pickedLot(body: Row) {
   const inventoryId = text(body.inventoryId).trim()
   const batchNo = text(body.batchNo).trim()
   const stock = inventoryId
     ? await locateInventory(inventoryId) || (batchNo ? await locateInventory(batchNo) : undefined)
     : (batchNo ? await locateInventory(batchNo) : undefined)
-  if (!stock) return { ok: false as const, message: '请选择成品区在库票货' }
-  const areaNames = await dictOf('wms_area_identification')
+  if (!stock) return { ok: false as const, message: '请选择在库票货' }
   const area = nested(stock, 'area') || (await findArea(stock.areaId || stock.areaCode))
-  const label = areaLabelText(area?.areaIdentification || stock.areaIdentification || body.areaLabel, areaNames)
-  if (label && label !== '成品区') {
-    return { ok: false as const, message: `只能选择成品区票货，当前为${label}` }
-  }
-  if (!label) {
-    const fallback = text(body.areaLabel)
-    if (fallback && fallback !== '成品区') return { ok: false as const, message: `只能选择成品区票货，当前为${fallback}` }
-    if (!fallback) return { ok: false as const, message: '未识别票货片区，请选择成品区堆位上的票货' }
-  }
   return { ok: true as const, stock, area }
 }
 
+/** 创建出库单。 */
 async function createShipment(body: Row) {
   const consigneeName = text(body.consignee).trim()
   if (!consigneeName) return fail('请填写流向企业')
@@ -196,7 +190,7 @@ async function createShipment(body: Row) {
   if (wet == null || wet <= 0) return fail('请填写出库重量')
   const amount = num(body.amount)
   if (amount == null) return fail('请填写报关单金额')
-  const picked = await finishedAreaLot(body)
+  const picked = await pickedLot(body)
   if (!picked.ok) return fail(picked.message)
   const merchant = await ensureFlowMerchant(consigneeName)
   if (!merchant) return fail('流向企业建档失败，请先在往来单位维护')
@@ -205,7 +199,7 @@ async function createShipment(body: Row) {
   const stock = picked.stock
   const area = picked.area || (body.areaId || body.stackCode ? await findArea(body.areaId || body.stackCode) : undefined)
   const orderNo = text(body.orderNo).trim() || shipmentOrderNo()
-  const payload: Row = {
+  const payload: Partial<ShipmentOrderBo> & Row = {
     shipmentOrderNo: orderNo,
     shipmentOrderType: typeCode,
     orderNo: customsNo,
@@ -224,10 +218,11 @@ async function createShipment(body: Row) {
   return result.ok ? ok(result.data, '出库单已创建') : fail(brief(result.message))
 }
 
+/** 更新出库单。 */
 async function updateShipment(id: string, body: Row) {
-  const detail = await ruoyiGet(`/wms/shipmentOrder/${encodeURIComponent(id)}`)
+  const detail = await ruoyiGet<ShipmentOrderVo, ShipmentOrderVo>(`/wms/shipmentOrder/${encodeURIComponent(id)}`)
   if (!detail.ok || !detail.data || typeof detail.data !== 'object') return fail(brief(detail.message) || '出库单不存在')
-  const current = detail.data as Row
+  const current = detail.data as ShipmentRow
   const consigneeName = text(body.consignee).trim()
   const merchant = consigneeName
     ? await ensureFlowMerchant(consigneeName)
@@ -235,8 +230,8 @@ async function updateShipment(id: string, body: Row) {
   const typeCode = body.shipmentType
     ? await codeFromDict('wms_shipment_type', body.shipmentType)
     : num(current.shipmentOrderType)
-  const payload: Row = {
-    id: idOf(id),
+  const payload: Partial<ShipmentOrderBo> & Row = {
+    id: idOf(id) as ShipmentOrderBo['id'],
     shipmentOrderNo: text(body.orderNo || current.shipmentOrderNo),
     shipmentOrderType: typeCode,
     orderNo: text(body.customsNo || current.orderNo),
@@ -253,12 +248,13 @@ async function updateShipment(id: string, body: Row) {
   return result.ok ? ok(true, '出库单已更新') : fail(brief(result.message))
 }
 
+/** 完成出库。 */
 async function completeShipment(id: string) {
-  const detail = await ruoyiGet(`/wms/shipmentOrder/${encodeURIComponent(id)}`)
+  const detail = await ruoyiGet<ShipmentOrderVo, ShipmentOrderVo>(`/wms/shipmentOrder/${encodeURIComponent(id)}`)
   if (!detail.ok || !detail.data || typeof detail.data !== 'object') return fail(brief(detail.message) || '出库单不存在')
-  const current = detail.data as Row
-  const payload: Row = {
-    id: idOf(id),
+  const current = detail.data as ShipmentRow
+  const payload: Partial<ShipmentOrderBo> & Row = {
+    id: idOf(id) as ShipmentOrderBo['id'],
     shipmentOrderNo: text(current.shipmentOrderNo),
     shipmentOrderType: num(current.shipmentOrderType),
     orderNo: text(current.orderNo),
@@ -273,10 +269,12 @@ async function completeShipment(id: string) {
   return result.ok ? ok(true, '出库已完成') : fail(brief(result.message))
 }
 
+/** 审核出库（后端无独立审核接口）。 */
 async function approveShipment(_id: string) {
   return fail('后端出库单无单独审核，未出库请直接出库完成')
 }
 
+/** 出库单路由表 */
 export const outboundRoutes: Route[] = [
   { method: 'GET', match: '/outbound', handle: ({ query }) => listShipments(query) },
   { method: 'POST', match: '/outbound', handle: ({ body }) => createShipment(body) },

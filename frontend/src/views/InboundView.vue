@@ -24,7 +24,7 @@ const wizard = ref<{ start: number; seed: Record<string, unknown> | null; key: n
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const ledgerOpen = ref(false)
-const focus = ref('inbound')
+const focus = ref('basic')
 const current = ref<Record<string, unknown> | null>(null)
 
 const shipOptions = computed(() => shipModes.value)
@@ -136,19 +136,19 @@ function lotFromInbound(row: Record<string, unknown>) {
     ...row,
     batchNo: row.batchNo || row.customsNo || row.orderNo,
     batchKind: row.customsNo ? '报关单号' : '入库单号',
-    stackText: row.stackCode,
+    stackText: row.stackText || row.stackCode,
     docs: {
       customs: { image: '', name: '' },
       weight: { image: '', name: '' },
       quality: { image: '', name: '' },
     },
     products: [],
-    ledger: row.time ? [{ time: row.time, action: '入库', wet: row.wet, dry: row.dry, stack: row.stackCode, consignee: '' }] : [],
+    ledger: row.time ? [{ time: row.time, action: '入库', wet: row.wet, dry: row.dry, stack: row.stackText || row.stackCode, consignee: '' }] : [],
   }
 }
 
-async function openDetail(row: Record<string, unknown>, section = 'inbound') {
-  focus.value = section
+async function openDetail(row: Record<string, unknown>) {
+  focus.value = 'basic'
   // 列表行已是入库单摘要，不再额外 get；入场记录由弹窗直接用本行，避免 list/get 重复打同一单据。
   const base = lotFromInbound(row)
   current.value = base
@@ -211,7 +211,7 @@ function canReceive(row: Record<string, unknown>) {
       <!-- <el-table-column label="单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column> -->
       <el-table-column label="报关单号" min-width="150">
         <template #default="{ row }">
-          <el-button v-if="row.customsNo" link type="primary" @click="openDetail(row, 'inbound')">{{ row.customsNo }}</el-button>
+          <el-button v-if="row.customsNo" link type="primary" @click="openDetail(row)">{{ row.customsNo }}</el-button>
           <span v-else>—</span>
         </template>
       </el-table-column>
@@ -225,13 +225,13 @@ function canReceive(row: Record<string, unknown>) {
       <el-table-column label="湿/干" width="200"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
       <el-table-column prop="shipMode" label="货运方式" width="100" />
       <el-table-column prop="containerCount" label="柜数" width="70" />
-      <el-table-column prop="stackCode" label="堆位" width="100" />
+      <el-table-column prop="stackText" label="堆位" min-width="200" show-overflow-tooltip />
       <el-table-column prop="status" label="状态" width="100" />
       <el-table-column label="操作时间" width="170" fixed="right"><template #default="{ row }">{{ dash(row.operateTime || row.time) }}</template></el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canReceive(row)" link type="primary" @click="openReceive(row)">收货</el-button>
-          <el-button v-else link type="primary" @click="openDetail(row, 'inbound')">详情</el-button>
+          <el-button v-else link type="primary" @click="openDetail(row)">详情</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -243,7 +243,7 @@ function canReceive(row: Record<string, unknown>) {
       :lot="current"
       :loading="detailLoading"
       :focus="focus"
-      @open-batch="(batch, section) => openDetail({ batchNo: batch, customsNo: batch }, section || 'inbound')"
+      @open-batch="(batch) => openDetail({ batchNo: batch, customsNo: batch })"
     />
   </div>
 </template>

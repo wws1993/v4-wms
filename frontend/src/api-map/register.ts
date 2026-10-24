@@ -19,6 +19,7 @@ import { ocrRoutes } from '@/controller/ocr'
 import { warningRoutes } from '@/controller/warning'
 import { auditRoutes } from '@/controller/audit'
 import { productionRoutes } from '@/controller/production'
+import { inspectionRoutes } from '@/controller/inspection'
 import { outboundRoutes } from '@/controller/outbound'
 
 /** Exact handleLive registration order */
@@ -42,6 +43,7 @@ export const routes: Route[] = [
   ...ocrRoutes,
   ...warningRoutes,
   ...auditRoutes,
+  ...inspectionRoutes,
   ...productionRoutes,
   ...outboundRoutes,
 ]

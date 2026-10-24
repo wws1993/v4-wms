@@ -20,6 +20,15 @@ import {
 } from '@/plan/model'
 import type { FloorPlan, PlanItem } from '@/types'
 
+export type StackPick = {
+  stackCode: string
+  areaId: string
+  cells: string
+  warehouseId?: string
+  wet?: string | number
+  dry?: string | number
+}
+
 const props = withDefaults(defineProps<{
   stacks: Record<string, unknown>[]
   /** 外部已加载的平面图；不传则组件内自行拉取 */
@@ -30,12 +39,18 @@ const props = withDefaults(defineProps<{
   areaLabel?: string
   /** select=框选堆格；browse=点击跳转库存，不可框选 */
   mode?: 'select' | 'browse'
+  /** 多堆位累加：再次框选其它堆位时保留已选 */
+  multi?: boolean
+  /** 只读展示已选堆位，不可再框选 */
+  readonly?: boolean
   /** 是否显示顶部操作条 */
   showBar?: boolean
   /** 仓库档案，browse 模式下用于库容提示 */
   houses?: Record<string, unknown>[]
 }>(), {
   mode: 'select',
+  multi: false,
+  readonly: false,
   showBar: undefined,
   houses: () => [],
 })
@@ -43,6 +58,7 @@ const props = withDefaults(defineProps<{
 const stackCodeModel = defineModel<string>('stackCode', { default: '' })
 const areaIdModel = defineModel<string>('areaId', { default: '' })
 const cellsModel = defineModel<string>('cells', { default: '' })
+const picksModel = defineModel<StackPick[]>('picks', { default: () => [] })
 const focusId = defineModel<string>('focusId', { default: '' })
 
 const emit = defineEmits<{
@@ -55,8 +71,9 @@ const localPlan = reactive<FloorPlan>(defaultPlan())
 const localLots = ref<CargoLot[]>([])
 const plan = computed(() => props.plan || localPlan)
 const lots = computed(() => props.lots || localLots.value)
-const selectable = computed(() => props.mode === 'select')
-const barVisible = computed(() => props.showBar ?? selectable.value)
+const selectable = computed(() => props.mode === 'select' && !props.readonly)
+const markSelection = computed(() => selectable.value || props.multi || picksModel.value.length > 0 || Boolean(stackCodeModel.value))
+const barVisible = computed(() => props.showBar ?? (selectable.value || props.readonly))
 
 const stageRef = ref<HTMLElement>()
 const mapRef = ref<InstanceType<typeof PlanSvg>>()
@@ -72,6 +89,15 @@ let hideTip = 0
 let syncingFocus = false
 
 const selectedKeys = computed(() => cellsModel.value.split(',').filter(Boolean))
+const pickCellCount = computed(() => picksModel.value.reduce((sum, row) => sum + row.cells.split(',').filter(Boolean).length, 0))
+
+function keysOfStack(code: string) {
+  if (props.multi) {
+    const hit = picksModel.value.find((row) => row.stackCode === code)
+    return hit ? hit.cells.split(',').filter(Boolean) : []
+  }
+  return code === stackCodeModel.value ? selectedKeys.value : []
+}
 
 onMounted(async () => {
   const tasks: Promise<unknown>[] = []
@@ -210,10 +236,8 @@ const guides = computed(() => {
   const marks: { key: string; x: number; y: number; w: number; h: number; on: boolean; busy: boolean }[] = []
   for (const item of stacksInView()) {
     const size = gridSize(item)
-    const chosen = selectable.value
-      ? (preview.value?.code === codeOf(item)
-        ? preview.value.keys
-        : codeOf(item) === stackCodeModel.value ? selectedKeys.value : [])
+    const chosen = markSelection.value
+      ? (preview.value?.code === codeOf(item) ? preview.value.keys : keysOfStack(codeOf(item)))
       : []
     for (let row = 1; row <= size.rows; row += 1) {
       for (let col = 1; col <= size.cols; col += 1) {
@@ -261,6 +285,9 @@ const occupyText = computed(() => {
   return [where, [...names].join('、')].filter(Boolean).join(' · ')
 })
 
+/** 待检区成品可同堆多批次并存，仅格子重叠才算冲突。 */
+const mixBatches = computed(() => props.areaLabel === '待检区')
+
 const clashText = computed(() => {
   if (!selectable.value) return ''
   const item = stackItem()
@@ -268,7 +295,7 @@ const clashText = computed(() => {
   const rows = lotsHere(item)
   const placed = rows.filter((lot) => lot.cells?.length)
   if (!placed.length) {
-    if (!rows.length) return ''
+    if (mixBatches.value || !rows.length) return ''
     const names = [...new Set(rows.map((lot) => lot.consignor).filter(Boolean))]
     return names.length ? `该堆已有 ${names.join('、')}` : '该堆已有在库票货'
   }
@@ -281,8 +308,13 @@ const clashText = computed(() => {
 
 const barHint = computed(() => {
   if (!focusId.value) return '点击仓库放大'
+  if (props.readonly) return '高亮格子为本票预定堆位（只读）'
   if (selectable.value) {
-    return `着色格子为在库票货，拖拽框选，单击可加减一格${props.areaLabel ? `，只可选${props.areaLabel}` : ''}`
+    const multiHint = props.multi ? '，可跨堆位累加选择' : ''
+    if (mixBatches.value) {
+      return `成品可存入待检区，同一堆位可放不同批次；着色为在库格，请框选空闲格${multiHint}`
+    }
+    return `着色格子为在库票货，拖拽框选，单击可加减一格${multiHint}${props.areaLabel ? `，只可选${props.areaLabel}` : ''}`
   }
   return '着色格子为在库票货，点击堆位查询库存'
 })
@@ -498,9 +530,15 @@ function cellsInside(item: PlanItem, a: { x: number; y: number }, b: { x: number
 function choose(item: PlanItem, keys: string[]) {
   if (!allowed(item)) return
   const row = archiveOf(item)
-  stackCodeModel.value = row?.code ? String(row.code) : codeOf(item)
-  areaIdModel.value = row?.id ? String(row.id) : (item.stackId || '')
+  const code = row?.code ? String(row.code) : codeOf(item)
+  const areaId = row?.id ? String(row.id) : (item.stackId || '')
+  stackCodeModel.value = code
+  areaIdModel.value = areaId
   cellsModel.value = keys.join(',')
+  if (!props.multi) return
+  const next = picksModel.value.filter((pick) => (areaId ? pick.areaId !== areaId : pick.stackCode !== code))
+  if (keys.length) next.push({ stackCode: code, areaId, cells: keys.join(',') })
+  picksModel.value = next
 }
 
 function listenDrag(on: boolean) {
@@ -551,7 +589,7 @@ function onItem(event: PointerEvent, item: PlanItem) {
     beginDrag(event, item)
     return
   }
-  openStack(item)
+  if (props.mode === 'browse' && !props.readonly) openStack(item)
 }
 
 function onDrag(event: PointerEvent) {
@@ -578,8 +616,11 @@ function endDrag(event: PointerEvent) {
   if (!moved) {
     const key = cellsInside(current.item, current, { x: current.x + 0.01, y: current.y + 0.01 })[0]
     if (!key) return
-    const same = stackCodeModel.value === codeOf(current.item)
-    const next = new Set(same ? selectedKeys.value : [])
+    const code = codeOf(current.item)
+    const base = props.multi
+      ? keysOfStack(code)
+      : (stackCodeModel.value === code ? selectedKeys.value : [])
+    const next = new Set(base)
     if (next.has(key)) next.delete(key)
     else next.add(key)
     choose(current.item, [...next])
@@ -596,7 +637,10 @@ defineExpose({ zoomOut, layout })
   <div class="yard-plan" :class="{ 'has-bar': barVisible }">
     <div v-if="barVisible" class="plan-bar">
       <span>{{ barHint }}</span>
-      <strong v-if="selectable && stackCodeModel">
+      <strong v-if="(selectable || readonly) && multi && picksModel.length">
+        {{ readonly ? '本票占用' : '已选' }} {{ picksModel.length }} 个堆位 · {{ pickCellCount }} 格
+      </strong>
+      <strong v-else-if="(selectable || readonly) && stackCodeModel">
         {{ stackCodeModel }}<template v-if="selectedKeys.length"> · {{ selectedKeys.length }} 格</template>
       </strong>
       <em v-if="occupyText">{{ occupyText }}</em>

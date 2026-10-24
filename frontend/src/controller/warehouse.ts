@@ -14,8 +14,10 @@ import {
 } from '@/controller/shared/catalog'
 import { savedId, statusReply } from '@/controller/shared/reply'
 import { gridsFromPlan } from '@/controller/floor'
+import type { AreaBo, AreaVo, WarehouseBo, WarehouseVo } from '@/typings/openapi'
 
-function warehouseRow(row: Row) {
+/** 将仓库 Vo 映射为列表行。 */
+function warehouseRow(row: WarehouseVo) {
   const occupy = text(row.occupy)
   const matched = occupy.match(/(\d+(?:\.\d+)?)\s*[/／]\s*(\d+(?:\.\d+)?)/)
   return {
@@ -32,15 +34,15 @@ function warehouseRow(row: Row) {
   }
 }
 
-function stackRow(row: Row) {
-  const house = row.warehouse && typeof row.warehouse === 'object' ? row.warehouse as Row : undefined
-  const warehouseText = typeof row.warehouse === 'string' ? text(row.warehouse) : ''
+/** 将堆位 Vo 映射为列表行。 */
+function stackRow(row: AreaVo) {
+  const house = row.warehouse
   const warehouseId = text(row.warehouseId || house?.id)
   return {
     id: text(row.id),
-    code: text(row.areaCode || row.area_code || row.areaName || row.area_name),
+    code: text(row.areaCode || row.areaName),
     orderNum: orderNumOf(row.orderNum),
-    warehouse: text(house?.warehouseName || house?.warehouseCode || warehouseText || warehouseId),
+    warehouse: text(house?.warehouseCode || house?.warehouseName || warehouseId),
     warehouseId,
     areaLabel: text(row.areaIdentification),
     grid: '',
@@ -48,77 +50,69 @@ function stackRow(row: Row) {
     status: flagLabel(row.status),
   }
 }
+
+/** 删除仓库。 */
 async function removeWarehouse(id: string) {
   const result = await ruoyiSend('DELETE', `/wms/warehouse/${id}`)
   return result.ok ? ok(true, '已删除') : fail(result.message)
 }
 
+/** 删除堆位。 */
 async function removeStack(id: string) {
   const result = await ruoyiSend('DELETE', `/wms/area/${id}`)
   if (result.ok) clearAreaCache()
   return result.ok ? ok(true, '已删除') : fail(result.message)
 }
 
+/** 新建或更新仓库。 */
 async function saveWarehouse(id: string | undefined, body: Row) {
   const code = text(body.code)
-  const payload: Row = {
+  const payload: Partial<WarehouseBo> = {
     warehouseCode: code,
     warehouseName: code,
-    storageCapacity: body.capacity,
-    area: body.area,
+    storageCapacity: num(body.capacity),
+    area: num(body.area),
     status: flagStatus(body.status),
   }
   const orderNum = orderNumOf(body.orderNum)
   if (orderNum != null) payload.orderNum = orderNum
-  if (id) payload.id = idOf(id)
+  if (id) payload.id = idOf(id) as WarehouseBo['id']
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/warehouse', payload)
   if (result.ok && !id) clearWarehouseCache()
   return result.ok ? ok({ id: savedId(result) }, '已保存') : fail(result.message)
 }
 
-function savedId(result: { data: unknown }) {
-  const data = result.data
-  if (typeof data === 'string' || typeof data === 'number') {
-    const id = text(data).trim()
-    if (id && id !== 'true' && id !== 'false') return id
-  }
-  if (data && typeof data === 'object') {
-    const row = data as Row
-    const id = text(row.id)
-    if (id && id !== '[object Object]') return id
-  }
-  return ''
-}
-
+/** 新建或更新堆位。 */
 async function saveStack(id: string | undefined, body: Row) {
   const given = text(body.warehouseId).trim()
   const warehouseId = given ? idOf(given) : await findWarehouseId(body.warehouse)
   if (!warehouseId) return fail('请选择已存在的仓库')
   const code = text(body.code)
-  const payload: Row = {
+  const payload: Partial<AreaBo> = {
     areaCode: code,
     areaName: code,
-    warehouseId,
-    inventoryCapacity: body.capacity,
-    areaIdentification: body.areaLabel,
+    warehouseId: warehouseId as AreaBo['warehouseId'],
+    inventoryCapacity: num(body.capacity) as AreaBo['inventoryCapacity'],
+    areaIdentification: text(body.areaLabel) || undefined,
     orderNum: orderNumOf(body.orderNum) ?? 0,
   }
   const status = text(body.status)
   if (status) payload.status = flagStatus(status)
   else if (!id) payload.status = '0'
-  if (id) payload.id = idOf(id)
+  if (id) payload.id = idOf(id) as AreaBo['id']
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/area', payload)
   if (result.ok) clearAreaCache()
   return result.ok ? ok({ id: savedId(result) }, '已保存') : fail(result.message)
 }
 
+/** 仓库与堆位路由表 */
 export const warehouseRoutes: Route[] = [
   { method: 'GET', match: '/warehouses/catalog', handle: async () => {
     const rows = byOrderNum((await warehouseRows()).map(warehouseRow))
     return ok({ list: rows, total: rows.length, page: 1, pageSize: rows.length || 1 })
   } },
   { method: 'GET', match: '/warehouses', handle: async ({ query }) => {
-    const result = await ruoyiGet('/wms/warehouse/list', pageParams(query, {
+    const result = await ruoyiGet<WarehouseVo>('/wms/warehouse/list', pageParams(query, {
       warehouseCode: query.keyword || undefined,
       status: query.status ? flagStatus(query.status) : undefined,
     }))
@@ -138,7 +132,7 @@ export const warehouseRoutes: Route[] = [
       query.warehouse ? findWarehouseId(query.warehouse) : Promise.resolve(undefined),
       areaLabel ? dictValue('wms_area_identification', areaLabel) : Promise.resolve(undefined),
     ])
-    const result = await ruoyiGet('/wms/area/list', pageParams(query, {
+    const result = await ruoyiGet<AreaVo>('/wms/area/list', pageParams(query, {
       warehouseId: warehouseIdValue ?? undefined,
       areaCode: keyword || undefined,
       areaIdentification: areaIdentification || undefined,
@@ -157,7 +151,7 @@ export const warehouseRoutes: Route[] = [
       return {
         ...row,
         areaLabel: areaLabelText(row.areaLabel, areaNames),
-        warehouse: house ? text(house.warehouseName || house.warehouseCode || row.warehouse) : row.warehouse,
+        warehouse: house ? text(house.warehouseCode || house.warehouseName || row.warehouse) : row.warehouse,
         grid: grid?.grid || row.grid,
         gridCols: grid?.gridCols,
         gridRows: grid?.gridRows,

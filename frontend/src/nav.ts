@@ -53,7 +53,7 @@ const MENU_WORDS: { id: string; words: string[] }[] = [
   { id: 'stocktake', words: ['盘点', '盘库'] },
   { id: 'warningLogs', words: ['预警日志'] },
   { id: 'outbound', words: ['出库'] },
-  { id: 'production', words: ['生产加工', '完工'] },
+  { id: 'production', words: ['生产加工', '完工', '送检', '抽样'] },
   { id: 'customs', words: ['关务'] },
   { id: 'ocr', words: ['ocr', '识别'] },
   { id: 'audit', words: ['操作日志', '审计'] },

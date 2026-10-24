@@ -5,7 +5,9 @@ import type { Row } from '@/controller/shared/types'
 import { idOf, num, text } from '@/controller/shared/coerce'
 import { clearRoleCache, roles } from '@/controller/auth'
 import { settingsMenuIds } from '@/controller/menu'
+import type { SysRoleBo, SysRoleVo } from '@/typings/openapi'
 
+/** 角色状态展示标签。 */
 function roleStatusLabel(value: unknown) {
   const raw = text(value)
   if (raw === '1' || raw === '正常' || raw === '启用') return '启用'
@@ -13,10 +15,13 @@ function roleStatusLabel(value: unknown) {
   return raw || '启用'
 }
 
+/** 角色状态写入编码。 */
 function roleStatusCode(value: unknown) {
   return text(value) === '停用' || text(value) === '0' ? '0' : '1'
 }
-function roleRecord(row: Row) {
+
+/** 将角色 Vo 映射为管理列表行。 */
+function roleRecord(row: SysRoleVo | Row) {
   return {
     id: text(row.roleId),
     name: text(row.roleName),
@@ -28,6 +33,7 @@ function roleRecord(row: Row) {
     admin: row.admin === true,
   }
 }
+/** 新建或更新角色。 */
 async function saveRole(id: string | undefined, body: Row) {
   const name = text(body.name).trim()
   const key = text(body.key).trim()
@@ -38,7 +44,7 @@ async function saveRole(id: string | undefined, body: Row) {
   if (key.length > 100) return fail('权限字符不能超过 100 个字符')
   const sort = num(body.sort)
   if (sort == null) return fail('请填写显示顺序')
-  const payload: Row = {
+  const payload: Partial<SysRoleBo> & Row = {
     roleName: name,
     roleKey: key,
     roleSort: Math.trunc(sort),
@@ -63,19 +69,21 @@ async function saveRole(id: string | undefined, body: Row) {
   return result.ok ? ok(true, id ? '角色已保存' : '角色已创建') : fail(result.message)
 }
 
+/** 从角色菜单树响应中提取已勾选菜单 id。 */
 function checkedMenuIds(data: unknown, raw: Row) {
   const packet = data && typeof data === 'object' ? data as Row : {}
   const list = packet.checkedKeys ?? raw.checkedKeys ?? packet.checked ?? []
   return Array.isArray(list) ? list.map((item) => text(item)).filter(Boolean) : []
 }
 
+/** 角色管理路由表 */
 export const roleRoutes: Route[] = [
   { method: 'GET', match: '/system/roles/options', handle: async () => {
     const list = await roles()
     return ok(list.map((row) => ({ label: text(row.roleName), value: text(row.roleId) })).filter((item) => item.label && item.value))
   } },
   { method: 'GET', match: '/system/roles', handle: async ({ query }) => {
-    const result = await ruoyiGet('/system/role/list', { pageNum: 1, pageSize: 200, roleName: query.keyword || undefined })
+    const result = await ruoyiGet<SysRoleVo>('/system/role/list', { pageNum: 1, pageSize: 200, roleName: query.keyword || undefined })
     if (!result.ok) return fail(result.message)
     return ok(result.rows.map(roleRecord).filter((row) => row.id))
   } },

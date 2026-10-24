@@ -36,7 +36,8 @@ const loading = ref(false)
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const ledgerOpen = ref(false)
-const focus = ref('inbound')
+/** 详情弹窗初始页 */
+const focus = ref('basic')
 const current = ref<Record<string, unknown> | null>(null)
 
 function applyRoute() {
@@ -151,26 +152,33 @@ onMounted(async () => {
   load()
 })
 
-function customsOf(row: Record<string, unknown>) {
-  return row.batchKind === '报关单号' ? String(row.batchNo) : '—'
-}
-function prodOf(row: Record<string, unknown>) {
-  return row.batchKind === '生产批次号' ? String(row.batchNo) : '—'
+function lotKey(row: Record<string, unknown>) {
+  return String(row.batchNo || row.customsNo || row.inventoryId || row.id || '')
 }
 
-async function openDetail(row: Record<string, unknown>, section = 'inbound') {
-  focus.value = section
+function customsOf(row: Record<string, unknown>) {
+  const value = String(row.customsNo || row.recordNo || '').trim()
+  return value || '—'
+}
+
+function prodOf(row: Record<string, unknown>) {
+  const value = String(row.batchNo || '').trim()
+  return value || '—'
+}
+
+async function openDetail(row: Record<string, unknown>) {
+  focus.value = 'basic'
   current.value = { ...row }
   detailOpen.value = true
   detailLoading.value = true
-  const res = await inventoryApi.detail(String(row.batchNo))
+  const res = await inventoryApi.detail(lotKey(row))
   detailLoading.value = false
   if (!detailOpen.value || !res.success || !res.data) return
   current.value = res.data
 }
 
 async function openLedger(row: Record<string, unknown>) {
-  const res = await inventoryApi.detail(String(row.batchNo))
+  const res = await inventoryApi.detail(lotKey(row))
   current.value = res.success && res.data ? res.data : row
   ledgerOpen.value = true
 }
@@ -212,47 +220,46 @@ async function openLedger(row: Record<string, unknown>) {
           <el-option label="自定义" value="custom" />
         </el-select>
       </el-form-item>
-      <el-form-item>
+      <template v-if="more || filters.timeMode === 'custom'">
+        <el-form-item v-if="filters.timeMode === 'custom'" label="起止">
+          <div class="hours">
+            <el-date-picker v-model="filters.from" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" />
+            <el-select v-model="filters.fromHour" style="width: 88px">
+              <el-option v-for="hour in HOURS" :key="hour" :label="`${hour}时`" :value="hour" />
+            </el-select>
+            <span>至</span>
+            <el-date-picker v-model="filters.to" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" />
+            <el-select v-model="filters.toHour" style="width: 88px">
+              <el-option v-for="hour in HOURS" :key="`t${hour}`" :label="`${hour}时`" :value="hour" />
+            </el-select>
+          </div>
+        </el-form-item>
+        <el-form-item label="矿源备案号">
+          <el-input v-model="filters.filingNo" clearable placeholder="备案号" style="width: 150px" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="仓库">
+          <el-select v-model="filters.warehouse" clearable filterable style="width: 130px">
+            <el-option v-for="name in houses" :key="name" :label="name" :value="name" />
+          </el-select>
+        </el-form-item>
+      </template>
+      <el-form-item :class="{ 'query-actions': more || filters.timeMode === 'custom' }">
         <el-button type="primary" @click="search">查询</el-button>
         <el-button @click="reset">重置</el-button>
         <el-button link type="primary" @click="more = !more">{{ more ? '收起条件' : '更多条件' }}</el-button>
       </el-form-item>
     </el-form>
 
-    <el-form v-show="more || filters.timeMode === 'custom'" :inline="true" class="query">
-      <el-form-item v-if="filters.timeMode === 'custom'" label="起止">
-        <div class="hours">
-          <el-date-picker v-model="filters.from" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" />
-          <el-select v-model="filters.fromHour" style="width: 88px">
-            <el-option v-for="hour in HOURS" :key="hour" :label="`${hour}时`" :value="hour" />
-          </el-select>
-          <span>至</span>
-          <el-date-picker v-model="filters.to" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" />
-          <el-select v-model="filters.toHour" style="width: 88px">
-            <el-option v-for="hour in HOURS" :key="`t${hour}`" :label="`${hour}时`" :value="hour" />
-          </el-select>
-        </div>
-      </el-form-item>
-      <el-form-item label="矿源备案号">
-        <el-input v-model="filters.filingNo" clearable placeholder="备案号" style="width: 150px" @keyup.enter="search" />
-      </el-form-item>
-      <el-form-item label="仓库">
-        <el-select v-model="filters.warehouse" clearable filterable style="width: 130px">
-          <el-option v-for="name in houses" :key="name" :label="name" :value="name" />
-        </el-select>
-      </el-form-item>
-    </el-form>
-
     <el-table v-loading="loading" :data="rows" border stripe>
       <el-table-column label="报关单号" min-width="170" show-overflow-tooltip>
         <template #default="{ row }">
-          <el-button v-if="customsOf(row) !== '—'" link type="primary" @click="openDetail(row, 'inbound')">{{ customsOf(row) }}</el-button>
+          <el-button v-if="customsOf(row) !== '—'" link type="primary" @click="openDetail(row)">{{ customsOf(row) }}</el-button>
           <span v-else>—</span>
         </template>
       </el-table-column>
       <el-table-column label="生产批次" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
-          <el-button v-if="prodOf(row) !== '—'" link type="primary" @click="openDetail(row, 'production')">{{ prodOf(row) }}</el-button>
+          <el-button v-if="prodOf(row) !== '—'" link type="primary" @click="openDetail(row)">{{ prodOf(row) }}</el-button>
           <span v-else>—</span>
         </template>
       </el-table-column>
@@ -271,7 +278,7 @@ async function openLedger(row: Record<string, unknown>) {
       <el-table-column prop="status" label="状态" width="90" />
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row, 'inbound')">详情</el-button>
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button link type="primary" @click="openLedger(row)">台账</el-button>
         </template>
       </el-table-column>
@@ -295,13 +302,14 @@ async function openLedger(row: Record<string, unknown>) {
       :lot="current"
       :loading="detailLoading"
       :focus="focus"
-      @open-batch="(batch, section) => openDetail({ batchNo: batch }, section || 'inbound')"
+      @open-batch="(batch) => openDetail({ batchNo: batch })"
     />
   </div>
 </template>
 
 <style scoped>
 .query { margin-bottom: 4px; }
+.query-actions { display: block; width: 100%; margin-right: 0; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .hours { display: flex; gap: 8px; align-items: center; }
 </style>

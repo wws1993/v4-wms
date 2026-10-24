@@ -11,70 +11,161 @@ import { codeFromDict, currencyMark, currencyValue, dictOf, labelOf } from '@/co
 import {
   areaCodeValue, areaNameValue, areaRows, findArea, findBook, findItem, findMerchant, itemCatalog,
 } from '@/controller/shared/catalog'
+import type {
+  ItemVo,
+  ReceiptOrderAreaBo,
+  ReceiptOrderAreaVo,
+  ReceiptOrderBo,
+  ReceiptOrderVo,
+} from '@/typings/openapi'
 
-function materialName(row: Row, items: Row[]) {
-  const embedded = row.item as Row | undefined
-  const named = text(embedded?.itemName || row.itemName)
+/** 入库单 Vo + 运行时偶发扩展字段 */
+type ReceiptRow = ReceiptOrderVo & Row & {
+  area?: Row
+  shippingMethodId?: unknown
+  waybillWeight?: unknown
+  blWeight?: unknown
+  filingNo?: unknown
+  orcLogId?: unknown
+  remark?: string
+  areaId?: unknown
+  areaCode?: unknown
+}
+
+/** 解析入库单上的物料展示名。 */
+function materialName(row: ReceiptRow | Row, items: ItemVo[] | Row[]) {
+  const bag = row as Row
+  const embedded = bag.item as Row | undefined
+  const named = text(embedded?.itemName || bag.itemName)
   if (named) return named
-  const id = text(row.itemId || embedded?.id)
+  const id = text(bag.itemId || embedded?.id)
   const hit = items.find((item) => text(item.id) === id)
   return text(hit?.itemName)
 }
 
-function filingNoOf(row?: Row | null) {
+/** 从入库单或嵌套矿源备案取备案号。 */
+function filingNoOf(row?: ReceiptRow | Row | null) {
   if (!row) return ''
-  const direct = text(row.filingNo).trim()
+  const bag = row as Row
+  const direct = text(bag.filingNo).trim()
   if (direct) return direct
-  const filings = row.mineralSourceFiling
+  const filings = bag.mineralSourceFiling
   if (Array.isArray(filings) && filings[0]) return text((filings[0] as Row).recordNumber)
   if (filings && typeof filings === 'object') return text((filings as Row).recordNumber)
   return ''
 }
 
-function shipModeOf(row: Row, translates: { label: string; value: string }[]) {
-  const method = nested(row, 'shippingMethod')
-  const code = text(method?.id ?? (typeof row.shippingMethod === 'object' ? row.shippingMethodId : row.shippingMethod))
+/** 将货运方式编码转为字典标签。 */
+function shipModeOf(row: ReceiptRow | Row, translates: { label: string; value: string }[]) {
+  const bag = row as Row
+  const method = nested(bag, 'shippingMethod')
+  const code = text(method?.id ?? (typeof bag.shippingMethod === 'object' ? bag.shippingMethodId : bag.shippingMethod))
   return labelOf(translates, code)
 }
 
-function receiptRow(row: Row, minerals: { label: string; value: string }[], statuses: { label: string; value: string }[], currencies: { label: string; value: string }[], categories: { label: string; value: string }[], translates: { label: string; value: string }[], items: Row[] = []) {
-  const method = nested(row, 'shippingMethod')
-  const consignor = row.consignor as Row | undefined
-  const area = row.area as Row | undefined
-  const item = row.item as Row | undefined
+/** 吨数展示文案（最多三位小数）。 */
+function tonLabel(value: unknown) {
+  const parsed = num(value)
+  if (parsed == null) return ''
+  const rounded = Math.round(parsed * 1000) / 1000
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded)
+}
+
+/** 从入库堆位明细行提取堆位选择。 */
+function stackPickFromArea(row: ReceiptOrderAreaVo | Row) {
+  const area = nested(row, 'area')
+  const cells = cellsText({
+    areas: row.areas,
+    areaItems: row.areaItems ?? area?.areaItems,
+    area,
+  })
   return {
-    id: text(row.id),
-    orderNo: text(row.receiptOrderNo),
-    time: text(row.arrivalDate || row.createTime).replace('T', ' ').slice(0, 16),
-    operateTime: text(row.updateTime || row.createTime).replace('T', ' ').slice(0, 19),
-    customsNo: text(row.recordNo),
-    blNo: text(row.waybillNo),
-    blWeight: row.ladingWeight ?? row.waybillWeight ?? row.blWeight ?? '',
-    shipName: text(row.shipName),
-    oreType: labelOf(minerals, row.mineralType) || text(row.mineralType),
-    shipMode: shipModeOf(row, translates),
-    containerCount: method?.areaNumber ?? '',
-    consignor: text(consignor?.merchantName || row.consignorId),
-    material: materialName(row, items),
-    cargoType: labelOf(categories, item?.itemCategory) || text(item?.itemCategory),
-    filingNo: filingNoOf(row),
-    stackCode: text(area?.areaCode || area?.areaName),
-    cells: cellsText(row),
-    amount: row.payableAmount,
-    currency: currencyMark(currencies, row.currency),
-    checklistNo: text(row.verificationCode),
-    status: labelOf(statuses, row.receiptOrderStatus) || text(row.receiptOrderStatus),
-    orcId: row.orcLogId,
+    stackCode: text(row.areaName || area?.areaCode || area?.areaName || row.areaCode),
+    areaId: text(row.areaId || area?.id),
+    warehouseId: text(row.warehouseId || area?.warehouseId),
+    cells,
     wet: row.wetWeight ?? '',
     dry: row.dryWeight ?? '',
-    moisture: row.moistureContent ?? '',
-    weightOrcId: text(row.weightOrcId),
-    elementsOrcId: text(row.elementsOrcId),
-    shippingMethodId: text(row.shippingMethodId || method?.id || (typeof row.shippingMethod === 'object' ? '' : row.shippingMethod)),
-    remark: text(row.remark),
-    ...elementFields(row),
   }
 }
+
+/** 汇总入库单上的堆位选择列表。 */
+function stackPicksOf(row: ReceiptRow | Row) {
+  const bag = row as Row
+  const list = Array.isArray(bag.receiptOrderAreas) ? bag.receiptOrderAreas as (ReceiptOrderAreaVo | Row)[] : []
+  const picks = list.map(stackPickFromArea).filter((item) => item.areaId || item.stackCode)
+  if (picks.length) return picks
+  const area = nested(bag, 'area')
+  const code = text(area?.areaCode || area?.areaName || bag.areaCode)
+  const areaId = text(bag.areaId || area?.id)
+  if (!code && !areaId) return []
+  return [{
+    stackCode: code,
+    areaId,
+    warehouseId: text(bag.warehouseId || area?.warehouseId),
+    cells: cellsText(bag),
+    wet: bag.wetWeight ?? '',
+    dry: bag.dryWeight ?? '',
+  }]
+}
+
+/** 列表堆位列：如 4#D1(1000吨)/4#D2(400吨)（优先干重，无干重则用湿重） */
+function stackTextOf(picks: { stackCode: string; wet?: unknown; dry?: unknown }[]) {
+  if (!picks.length) return ''
+  return picks.map((pick) => {
+    const code = text(pick.stackCode) || '—'
+    const weight = tonLabel(pick.dry) || tonLabel(pick.wet)
+    return weight ? `${code}(${weight}吨)` : code
+  }).join('/')
+}
+
+/** 将入库单 Vo 映射为前端列表/详情行。 */
+function receiptRow(row: ReceiptRow | Row, minerals: { label: string; value: string }[], statuses: { label: string; value: string }[], currencies: { label: string; value: string }[], categories: { label: string; value: string }[], translates: { label: string; value: string }[], items: ItemVo[] | Row[] = []) {
+  const bag = row as ReceiptRow
+  const method = nested(bag, 'shippingMethod')
+  const consignor = bag.consignor as Row | undefined
+  const area = bag.area as Row | undefined
+  const item = bag.item as Row | undefined
+  const stackPicks = stackPicksOf(bag)
+  const lead = stackPicks[0]
+  return {
+    id: text(bag.id),
+    orderNo: text(bag.receiptOrderNo),
+    time: text(bag.arrivalDate || bag.createTime).replace('T', ' ').slice(0, 16),
+    operateTime: text(bag.updateTime || bag.createTime).replace('T', ' ').slice(0, 19),
+    customsNo: text(bag.recordNo),
+    blNo: text(bag.waybillNo),
+    blWeight: bag.ladingWeight ?? bag.waybillWeight ?? bag.blWeight ?? '',
+    shipName: text(bag.shipName),
+    oreType: labelOf(minerals, bag.mineralType) || text(bag.mineralType),
+    shipMode: shipModeOf(bag, translates),
+    containerCount: method?.areaNumber ?? '',
+    consignor: text(consignor?.merchantName || bag.consignorId),
+    material: materialName(bag, items),
+    cargoType: labelOf(categories, item?.itemCategory) || text(item?.itemCategory),
+    filingNo: filingNoOf(bag),
+    stackCode: lead?.stackCode || text(area?.areaCode || area?.areaName),
+    stackText: stackTextOf(stackPicks) || lead?.stackCode || text(area?.areaCode || area?.areaName),
+    areaId: lead?.areaId || text(bag.areaId || area?.id),
+    cells: lead?.cells || cellsText(bag),
+    stackPicks,
+    amount: bag.payableAmount,
+    currency: currencyMark(currencies, bag.currency),
+    checklistNo: text(bag.verificationCode),
+    status: labelOf(statuses, bag.receiptOrderStatus) || text(bag.receiptOrderStatus),
+    orcId: bag.orcLogId,
+    wet: bag.wetWeight ?? '',
+    dry: bag.dryWeight ?? '',
+    moisture: bag.moistureContent ?? '',
+    weightOrcId: text(bag.weightOrcId),
+    elementsOrcId: text(bag.elementsOrcId),
+    shippingMethodId: text(bag.shippingMethodId || method?.id || (typeof bag.shippingMethod === 'object' ? '' : bag.shippingMethod)),
+    remark: text(bag.remark),
+    ...elementFields(bag),
+  }
+}
+
+/** 分页查询入库单。 */
 async function listReceipts(query: Query) {
   const minerals = await dictOf('wms_mineral_type')
   const statuses = await dictOf('wms_receipt_status')
@@ -91,7 +182,7 @@ async function listReceipts(query: Query) {
   }
   const hasRange = Boolean(query.from || query.to)
   const word = text(query.keyword).trim()
-  const ask = (extra: Query, withRange: boolean) => ruoyiGet('/wms/receiptOrder/list', pageParams(query, {
+  const ask = (extra: Query, withRange: boolean) => ruoyiGet<ReceiptOrderVo>('/wms/receiptOrder/list', pageParams(query, {
     ...filters,
     ...extra,
     ...(withRange ? range(query) : {}),
@@ -107,16 +198,17 @@ async function listReceipts(query: Query) {
   if (result.ok && word && result.total === 0) result = await ask({ waybillNo: word }, useRange)
   if (!result.ok) return fail(result.message)
   return ok({
-    list: result.rows.map((row) => receiptRow(row, minerals, statuses, currencies, categories, translates, items.rows)),
+    list: result.rows.map((row) => receiptRow(row as ReceiptRow, minerals, statuses, currencies, categories, translates, items.rows)),
     total: result.total,
     page: Number(query.page || 1),
     pageSize: Number(query.pageSize || 10),
   }, note || result.message)
 }
 
+/** 按 id 查询入库单详情。 */
 async function getReceipt(id: string) {
   const [detail, minerals, statuses, currencies, categories, translates, items] = await Promise.all([
-    ruoyiGet(`/wms/receiptOrder/${encodeURIComponent(id)}`),
+    ruoyiGet<ReceiptOrderVo, ReceiptOrderVo>(`/wms/receiptOrder/${encodeURIComponent(id)}`),
     dictOf('wms_mineral_type'),
     dictOf('wms_receipt_status'),
     dictOf('wms_currency_type'),
@@ -125,25 +217,59 @@ async function getReceipt(id: string) {
     itemCatalog(),
   ])
   if (!detail.ok || !detail.data || typeof detail.data !== 'object') return fail(detail.message || '入库单不存在')
-  return ok(receiptRow(detail.data as Row, minerals, statuses, currencies, categories, translates, items.rows))
+  return ok(receiptRow(detail.data as ReceiptRow, minerals, statuses, currencies, categories, translates, items.rows))
 }
 
+/** 从表单提取堆位选择行。 */
+async function stackPickRows(body: Row) {
+  const listed = Array.isArray(body.stackPicks) ? body.stackPicks as Row[] : []
+  if (listed.length) return listed.filter((row) => text(row.stackCode) || text(row.areaId))
+  if (text(body.stackCode) || text(body.areaId)) {
+    return [{ stackCode: body.stackCode, areaId: body.areaId, cells: body.cells }]
+  }
+  return []
+}
+
+/** 将表单堆位选择转为 ReceiptOrderAreaBo 列表。 */
+async function receiptOrderAreasOf(body: Row) {
+  const picks = await stackPickRows(body)
+  if (!picks.length) return fail('请选择预定堆位')
+  const known = (await areaRows()).map((row) => areaCodeValue(row) || areaNameValue(row)).filter(Boolean)
+  const hint = known.length ? `，档案中有 ${known.slice(0, 8).join('、')}` : '，没有读到堆位档案'
+  const areas: Partial<ReceiptOrderAreaBo>[] = []
+  for (const pick of picks) {
+    const area = await findArea(pick.areaId) || await findArea(pick.stackCode)
+    if (!area) {
+      return fail(`预定堆位 ${text(pick.stackCode) || text(pick.areaId)} 不存在${hint}`)
+    }
+    const warehouseId = idOf(area.warehouseId) ?? idOf(nested(area, 'warehouse')?.id)
+    if (warehouseId == null) {
+      return fail(`堆位 ${text(pick.stackCode) || areaCodeValue(area) || text(area.id)} 缺少所属仓库`)
+    }
+    const cells = cellsBody(pick.cells)
+    const row: Partial<ReceiptOrderAreaBo> & { areas?: unknown } = {
+      areaId: idOf(area.id) as ReceiptOrderAreaBo['areaId'],
+      warehouseId: warehouseId as ReceiptOrderAreaBo['warehouseId'],
+    }
+    if (cells.length) row.areas = cells
+    areas.push(row)
+  }
+  return ok(areas)
+}
+
+/** 创建入库预约。 */
 async function createReceipt(body: Row) {
   const orcId = idOf(body.orcId)
   if (orcId == null) return fail('请先完成入库报关单识别，并填写 OCR 任务编号')
   const consignor = await findMerchant(body.consignor)
-  const area = await findArea(body.areaId) || await findArea(body.stackCode)
   const item = await findItem(body.material)
   const shippingMethodId = await codeFromDict('wms_translate_type', body.shipMode)
   const mineralType = await codeFromDict('wms_mineral_type', body.oreType || '精铜矿')
   const shipName = text(body.shipName).trim()
 
   if (!consignor) return fail('委托方在往来单位中不存在')
-  if (!area) {
-    const known = (await areaRows()).map((row) => areaCodeValue(row) || areaNameValue(row)).filter(Boolean)
-    const hint = known.length ? `，档案中有 ${known.slice(0, 8).join('、')}` : '，没有读到堆位档案'
-    return fail(`预定堆位 ${text(body.stackCode) || text(body.areaId)} 不存在${hint}`)
-  }
+  const areaResult = await receiptOrderAreasOf(body)
+  if (!areaResult.success) return fail(areaResult.message)
   if (!item) return fail('请选择物料')
   if (shippingMethodId == null) return fail('货运方式需与后端字典编码一致')
   if (mineralType == null) return fail('矿种需与后端字典编码一致')
@@ -154,22 +280,21 @@ async function createReceipt(body: Row) {
   const book = body.bondedBook ? await findBook(body.bondedBook) : undefined
   const currencies = await dictOf('wms_currency_type')
   const blWeight = num(body.blWeight)
-  const payload: Row = {
-    orcId,
-    consignorId: idOf(consignor.id),
-    waybillNo: body.blNo,
-    verificationCode: body.checklistNo,
-    recordNo: body.customsNo,
+  const payload: Partial<ReceiptOrderBo> & { entityId?: unknown; ebookId?: unknown; shipName?: string } = {
+    orcId: orcId as ReceiptOrderBo['orcId'],
+    consignorId: idOf(consignor.id) as ReceiptOrderBo['consignorId'],
+    waybillNo: text(body.blNo),
+    verificationCode: text(body.checklistNo),
+    recordNo: text(body.customsNo),
     currency: currencyValue(currencies, body.currency),
     payableAmount: amount,
-    itemId: idOf(item.id),
-    areaId: idOf(area.id),
-    mineralType,
-    shippingMethodId,
+    itemId: idOf(item.id) as ReceiptOrderBo['itemId'],
+    mineralType: Number(mineralType) as ReceiptOrderBo['mineralType'],
+    shippingMethodId: Number(shippingMethodId) as ReceiptOrderBo['shippingMethodId'],
     arrivalDate: arrivalOf(body.time),
     entityId: owner ? idOf(owner.id) : undefined,
     ebookId: book ? idOf(book.id) : undefined,
-    areas: cellsBody(body.cells),
+    receiptOrderAreas: areaResult.data as ReceiptOrderAreaBo[],
     shipName,
   }
   if (blWeight != null) payload.ladingWeight = blWeight
@@ -177,6 +302,7 @@ async function createReceipt(body: Row) {
   return result.ok ? ok(result.data, '入库预约已创建') : fail(result.message)
 }
 
+/** 品质元素表单键与元素编码对照 */
 const QUALITY_ELEMENTS: Array<[string, string]> = [
   ['cu', 'Cu'],
   ['ag', 'Ag'],
@@ -188,6 +314,7 @@ const QUALITY_ELEMENTS: Array<[string, string]> = [
   ['hg', 'Hg'],
 ]
 
+/** 从表单收集有害/品质元素列表。 */
 function harmfulElements(body: Row) {
   if (Array.isArray(body.elements) && body.elements.length) {
     return (body.elements as Row[]).flatMap((item) => {
@@ -202,10 +329,46 @@ function harmfulElements(body: Row) {
   })
 }
 
+/** 到货收货：组装带湿干重的堆位明细。 */
+async function receiveAreasOf(body: Row, detail: ReceiptRow | Row) {
+  const picks = Array.isArray(body.stackPicks) ? body.stackPicks as Row[] : []
+  const source = picks.length ? picks : stackPicksOf(detail)
+  if (!source.length) return fail('入库单缺少预定堆位，无法分配重量')
+  const areas: Array<Partial<ReceiptOrderAreaBo> & { areas?: unknown; wetWeight?: number; dryWeight?: number }> = []
+  for (const pick of source) {
+    const area = await findArea(pick.areaId) || await findArea(pick.stackCode)
+    if (!area) {
+      return fail(`堆位 ${text(pick.stackCode) || text(pick.areaId)} 不存在`)
+    }
+    const warehouseId = idOf(pick.warehouseId)
+      ?? idOf(area.warehouseId)
+      ?? idOf(nested(area, 'warehouse')?.id)
+    if (warehouseId == null) {
+      return fail(`堆位 ${text(pick.stackCode) || areaCodeValue(area) || text(area.id)} 缺少所属仓库`)
+    }
+    const wetWeight = num(pick.wet ?? pick.wetWeight)
+    const dryWeight = num(pick.dry ?? pick.dryWeight)
+    if (wetWeight == null || dryWeight == null) {
+      return fail(`请为堆位 ${text(pick.stackCode) || areaCodeValue(area)} 填写湿重和干重`)
+    }
+    const cells = cellsBody(pick.cells)
+    const row: Partial<ReceiptOrderAreaBo> & { areas?: unknown; wetWeight?: number; dryWeight?: number } = {
+      areaId: idOf(area.id) as ReceiptOrderAreaBo['areaId'],
+      warehouseId: warehouseId as ReceiptOrderAreaBo['warehouseId'],
+      wetWeight,
+      dryWeight,
+    }
+    if (cells.length) row.areas = cells
+    areas.push(row)
+  }
+  return ok(areas)
+}
+
+/** 提交到货收货（更新入库单重量与堆位）。 */
 async function receiveReceipt(id: string, body: Row) {
-  const detail = await ruoyiGet(`/wms/receiptOrder/${id}`)
+  const detail = await ruoyiGet<ReceiptOrderVo, ReceiptOrderVo>(`/wms/receiptOrder/${id}`)
   if (!detail.ok) return fail(detail.message)
-  const row = (detail.data || {}) as Row
+  const row = (detail.data || {}) as ReceiptRow
   const wet = num(body.wetWeight)
   const dry = num(body.dryWeight)
   const moisture = num(body.moistureContent)
@@ -218,21 +381,25 @@ async function receiveReceipt(id: string, body: Row) {
     ?? idOf(typeof row.shippingMethod === 'object' ? undefined : row.shippingMethod)
     ?? idOf(body.shipMode ? await codeFromDict('wms_translate_type', body.shipMode) : undefined)
   if (shippingMethodId == null) return fail('装运方式不能为空')
+  const areaResult = await receiveAreasOf(body, row)
+  if (!areaResult.success) return fail(areaResult.message)
   const book = body.bondedBook ? await findBook(body.bondedBook) : undefined
-  const itemType = num(body.category ? await codeFromDict('wms_item_type', body.category) : row.receiptType)
+  const category = text(body.category) || '原料'
+  const itemType = category === '成品' ? 2 : 1
   const ebookId = book ? idOf(book.id) : idOf(row.ebookId)
   const elements = harmfulElements(body)
   const mineralType = num(row.mineralType)
-  const payload: Row = {
-    id: idOf(id),
+  const payload: Partial<ReceiptOrderBo> & Row = {
+    id: idOf(id) as ReceiptOrderBo['id'],
     receiptOrdeCode: orderNo,
-    shippingMethodId,
+    shippingMethodId: shippingMethodId as ReceiptOrderBo['shippingMethodId'],
     wetWeight: wet,
     dryWeight: dry,
     moistureContent: moisture,
+    receiptOrderAreas: areaResult.data as ReceiptOrderAreaBo[],
+    itemType,
   }
   if (mineralType != null) payload.mineralType = mineralType
-  if (itemType != null) payload.itemType = itemType
   if (ebookId != null) payload.ebookId = ebookId
   const remark = text(body.remark).trim()
   if (remark) payload.remark = remark
@@ -247,6 +414,7 @@ async function receiveReceipt(id: string, body: Row) {
 
 export { filingNoOf, materialName, shipModeOf, receiptRow }
 
+/** 入库单路由表 */
 export const inboundRoutes: Route[] = [
   { method: 'GET', match: '/inbound', handle: ({ query }) => listReceipts(query) },
   { method: 'POST', match: '/inbound', handle: ({ body }) => createReceipt(body) },

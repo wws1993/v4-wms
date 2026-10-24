@@ -116,12 +116,6 @@ export const schemas: Record<string, ModuleSchema> = {
     create: warehouseApi.createStack,
     update: warehouseApi.updateStack,
     actions: [
-      {
-        label: '查验完成',
-        when: (row) => row.areaLabel === '待检区',
-        confirm: '确认将该堆位从待检区改为成品区？',
-        request: (row) => warehouseApi.inspectStack(String(row.id)),
-      },
       { label: '删除', confirm: '确认删除该堆位？', danger: true, request: (row) => warehouseApi.removeStack(String(row.id)) },
     ],
   },
@@ -286,67 +280,44 @@ export const schemas: Record<string, ModuleSchema> = {
   bonded: {
     key: 'bonded',
     createLabel: '新建账册',
+    formWidth: 520,
+    defaults: () => ({ status: '在用' }),
     filters: [
-      { key: 'keyword', label: '关键字', placeholder: '编号 / 名称 / 报关单号' },
+      { key: 'code', label: '账册编号', placeholder: '账册编号' },
+      { key: 'name', label: '账册名称', placeholder: '账册名称' },
+      { key: 'customsNo', label: '报关单号', placeholder: '报关单号' },
+      { key: 'status', label: '备案状态', placeholder: '如 在用 / 停用' },
       { key: 'from', label: '预警起', type: 'date' },
       { key: 'to', label: '预警止', type: 'date' },
     ],
     columns: [
       { prop: 'code', label: '账册编号', minWidth: 130 },
-      { prop: 'name', label: '名称', minWidth: 180 },
+      { prop: 'name', label: '账册名称', minWidth: 180 },
       { prop: 'operator', label: '经营单位', minWidth: 140 },
       { prop: 'value', label: '货值', width: 130 },
       { prop: 'customsNo', label: '报关单号', minWidth: 170 },
-      { prop: 'status', label: '状态', width: 90, tag: true },
+      { prop: 'status', label: '备案状态', width: 100, tag: true },
+      { prop: 'prevBook', label: '衔接旧账', minWidth: 140 },
       { prop: 'warnDate', label: '旧账预警日', width: 130 },
+      { prop: 'remark', label: '备注', minWidth: 140 },
     ],
     form: [
-      { key: 'code', label: '账册编号', required: true, disabled: (_f, isEdit) => isEdit },
-      { key: 'name', label: '名称', required: true },
-      { key: 'warnDate', label: '旧账预警日', type: 'date' },
+      { key: 'code', label: '账册编号', required: true, span: 24 },
+      { key: 'name', label: '账册名称', required: true, span: 24 },
+      { key: 'operator', label: '经营单位', span: 24 },
+      { key: 'value', label: '货值', type: 'number', span: 24 },
+      { key: 'customsNo', label: '报关单号', span: 24 },
+      { key: 'status', label: '备案状态', required: true, span: 24, placeholder: '如 在用 / 停用' },
+      { key: 'warnDate', label: '旧账预警日', type: 'date', span: 24 },
+      { key: 'remark', label: '备注', type: 'textarea', span: 24 },
     ],
     list: bondedApi.list,
     create: bondedApi.create,
-    update: bondedApi.update,
-    showDetail: true,
-    detailColumn: 'code',
-    actions: [{
-      label: '导出 Excel',
-      inDetail: true,
-      request: async (row) => bondedApi.exportLots(String(row.code)),
-    }],
-    async detail(row) {
-      const res = await bondedApi.lots(String(row.code))
-      if (!res.success) {
-        return [{
-          title: `${row.code} 出入库票矿`,
-          fields: [{ label: '说明', value: res.message || '后端未提供账册票矿接口' }],
-        }]
-      }
-      return [{
-        title: `${row.code} 出入库票矿`,
-        fields: [{ label: '规则', value: '备案默认衔接在用账册；旧账册停用，只结转在册未出库票货。' }],
-        table: {
-          columns: [
-            { prop: 'direction', label: '方向', width: 80 },
-            { prop: 'customsNo', label: '报关单号', minWidth: 160 },
-            { prop: 'blNo', label: '提单号' },
-            { prop: 'wet', label: '湿吨', width: 80 },
-            { prop: 'dry', label: '干吨', width: 80 },
-            { prop: 'consignor', label: '对方' },
-            { prop: 'time', label: '时间', minWidth: 150 },
-          ],
-          rows: res.success ? res.data : [],
-        },
-      }]
-    },
   },
   ledgerMonthly: {
     key: 'ledgerMonthly',
     filters: [
       { key: 'month', label: '月份', placeholder: '如 2026-08' },
-      { key: 'status', label: '出清', type: 'select', options: ['已出清', '未出清'] },
-      { key: 'keyword', label: '票次/报关单号', placeholder: '票次或报关单号' },
     ],
     columns: [
       { prop: 'month', label: '入库账期', width: 110 },

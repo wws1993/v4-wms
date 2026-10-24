@@ -2,9 +2,11 @@ import type { Route } from '@/api-map/types'
 import { menuSeed } from '@/system/menuSeed'
 import { fail, ok } from '@/api/result'
 import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
+import type { SysMenuBo, SysMenuVo } from '@/typings/openapi'
 import type { Row } from '@/controller/shared/types'
 import { idOf, num, text } from '@/controller/shared/coerce'
 
+/** 菜单状态展示标签。 */
 function menuStatusLabel(value: unknown) {
   const raw = text(value)
   if (raw === '0' || raw === '正常') return '正常'
@@ -115,7 +117,7 @@ function roleRecord(row: Row) {
 }
 
 async function loadMenuRows() {
-  const result = await ruoyiGet('/system/menu/list')
+  const result = await ruoyiGet<SysMenuVo>('/system/menu/list')
   if (!result.ok) return { ok: false as const, message: result.message, rows: [] as Row[] }
   const rows = result.rows.length ? result.rows : (Array.isArray(result.data) ? result.data as Row[] : [])
   return { ok: true as const, message: result.message, rows: flattenMenuRows(rows) }
@@ -135,7 +137,7 @@ function menuPayload(body: Row, id?: string): { payload: Row } | { message: stri
   if (path.length > 200) return { message: '路由地址不能超过 200 个字符' }
   const component = text(body.component).trim() || (menuType === 'C' && path ? `${path}/index` : '')
   if (component.length > 200) return { message: '组件路径不能超过 200 个字符' }
-  const payload: Row = {
+  const payload: Partial<SysMenuBo> & Row = {
     parentId: idOf(body.parentId) ?? 0,
     menuName: name,
     orderNum: Math.trunc(sort),
@@ -249,6 +251,7 @@ async function settingsMenuIds() {
 
 export { loadMenuRows, menuTree, settingsMenuIds, flattenMenuRows }
 
+/** 菜单管理路由表 */
 export const menuRoutes: Route[] = [
   { method: 'GET', match: '/system/menus', handle: async () => {
     const loaded = await loadMenuRows()

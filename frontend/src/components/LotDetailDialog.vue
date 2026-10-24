@@ -3,11 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { inboundApi, inventoryApi, outboundApi, productionApi, transferApi } from '@/api'
 import ImageViewer from './ImageViewer.vue'
-import { dash } from '../views/ops/samples'
+import { dash, tonText } from '../views/ops/samples'
 import { downloadBlob, downloadText } from '@/api/result'
 
+/** 通用行数据 */
 type Row = Record<string, unknown>
 
+/** 品质元素字段 */
 const QUALITY = [
   ['cu', '铜 Cu'],
   ['ag', '银 Ag'],
@@ -19,20 +21,41 @@ const QUALITY = [
   ['hg', '汞 Hg'],
 ] as const
 
-const PAGES = [
+/** 侧栏页 id */
+type PageId =
+  | 'basic'
+  | 'inbound'
+  | 'transfer'
+  | 'production'
+  | 'inspect'
+  | 'inCustoms'
+  | 'outCustoms'
+  | 'weight'
+  | 'quality'
+
+/** 侧栏项 */
+type PageItem = { id: PageId; label: string }
+
+/** 原料侧栏顺序 */
+const RAW_PAGES: PageItem[] = [
   { id: 'basic', label: '基础信息' },
   { id: 'inbound', label: '入场记录' },
-  { id: 'production', label: '生产记录' },
-  { id: 'outbound', label: '出场记录' },
   { id: 'transfer', label: '移库记录' },
-  { id: 'ocr', label: 'OCR记录' },
+  { id: 'production', label: '生产记录' },
   { id: 'inCustoms', label: '入场报关单' },
-  { id: 'outCustoms', label: '出场报关单' },
   { id: 'weight', label: '重量证书' },
   { id: 'quality', label: '品质证书' },
-] as const
+]
 
-type PageId = typeof PAGES[number]['id']
+/** 成品侧栏顺序 */
+const FINISHED_PAGES: PageItem[] = [
+  { id: 'basic', label: '基础信息' },
+  { id: 'inbound', label: '入场记录' },
+  { id: 'transfer', label: '移库记录' },
+  { id: 'production', label: '生产记录' },
+  { id: 'inspect', label: '送检记录' },
+  { id: 'outCustoms', label: '出场报关单' },
+]
 
 const props = defineProps<{
   modelValue: boolean
@@ -48,23 +71,40 @@ const emit = defineEmits<{
   openBatch: [batchNo: string, focus?: string]
 }>()
 
+/** 当前侧栏页 */
 const page = ref<PageId>('basic')
+/** 追溯列表加载中 */
 const traceLoading = ref(false)
+/** 入场记录行 */
 const inboundRows = ref<Row[]>([])
+/** 生产记录行 */
 const productionRows = ref<Row[]>([])
+/** 出库记录行（供出场报关单选用） */
 const outboundRows = ref<Row[]>([])
+/** 移库记录行 */
 const transferRows = ref<Row[]>([])
-const ocrRows = ref<Row[]>([])
+/** 送检记录行 */
+const inspectRows = ref<Row[]>([])
+/** 入场报关单选中项 */
 const inboundPick = ref('')
+/** 出场报关单选中项 */
 const outboundPick = ref('')
-const loaded = ref<Partial<Record<'inbound' | 'production' | 'outbound' | 'transfer' | 'ocr', string>>>({})
-const inflight = ref<Partial<Record<'inbound' | 'production' | 'outbound' | 'transfer' | 'ocr', string>>>({})
+/** 已加载的数据源戳记 */
+const loaded = ref<Partial<Record<'inbound' | 'production' | 'outbound' | 'transfer' | 'inspect', string>>>({})
+/** 进行中的数据源戳记 */
+const inflight = ref<Partial<Record<'inbound' | 'production' | 'outbound' | 'transfer' | 'inspect', string>>>({})
+/** 单据详情补丁 */
 const docPatch = ref<Row | null>(null)
+/** 已拉取 docs 的批次号 */
 const docsStamp = ref('')
+/** 列表请求序号 */
 let listTicket = 0
+/** 单据请求序号 */
 let docsTicket = 0
+/** 进行中请求计数 */
 let busy = 0
 
+/** 当前展示票货（含 docs 补丁） */
 const current = computed(() => {
   const lot = props.lot
   if (!lot) return null
@@ -72,70 +112,116 @@ const current = computed(() => {
   if (!patch || clean(patch.batchNo) !== clean(lot.batchNo)) return lot
   return { ...lot, ...patch }
 })
-const finished = computed(() => {
-  const row = current.value
-  if (!row) return false
-  return row.cargoType === '混成品' || row.batchKind === '生产批次号'
-})
+
+/** 是否成品票货：仅看是否带生产批次号 */
+const finished = computed(() => current.value?.batchKind === '生产批次号')
+
+/** 当前货种可见侧栏 */
+const pages = computed(() => (finished.value ? FINISHED_PAGES : RAW_PAGES))
+
+/** 关联成品列表 */
 const products = computed(() => (Array.isArray(current.value?.products) ? current.value.products : []) as Row[])
+/** 台账行 */
 const ledgerRows = computed(() => (Array.isArray(current.value?.ledger) ? current.value.ledger : []) as Row[])
 
-const pageLabel = computed(() => PAGES.find((item) => item.id === page.value)?.label || '记录')
+/** 当前页标题 */
+const pageLabel = computed(() => pages.value.find((item) => item.id === page.value)?.label || '记录')
+/** 面板是否加载中 */
 const paneLoading = computed(() => Boolean(props.loading) || traceLoading.value)
 
+/** 各页条数徽标 */
 const counts = computed<Partial<Record<PageId, number>>>(() => {
   const ready = loaded.value
   return {
     inbound: ready.inbound ? inboundRows.value.length : undefined,
     production: ready.production ? productionRows.value.length : undefined,
-    outbound: ready.outbound ? outboundRows.value.length : undefined,
     transfer: ready.transfer ? transferRows.value.length : undefined,
-    ocr: ready.ocr ? ocrRows.value.length : undefined,
+    inspect: ready.inspect ? inspectRows.value.length : undefined,
   }
 })
 
+/** 基础信息流程芯片 */
+const flowItems = computed(() => {
+  if (finished.value) {
+    return [
+      { id: 'inbound' as PageId, label: '入场', count: counts.value.inbound },
+      { id: 'transfer' as PageId, label: '移库', count: counts.value.transfer },
+      { id: 'production' as PageId, label: '生产', count: counts.value.production },
+      { id: 'inspect' as PageId, label: '送检', count: counts.value.inspect },
+    ]
+  }
+  return [
+    { id: 'inbound' as PageId, label: '入场', count: counts.value.inbound },
+    { id: 'transfer' as PageId, label: '移库', count: counts.value.transfer },
+    { id: 'production' as PageId, label: '生产', count: counts.value.production },
+  ]
+})
+
+/** 当前选中的入场行 */
 const pickedInbound = computed(() => inboundRows.value.find((row) => String(row.customsNo || row.id) === inboundPick.value) || inboundRows.value[0])
+/** 当前选中的出库行 */
 const pickedOutbound = computed(() => outboundRows.value.find((row) => String(row.customsNo || row.id) === outboundPick.value) || outboundRows.value[0])
 
 watch(() => props.modelValue, (open) => {
-  if (!open) resetTrace()
+  if (!open) {
+    resetTrace()
+    return
+  }
+  // 无论从哪点进来，一律先落基础信息
+  page.value = 'basic'
 })
 
-watch(() => [props.modelValue, props.focus] as const, ([open, focus]) => {
-  if (!open) return
-  page.value = isPage(focus) ? focus : 'basic'
+watch(() => clean(props.lot?.batchNo), (batch, prev) => {
+  if (!props.modelValue || !batch || batch === prev) return
+  // 弹窗内切到其它票货时，同样回到基础信息
+  page.value = 'basic'
 })
 
-watch(() => [props.modelValue, page.value, clean(props.lot?.batchNo)] as const, ([open, name]) => {
+watch(() => [props.modelValue, page.value, clean(props.lot?.batchNo), finished.value] as const, ([open, name]) => {
   if (!open) return
+  if (!pages.value.some((item) => item.id === name)) {
+    page.value = 'basic'
+    return
+  }
   if (needsDocs(name)) void loadDocs()
   void loadPage(name)
 })
 
+/** 判断 focus 是否为可见页 */
 function isPage(value: unknown): value is PageId {
-  return PAGES.some((item) => item.id === value)
+  return pages.value.some((item) => item.id === value)
 }
 
+/** 将 focus 解析为可见页，非法则回退基础信息 */
+function resolvePage(value: unknown): PageId {
+  return isPage(value) ? value : 'basic'
+}
+
+/** 清洗展示文本 */
 function clean(value: unknown) {
   const text = String(value ?? '').trim()
   if (!text || text === '—' || text === '-' || text === 'null' || text === 'undefined') return ''
   return text
 }
 
+/** 吨位文案 */
 function ton(value: unknown) {
   const raw = dash(value)
   return raw === '—' || String(raw).includes('吨') ? raw : `${raw} 吨`
 }
 
+/** 水分文案 */
 function moistureText(value: unknown) {
   const raw = dash(value)
   return raw === '—' || String(raw).includes('%') ? raw : `${raw}%`
 }
 
+/** 文本是否命中任一关键字 */
 function mentions(text: string, keys: string[]) {
   return keys.some((key) => key && text.includes(key))
 }
 
+/** 按键去重 */
 function unique(rows: Row[], keyOf: (row: Row) => string) {
   const seen = new Set<string>()
   return rows.filter((row) => {
@@ -146,11 +232,13 @@ function unique(rows: Row[], keyOf: (row: Row) => string) {
   })
 }
 
+/** 解包分页列表 */
 async function rowsOf(task: Promise<{ success: boolean; data: { list: Row[] } | null }>) {
   const res = await task
   return res.success && res.data ? res.data.list : []
 }
 
+/** 生产行展示映射 */
 function presentProduction(row: Row): Row {
   const lines = Array.isArray(row.feedLines) ? row.feedLines as Row[] : []
   const customs = lines.map((line) => clean(line.customsNo)).filter(Boolean)
@@ -170,8 +258,10 @@ function presentProduction(row: Row): Row {
   }
 }
 
-type TraceSource = 'inbound' | 'production' | 'outbound' | 'transfer' | 'ocr'
+/** 追溯数据源 */
+type TraceSource = 'inbound' | 'production' | 'outbound' | 'transfer' | 'inspect'
 
+/** 重置追溯缓存 */
 function resetTrace() {
   listTicket += 1
   docsTicket += 1
@@ -179,35 +269,41 @@ function resetTrace() {
   productionRows.value = []
   outboundRows.value = []
   transferRows.value = []
-  ocrRows.value = []
+  inspectRows.value = []
   loaded.value = {}
   inflight.value = {}
   docPatch.value = null
   docsStamp.value = ''
 }
 
+/** 开始追溯加载 */
 function beginTrace() {
   busy += 1
   traceLoading.value = true
 }
 
+/** 结束追溯加载 */
 function endTrace() {
   busy = Math.max(0, busy - 1)
   if (!busy) traceLoading.value = false
 }
 
+/** 页面映射到数据源 */
 function sourceOf(id: PageId): TraceSource | '' {
   if (id === 'inbound' || id === 'inCustoms') return 'inbound'
   if (id === 'production') return 'production'
-  if (id === 'outbound' || id === 'outCustoms') return 'outbound'
+  if (id === 'outCustoms') return 'outbound'
   if (id === 'transfer') return 'transfer'
+  if (id === 'inspect') return 'inspect'
   return ''
 }
 
+/** 是否需要拉单据图片 */
 function needsDocs(id: PageId) {
-  return id === 'ocr' || id === 'inCustoms' || id === 'outCustoms' || id === 'weight' || id === 'quality'
+  return id === 'inCustoms' || id === 'outCustoms' || id === 'weight' || id === 'quality'
 }
 
+/** 匹配关键字集合 */
 function seedKeys() {
   const lot = current.value
   if (!lot) return [] as string[]
@@ -215,6 +311,7 @@ function seedKeys() {
   return [...new Set([lot.batchNo, lot.customsNo, lot.outCustomsNo, lot.blNo, ...fromProd].map(clean).filter(Boolean))]
 }
 
+/** 拉取单据附件与补丁字段 */
 async function loadDocs() {
   const lot = props.lot
   const batchNo = clean(lot?.batchNo)
@@ -227,8 +324,6 @@ async function loadDocs() {
     if (!res.success || !res.data) return
     const data = res.data as Row
     docPatch.value = data
-    ocrRows.value = Array.isArray(data.ocrRecords) ? data.ocrRecords as Row[] : []
-    loaded.value = { ...loaded.value, ocr: `${batchNo}|docs` }
     docsStamp.value = batchNo
   } finally {
     endTrace()
@@ -237,7 +332,7 @@ async function loadDocs() {
 
 /** 票货上已带齐入场摘要时，直接用本行，不再打 receiptOrder/list。 */
 function inboundSeed(lot: Row): Row | null {
-  const customsNo = clean(lot.customsNo) || (lot.batchKind === '报关单号' ? clean(lot.batchNo) : '')
+  const customsNo = clean(lot.customsNo || lot.recordNo)
   if (!customsNo) return null
   const rich = clean(lot.orderNo) || clean(lot.shipName) || clean(lot.time) || clean(lot.inDate) || lot.wet != null && lot.wet !== ''
   if (!rich) return null
@@ -259,6 +354,29 @@ function inboundSeed(lot: Row): Row | null {
   }
 }
 
+/** 成品入场摘要：用工单完工信息兜底 */
+function finishedInboundSeed(lot: Row): Row | null {
+  const batchNo = clean(lot.batchNo)
+  if (!batchNo) return null
+  return {
+    id: lot.orderId || lot.id,
+    orderNo: lot.orderNo || lot.id,
+    customsNo: lot.customsNo || lot.recordNo || batchNo,
+    consignor: lot.consignor,
+    shipName: '',
+    blNo: '',
+    stackCode: lot.stackCode || lot.stackText,
+    wet: lot.wet,
+    dry: lot.dry,
+    status: lot.status || '完工入库',
+    time: lot.time || lot.inDate,
+    loadWeight: lot.dry ?? lot.wet,
+    checklistNo: lot.checklistNo,
+    material: lot.material || lot.product,
+  }
+}
+
+/** 按页加载追溯数据 */
 async function loadPage(id: PageId) {
   const source = sourceOf(id)
   const lot = props.lot
@@ -271,9 +389,32 @@ async function loadPage(id: PageId) {
   try {
     const keys = seedKeys()
     if (source === 'inbound') {
-      const seeded = inboundSeed(lot)
+      const seeded = finished.value ? finishedInboundSeed(lot) : inboundSeed(lot)
       let inbound: Row[] = []
-      if (seeded && keys.every((key) => mentions(`${seeded.customsNo}${seeded.blNo}${seeded.orderNo}${seeded.id}${lot.batchNo}`, [key]))) {
+      if (finished.value) {
+        const listed = await rowsOf(productionApi.list({ page: 1, pageSize: 200 }))
+        if (mine !== listTicket) return
+        const finishRows = listed.filter((row) => {
+          if (row.docType !== '完工入库') return false
+          const text = [row.id, row.prodBatch, row.customsNos].map((item) => clean(item)).join(' ')
+          return mentions(text, keys) || clean(row.prodBatch) === clean(lot.batchNo)
+        }).map((row) => ({
+          id: row.id,
+          orderNo: row.id,
+          customsNo: row.customsNos || lot.customsNo,
+          consignor: lot.consignor,
+          shipName: '',
+          blNo: '',
+          stackCode: row.stackCode || lot.stackText,
+          wet: row.outputWet ?? lot.wet,
+          dry: row.outputDry ?? lot.dry,
+          status: '完工入库',
+          time: row.time || lot.inDate,
+          loadWeight: row.outputDry ?? lot.dry,
+          material: row.product || lot.material,
+        }))
+        inbound = finishRows.length ? finishRows : (seeded ? [seeded] : [])
+      } else if (seeded && keys.every((key) => mentions(`${seeded.customsNo}${seeded.blNo}${seeded.orderNo}${seeded.id}${lot.batchNo}`, [key]))) {
         inbound = [seeded]
       } else {
         const listed = await rowsOf(inboundApi.list({ page: 1, pageSize: 50, keyword: keys[0] || undefined }))
@@ -310,6 +451,14 @@ async function loadPage(id: PageId) {
         if (id && (id === clean(lot.inventoryId) || id === clean(lot.id))) return true
         return mentions(`${row.customsNo || ''}${row.prodBatch || ''}${row.orderNo || ''}`, keys)
       })
+    } else if (source === 'inspect') {
+      const batchNo = clean(lot.batchNo)
+      const listed = await rowsOf(productionApi.inspections({ page: 1, pageSize: 50, batchNo: batchNo || undefined, keyword: batchNo || undefined }))
+      if (mine !== listTicket) return
+      inspectRows.value = listed.filter((row) => {
+        if (!batchNo) return true
+        return clean(row.prodBatch) === batchNo || mentions(`${row.prodBatch || ''}${row.orderNo || ''}${row.customsNos || ''}`, [batchNo])
+      })
     }
     if (mine === listTicket) loaded.value = { ...loaded.value, [source]: stamp }
   } finally {
@@ -322,6 +471,7 @@ async function loadPage(id: PageId) {
   }
 }
 
+/** 取单据图片 */
 function shotOf(key: string) {
   const docs = current.value?.docs
   if (!docs || typeof docs !== 'object') return { image: '', name: '' }
@@ -331,28 +481,51 @@ function shotOf(key: string) {
   return { image: String(shot.image || ''), name: String(shot.name || '') }
 }
 
+/** 入场报关单图片 */
 const inboundShot = computed(() => {
   const inbound = shotOf('inbound')
   return inbound.image ? inbound : (finished.value ? { image: '', name: '' } : shotOf('customs'))
 })
+/** 出场报关单图片 */
 const outboundShot = computed(() => {
   const outbound = shotOf('outbound')
   return outbound.image ? outbound : (finished.value ? shotOf('customs') : { image: '', name: '' })
 })
+/** 重量证书图片 */
 const weightShot = computed(() => shotOf('weight'))
+/** 品质证书图片 */
 const qualityShot = computed(() => shotOf('quality'))
 
+/** 基础信息字段 */
 const basicFields = computed(() => {
   const row = current.value
   if (!row) return []
+  if (finished.value) {
+    return [
+      { label: '委托方', value: dash(row.consignor) },
+      { label: '物料', value: dash(row.material) },
+      { label: '货物类型', value: dash(row.cargoType) },
+      { label: '状态', value: dash(row.status) },
+      { label: '生产批次', value: dash(row.batchNo) },
+      { label: '出库报关单', value: dash(row.outCustomsNo || outboundRows.value[0]?.customsNo) },
+      { label: '核注清单', value: dash(row.checklistNo || row.outChecklistNo) },
+      { label: '保税账册', value: dash(row.book) },
+      { label: '仓库', value: dash(row.warehouse) },
+      { label: '堆位', value: row.status === '已出库' ? '—' : dash(row.stackText) },
+      { label: '片区标识', value: dash(row.areaLabel) },
+      { label: '湿重', value: ton(row.wet) },
+      { label: '干重', value: ton(row.dry) },
+      { label: '水分', value: moistureText(row.moisture) },
+      { label: '入库时间', value: dash(row.inDate) },
+    ]
+  }
   return [
     { label: '委托方', value: dash(row.consignor) },
     { label: '物料', value: dash(row.material) },
     { label: '货物类型', value: dash(row.cargoType) },
     { label: '状态', value: dash(row.status) },
-    { label: '报关单号', value: dash(row.customsNo || (row.batchKind === '报关单号' ? row.batchNo : '')) },
-    { label: '生产批次', value: dash(row.batchKind === '生产批次号' ? row.batchNo : productionRows.value[0]?.prodBatch) },
-    { label: '出库报关单', value: dash(row.outCustomsNo || outboundRows.value[0]?.customsNo) },
+    { label: '报关单号', value: dash(row.customsNo || row.recordNo) },
+    { label: '生产批次', value: dash(row.batchNo) },
     { label: '核注清单', value: dash(row.checklistNo) },
     { label: '提单号', value: dash(row.blNo) },
     { label: '船名', value: dash(row.shipName) },
@@ -369,12 +542,13 @@ const basicFields = computed(() => {
   ]
 })
 
+/** 入场报关单字段 */
 const inboundFields = computed(() => {
   const row = current.value
   const hit = pickedInbound.value
   if (!row) return []
   return [
-    { label: '报关单号', value: dash(hit?.customsNo || row.customsNo || (finished.value ? '' : row.batchNo)) },
+    { label: '报关单号', value: dash(hit?.customsNo || row.customsNo || row.recordNo) },
     { label: '核注清单', value: dash(hit?.checklistNo || row.checklistNo) },
     { label: '提单号', value: dash(hit?.blNo || row.blNo) },
     { label: '船名', value: dash(hit?.shipName || row.shipName) },
@@ -387,6 +561,7 @@ const inboundFields = computed(() => {
   ]
 })
 
+/** 出场报关单字段 */
 const outboundFields = computed(() => {
   const row = current.value
   const hit = pickedOutbound.value
@@ -396,13 +571,14 @@ const outboundFields = computed(() => {
     { label: '核注清单', value: dash(hit?.checklistNo || row.outChecklistNo) },
     { label: '流向企业', value: dash(hit?.consignee || row.flowTo) },
     { label: '消费使用单位', value: dash(hit?.consumer) },
-    { label: '生产批次', value: dash(hit?.batchNo || (finished.value ? row.batchNo : productionRows.value[0]?.prodBatch)) },
+    { label: '生产批次', value: dash(hit?.batchNo || row.batchNo) },
     { label: '出库重量', value: ton(hit?.wet) },
     { label: '出库单号', value: dash(hit?.orderNo || hit?.id) },
     { label: '状态', value: dash(hit?.status) },
   ]
 })
 
+/** 重量证书字段 */
 const weightFields = computed(() => {
   const row = current.value
   if (!row) return []
@@ -414,6 +590,7 @@ const weightFields = computed(() => {
   ]
 })
 
+/** 品质证书元信息 */
 const qualityMeta = computed(() => {
   const row = current.value
   if (!row) return []
@@ -423,17 +600,21 @@ const qualityMeta = computed(() => {
   ]
 })
 
+/** 关闭详情 */
 function close() {
   emit('update:modelValue', false)
 }
 
+/** 打开台账 */
 function openLedger() {
   emit('update:modelValue', false)
   emit('update:ledger', true)
 }
 
+/** 是否正在导出台账 */
 const exportingLedger = ref(false)
 
+/** 导出台账文件 */
 async function exportLedger() {
   const lot = current.value
   if (!lot) return
@@ -453,17 +634,19 @@ async function exportLedger() {
   else ElMessage.error('导出失败')
 }
 
+/** 跳转报关单相关页或其它批次 */
 function openCustoms(value: unknown) {
   const text = clean(value)
   if (!text) return
   const row = current.value
   if (row && (text === clean(row.batchNo) || text === clean(row.customsNo))) {
-    page.value = 'inCustoms'
+    page.value = finished.value ? resolvePage('outCustoms') : resolvePage('inCustoms')
     return
   }
-  emit('openBatch', text, 'inCustoms')
+  emit('openBatch', text, 'basic')
 }
 
+/** 跳转生产批次 */
 function openProd(value: unknown) {
   const text = clean(value)
   if (!text) return
@@ -471,27 +654,33 @@ function openProd(value: unknown) {
     page.value = 'production'
     return
   }
-  emit('openBatch', text, 'production')
+  emit('openBatch', text, 'basic')
 }
 
-function openOcr(row: Row) {
-  const type = String(row.docType || '')
-  if (type.includes('出库')) page.value = 'outCustoms'
-  else if (type.includes('重量')) page.value = 'weight'
-  else if (type.includes('品质')) page.value = 'quality'
-  else page.value = 'inCustoms'
-}
-
+/** 关联成品产量 */
 function productOutput(row: Row) {
   return dash(row.yieldDry ?? row.output)
 }
+/** 关联成品在库 */
 function productStock(row: Row) {
   if (row.stock != null && row.stock !== '') return dash(row.stock)
   return Array.isArray(row.inventory) ? String(row.inventory.length) : '—'
 }
+/** 关联成品已出库 */
 function productOut(row: Row) {
   if (row.outbound != null && row.outbound !== '' && !Array.isArray(row.outbound)) return dash(row.outbound)
   return Array.isArray(row.outbound) ? String(row.outbound.length) : '—'
+}
+
+/** 送检附件列表 */
+function inspectImages(row: Row) {
+  const urls = Array.isArray(row.attachmentUrls) ? row.attachmentUrls as string[] : []
+  const names = Array.isArray(row.attachmentNames) ? row.attachmentNames as string[] : []
+  if (urls.length) {
+    return urls.map((url, index) => ({ url, name: names[index] || `附件${index + 1}` }))
+  }
+  const single = clean(row.attachmentUrl)
+  return single ? [{ url: single, name: clean(row.attachment) || '附件' }] : []
 }
 </script>
 
@@ -522,7 +711,7 @@ function productOut(row: Row) {
       </div>
       <div class="layout">
         <nav class="side">
-          <button v-for="item in PAGES" :key="item.id" type="button" :class="{ active: page === item.id }" @click="page = item.id">
+          <button v-for="item in pages" :key="item.id" type="button" :class="{ active: page === item.id }" @click="page = item.id">
             {{ item.label }}
           </button>
         </nav>
@@ -538,11 +727,10 @@ function productOut(row: Row) {
             <strong>{{ pageLabel }}加载中</strong>
           </div>
           <template v-if="page === 'basic'">
-            <div class="flow">
-              <button type="button" @click="page = 'inbound'"><b>{{ counts.inbound ?? '—' }}</b><span>入场</span></button>
-              <button type="button" @click="page = 'production'"><b>{{ counts.production ?? '—' }}</b><span>生产</span></button>
-              <button type="button" @click="page = 'outbound'"><b>{{ counts.outbound ?? '—' }}</b><span>出场</span></button>
-              <button type="button" @click="page = 'transfer'"><b>{{ counts.transfer ?? '—' }}</b><span>移库</span></button>
+            <div class="flow" :style="{ gridTemplateColumns: `repeat(${flowItems.length}, 1fr)` }">
+              <button v-for="item in flowItems" :key="item.id" type="button" @click="page = item.id">
+                <b>{{ item.count ?? '—' }}</b><span>{{ item.label }}</span>
+              </button>
             </div>
             <dl class="fields cols">
               <div v-for="item in basicFields" :key="item.label">
@@ -555,15 +743,35 @@ function productOut(row: Row) {
           <template v-else-if="page === 'inbound'">
             <el-table :data="inboundRows" border empty-text="暂无入场记录">
               <el-table-column prop="status" label="状态" width="100" />
-              <!-- <el-table-column label="入库单号" min-width="200"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column> -->
-              <!-- <el-table-column label="报关单号" min-width="200"><template #default="{ row }">{{ dash(row.customsNo) }}</template></el-table-column> -->
-              <!-- <el-table-column prop="consignor" label="委托方" width="200" /> -->
               <el-table-column prop="shipName" label="船名" width="110" />
               <el-table-column prop="blNo" label="提运单号" width="200" />
               <el-table-column prop="loadWeight" label="提货重量" width="200" />
               <el-table-column label="堆位" width="100"><template #default="{ row }">{{ dash(row.stackCode) }}</template></el-table-column>
               <el-table-column label="湿重/干重" width="200"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
               <el-table-column prop="time" label="入库时间" min-width="240" />
+            </el-table>
+          </template>
+
+          <template v-else-if="page === 'transfer'">
+            <el-table :data="transferRows" border empty-text="暂无移库记录">
+              <el-table-column prop="orderNo" label="移库单号" min-width="150" />
+              <el-table-column prop="scene" label="场景" width="110" />
+              <el-table-column label="报关单号" min-width="150">
+                <template #default="{ row }">
+                  <el-button v-if="clean(row.customsNo)" link type="primary" @click="openCustoms(row.customsNo)">{{ dash(row.customsNo) }}</el-button>
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="生产批次" min-width="130">
+                <template #default="{ row }">
+                  <el-button v-if="clean(row.prodBatch)" link type="primary" @click="openProd(row.prodBatch)">{{ dash(row.prodBatch) }}</el-button>
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="fromStack" label="原堆位" width="100" />
+              <el-table-column prop="toStack" label="目标堆位" width="100" />
+              <el-table-column prop="weight" label="重量" width="80" />
+              <el-table-column label="时间" min-width="180"><template #default="{ row }">{{ dash(row.timeFrom) }} 至 {{ dash(row.timeTo) }}</template></el-table-column>
             </el-table>
           </template>
 
@@ -601,68 +809,32 @@ function productOut(row: Row) {
             </el-table>
           </template>
 
-          <template v-else-if="page === 'outbound'">
-            <el-table :data="outboundRows" border empty-text="暂无出场记录">
-              <el-table-column label="出库单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column>
-              <el-table-column label="出库报关单" min-width="160">
+          <template v-else-if="page === 'inspect'">
+            <el-table :data="inspectRows" border empty-text="暂无送检记录">
+              <el-table-column label="生产批次" min-width="130"><template #default="{ row }">{{ dash(row.prodBatch) }}</template></el-table-column>
+              <el-table-column prop="orderNo" label="完工单号" min-width="140" />
+              <el-table-column prop="consignor" label="委托方" width="120" />
+              <el-table-column label="关联报关单号" min-width="160"><template #default="{ row }">{{ dash(row.customsNos) }}</template></el-table-column>
+              <el-table-column prop="stackCode" label="堆位" width="100" />
+              <el-table-column label="产量(干吨)" width="110"><template #default="{ row }">{{ dash(row.outputDry) }}</template></el-table-column>
+              <el-table-column prop="time" label="送检时间" min-width="150" />
+              <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
+              <el-table-column label="附件" min-width="160">
                 <template #default="{ row }">
-                  <el-button link type="primary" @click="outboundPick = String(row.customsNo || row.id); page = 'outCustoms'">{{ dash(row.customsNo) }}</el-button>
+                  <div class="attach-links">
+                    <ImageViewer
+                      v-for="(item, index) in inspectImages(row)"
+                      :key="item.url"
+                      variant="link"
+                      :label="inspectImages(row).length > 1 ? `查看附件${index + 1}` : '查看附件'"
+                      :src="item.url"
+                      :name="item.name"
+                      title="送检附件"
+                    />
+                    <span v-if="!inspectImages(row).length">{{ row.attachment || '—' }}</span>
+                  </div>
                 </template>
               </el-table-column>
-              <el-table-column label="生产批次" min-width="130">
-                <template #default="{ row }">
-                  <el-button v-if="clean(row.batchNo)" link type="primary" @click="openProd(row.batchNo)">{{ dash(row.batchNo) }}</el-button>
-                  <span v-else>—</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="consignee" label="流向企业" min-width="120" />
-              <el-table-column prop="consumer" label="消费使用单位" min-width="120" />
-              <el-table-column label="重量" width="90"><template #default="{ row }">{{ dash(row.wet) }}</template></el-table-column>
-              <el-table-column prop="status" label="状态" width="90" />
-              <el-table-column prop="time" label="时间" min-width="150" />
-            </el-table>
-          </template>
-
-          <template v-else-if="page === 'transfer'">
-            <el-table :data="transferRows" border empty-text="暂无移库记录">
-              <el-table-column prop="orderNo" label="移库单号" min-width="150" />
-              <el-table-column prop="scene" label="场景" width="110" />
-              <el-table-column label="报关单号" min-width="150">
-                <template #default="{ row }">
-                  <el-button v-if="clean(row.customsNo)" link type="primary" @click="openCustoms(row.customsNo)">{{ dash(row.customsNo) }}</el-button>
-                  <span v-else>—</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="生产批次" min-width="130">
-                <template #default="{ row }">
-                  <el-button v-if="clean(row.prodBatch)" link type="primary" @click="openProd(row.prodBatch)">{{ dash(row.prodBatch) }}</el-button>
-                  <span v-else>—</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="fromStack" label="原堆位" width="100" />
-              <el-table-column prop="toStack" label="目标堆位" width="100" />
-              <el-table-column prop="weight" label="重量" width="80" />
-              <el-table-column label="时间" min-width="180"><template #default="{ row }">{{ dash(row.timeFrom) }} 至 {{ dash(row.timeTo) }}</template></el-table-column>
-            </el-table>
-          </template>
-
-          <template v-else-if="page === 'ocr'">
-            <el-table :data="ocrRows" border empty-text="暂无 OCR 记录">
-              <el-table-column prop="id" label="任务号" min-width="120" />
-              <el-table-column label="类型" width="120">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openOcr(row)">{{ dash(row.docType) }}</el-button>
-                </template>
-              </el-table-column>
-              <el-table-column prop="fileName" label="文件" min-width="180" show-overflow-tooltip />
-              <el-table-column label="关联单号" min-width="160">
-                <template #default="{ row }">
-                  <el-button v-if="clean(row.customsNo)" link type="primary" @click="openCustoms(row.customsNo)">{{ dash(row.customsNo) }}</el-button>
-                  <span v-else>—</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="status" label="状态" width="100" />
-              <el-table-column prop="time" label="时间" min-width="150" />
             </el-table>
           </template>
 
@@ -738,7 +910,7 @@ function productOut(row: Row) {
             </div>
           </template>
 
-          <template v-else>
+          <template v-else-if="page === 'quality'">
             <div class="doc">
               <ImageViewer
                 :src="qualityShot.image"
@@ -774,12 +946,12 @@ function productOut(row: Row) {
 
   <el-dialog :model-value="ledger" :title="`重量台账 · ${dash(current?.batchNo)}`" width="860px" align-center @close="emit('update:ledger', false)">
     <el-table :data="ledgerRows" border empty-text="暂无台账">
-      <el-table-column prop="time" label="时间" min-width="150" />
-      <el-table-column prop="action" label="业务类型" width="110" />
-      <el-table-column prop="consignee" label="流向企业" min-width="120" />
-      <el-table-column prop="stack" label="堆位" width="100" />
-      <el-table-column prop="wet" label="湿重" width="80" />
-      <el-table-column prop="dry" label="干重" width="80" />
+      <el-table-column label="时间" min-width="150"><template #default="{ row }">{{ dash(row.time) }}</template></el-table-column>
+      <el-table-column label="业务类型" width="110"><template #default="{ row }">{{ dash(row.action) }}</template></el-table-column>
+      <el-table-column label="流向企业" min-width="120"><template #default="{ row }">{{ dash(row.consignee) }}</template></el-table-column>
+      <el-table-column label="堆位" width="100"><template #default="{ row }">{{ dash(row.stack) }}</template></el-table-column>
+      <el-table-column label="湿重" width="180"><template #default="{ row }">{{ tonText(row.wet) }}</template></el-table-column>
+      <el-table-column label="干重" width="180"><template #default="{ row }">{{ tonText(row.dry) }}</template></el-table-column>
     </el-table>
     <template #footer>
       <el-button @click="emit('update:ledger', false)">关闭</el-button>
@@ -886,7 +1058,7 @@ function productOut(row: Row) {
 }
 .side button.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; }
 .pick { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--el-text-color-secondary); }
-.flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.flow { display: grid; gap: 10px; margin-bottom: 14px; }
 .flow button {
   padding: 10px 12px;
   border: 1px solid var(--el-border-color-lighter);
@@ -914,6 +1086,7 @@ function productOut(row: Row) {
   background: var(--el-fill-color-blank);
   color: var(--el-text-color-primary);
 }
+.attach-links { display: flex; flex-wrap: wrap; gap: 6px 10px; }
 h4 { margin: 16px 0 8px; font-size: 14px; }
 @media (max-width: 800px) {
   .stats, .layout, .doc, .fields.cols, .elements, .flow { grid-template-columns: 1fr; }

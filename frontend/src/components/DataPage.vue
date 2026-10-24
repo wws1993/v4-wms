@@ -38,7 +38,8 @@ const detailBlocks = ref<DetailBlock[]>([])
 const lotOpen = ref(false)
 const lotLoading = ref(false)
 const lotLedger = ref(false)
-const lotFocus = ref('inbound')
+/** 票货详情初始页 */
+const lotFocus = ref('basic')
 const lotCurrent = ref<Record<string, unknown> | null>(null)
 const actionOpen = ref(false)
 const actionSaving = ref(false)
@@ -449,7 +450,7 @@ function applyAssist() {
 
 function tagType(value: unknown) {
   const text = String(value)
-  if (['启用', '已入库', '已审核', '一致', '成品', '已回填', '已修正', '有效', '在库', '已出清', '本期账册', '纳入库存'].includes(text)) return 'success'
+  if (['启用', '已入库', '已审核', '一致', '成品', '已回填', '已修正', '有效', '在用', '新账', '在库', '已出清', '本期账册', '纳入库存'].includes(text)) return 'success'
   if (['待收货', '暂存码头', '待审核', '待检', '待修正', '有差异', '投料', '加工', '未出清', '下期账册'].includes(text)) return 'warning'
   if (['停用', '旧账', '已出库', '已用尽', '已核销'].includes(text)) return 'info'
   if (['达标矿', '混成品'].includes(text)) return 'success'
@@ -488,10 +489,10 @@ function lotText(value: unknown) {
   return text && text !== '—' && text !== '-' ? text : ''
 }
 
-async function openLot(row: Record<string, unknown>, section = 'inbound') {
+async function openLot(row: Record<string, unknown>) {
   const customsNo = lotText(row.customsNo)
   const batchNo = customsNo || lotText(row.batchNo) || lotText(row.prodBatch)
-  lotFocus.value = section
+  lotFocus.value = 'basic'
   lotOpen.value = true
   lotLoading.value = true
   lotCurrent.value = {
@@ -638,7 +639,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
           <el-table v-if="block.table" :data="block.table.rows" border size="small" class="detail-table">
             <el-table-column v-for="column in block.table.columns" :key="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth">
               <template #default="{ row }">
-                <el-button v-if="column.lot && lotText(row[column.prop])" link type="primary" @click="openLot(row, 'inbound')">{{ row[column.prop] }}</el-button>
+                <el-button v-if="column.lot && lotText(row[column.prop])" link type="primary" @click="openLot(row)">{{ row[column.prop] }}</el-button>
                 <span v-else>{{ row[column.prop] || '—' }}</span>
               </template>
             </el-table-column>
@@ -657,7 +658,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
       :lot="lotCurrent"
       :loading="lotLoading"
       :focus="lotFocus"
-      @open-batch="(batch, section) => openLot({ batchNo: batch, customsNo: batch }, section || 'inbound')"
+      @open-batch="(batch) => openLot({ batchNo: batch, customsNo: batch })"
     />
 
     <el-dialog v-if="actionDef?.dialog" v-model="actionOpen" :title="actionDef.dialog.title" width="720px" align-center destroy-on-close>

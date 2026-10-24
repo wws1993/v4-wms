@@ -99,8 +99,9 @@ export function arrivalOf(value: unknown) {
   return raw
 }
 
-export function nested(row: Row, key: string) {
-  const value = row[key]
+/** 取出行上的嵌套对象字段；非对象则返回 undefined。 */
+export function nested(row: object, key: string) {
+  const value = (row as Row)[key]
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Row : undefined
 }
 
@@ -152,30 +153,57 @@ export function dayText(value: unknown) {
   return raw ? raw.slice(0, 10) : ''
 }
 
+/** 展开嵌套数组 / JSON 字符串里的 row-column 点，兼容 `[[{row,column}]]`。 */
 export function areaPoints(value: unknown) {
-  if (Array.isArray(value)) return value.filter((item) => item && typeof item === 'object') as Row[]
-  if (value && typeof value === 'object') return [value as Row]
-  if (typeof value !== 'string' || !value.trim()) return []
-  try {
-    const parsed = JSON.parse(value) as unknown
-    if (Array.isArray(parsed)) return parsed.filter((item) => item && typeof item === 'object') as Row[]
-    if (parsed && typeof parsed === 'object') return [parsed as Row]
-  } catch { /* 不是 JSON 时按 行-列 文本再认一次 */ }
-  return []
+  const out: Row[] = []
+  const seen = new Set<string>()
+  const push = (item: Row) => {
+    const line = item.row
+    const column = item.column ?? item.col
+    if (line == null || column == null || line === '' || column === '') return
+    const key = `${line}-${column}`
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push({ row: line, column })
+  }
+  const walk = (node: unknown, depth = 0) => {
+    if (node == null || depth > 8) return
+    if (typeof node === 'string') {
+      const raw = node.trim()
+      if (!raw) return
+      const flat = raw.replace(/\s+/g, '')
+      if (/^\d+-\d+(,\d+-\d+)*$/.test(flat)) {
+        for (const part of flat.split(',')) {
+          const [row, column] = part.split('-').map(Number)
+          if (Number.isFinite(row) && Number.isFinite(column)) push({ row, column })
+        }
+        return
+      }
+      try { walk(JSON.parse(raw), depth + 1) } catch { /* 非 JSON */ }
+      return
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1)
+      return
+    }
+    if (typeof node === 'object') {
+      const row = node as Row
+      if (row.row != null && (row.column != null || row.col != null)) {
+        push(row)
+        return
+      }
+      if ('areas' in row) walk(row.areas, depth + 1)
+      if ('areaItems' in row) walk(row.areaItems, depth + 1)
+    }
+  }
+  walk(value)
+  return out
 }
 
 export function cellsText(row: Row) {
-  const areas = areaPoints(row.areas)
-  const points = areas.length ? areas : areaPoints(row.areaItems)
-  const joined = points.map((item) => {
-    const line = item.row
-    const column = item.column ?? item.col
-    if (line == null || column == null || line === '' || column === '') return ''
-    return `${line}-${column}`
-  }).filter(Boolean).join(',')
-  if (joined) return joined
-  const raw = text(row.areaItems).replace(/\s+/g, '')
-  return /^\d+-\d+(,\d+-\d+)*$/.test(raw) ? raw : ''
+  const area = nested(row, 'area')
+  const points = areaPoints([row.areas, row.areaItems, area?.areaItems, area?.areas])
+  return points.map((item) => `${item.row}-${item.column}`).join(',')
 }
 
 export function cellsBody(value: unknown) {

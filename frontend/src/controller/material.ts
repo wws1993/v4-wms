@@ -1,46 +1,57 @@
 import type { Route } from '@/api-map/types'
-import { clearSessionList, loadSessionList, SESSION_LIST } from '@/api/catalogCache'
+import { clearSessionList, loadSessionList, SESSION_LIST, type CacheRow } from '@/api/catalogCache'
 import { fail, ok, toCsv } from '@/api/result'
 import { isMediaPath, mediaUrl } from '@/api/media'
 import { ruoyiBlob, ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
-import { brief, byOrderNum, dayText, idOf, num, orderNumOf, text } from '@/controller/shared/coerce'
+import { brief, byOrderNum, idOf, num, orderNumOf, text } from '@/controller/shared/coerce'
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { dictOf, dictValue, labelOf } from '@/controller/shared/dict'
 import { clearItemCache, itemCatalogRows, loadHouses } from '@/controller/shared/catalog'
-import { enrichLot, inventoryLot } from '@/controller/inventory'
+import { inventoryLot } from '@/controller/inventory'
+import type { InventoryVo, ItemBo, ItemVo, MineralSourceFilingBo, MineralSourceFilingVo } from '@/typings/openapi'
 
-function itemRow(row: Row, categories: { label: string; value: string }[], kinds: { label: string; value: string }[]) {
-  const cargoType = labelOf(categories, row.itemCategory) || text(row.itemCategory)
+/** 矿源备案 Vo 上偶发的扩展字段（运行时有、契约未列全）。 */
+type FilingVo = MineralSourceFilingVo & {
+  mineralSource?: string
+  harmfulElementContent?: string
+  harmfulContent?: string
+}
+
+/** 将物料 Vo 映射为列表行。 */
+function itemRow(row: ItemVo | Row, categories: { label: string; value: string }[]) {
+  const bag = row as Row
+  const cargoType = labelOf(categories, bag.itemCategory) || text(bag.itemCategory)
   /** 丰联现把 mineralSource 用作矿区。 */
-  const mineArea = text(row.mineralSource ?? row.mineArea ?? row.mineralArea)
+  const mineArea = text(bag.mineralSource ?? bag.mineArea ?? bag.mineralArea)
   return {
-    id: text(row.id),
-    code: text(row.itemCode),
-    name: text(row.itemName),
+    id: text(bag.id),
+    code: text(bag.itemCode),
+    name: text(bag.itemName),
     cargoType,
-    kind: labelOf(kinds, row.type) || (cargoType === '混成品' ? '成品' : '原料'),
     source: mineArea,
     mineArea,
-    originCountry: text(row.originCountry),
-    orderNum: orderNumOf(row.orderNum),
+    originCountry: text(bag.originCountry),
+    orderNum: orderNumOf(bag.orderNum),
   }
 }
+
+/** 分页查询物料档案。 */
 async function listItems(query: Query) {
   const keyword = text(query.keyword).trim()
   const cargoType = text(query.cargoType).trim()
-  const [categories, kinds, itemCategory] = await Promise.all([
+  const [categories, itemCategory] = await Promise.all([
     dictOf('wms_item_category'),
-    dictOf('wms_item_type'),
     cargoType ? dictValue('wms_item_category', cargoType) : Promise.resolve(undefined),
   ])
-  const result = await ruoyiGet('/wms/item/list', pageParams(query, {
+  const result = await ruoyiGet<ItemVo>('/wms/item/list', pageParams(query, {
     mineralSource: keyword || undefined,
     itemCategory: itemCategory || undefined,
   }))
-  return pageOf(result, byOrderNum(result.rows.map((row) => itemRow(row, categories, kinds))), query)
+  return pageOf(result, byOrderNum(result.rows.map((row) => itemRow(row, categories))), query)
 }
 
+/** 删除物料档案。 */
 async function removeItem(id: string) {
   const result = await ruoyiSend('DELETE', `/wms/item/${id}`)
   if (!result.ok) return fail(result.message)
@@ -48,25 +59,28 @@ async function removeItem(id: string) {
   return ok(true, '已删除')
 }
 
+/** 新建或更新物料档案。 */
 async function saveItem(id: string | undefined, body: Row) {
   const mineArea = text(body.mineArea).trim()
   const name = text(body.name).trim() || mineArea
   const cargoType = text(body.cargoType).trim()
   if (!mineArea) return fail('请填写矿区')
   if (!cargoType) return fail('请选择矿种类型')
-  const payload: Row = {
+  const payload: Partial<ItemBo> = {
     itemName: name,
     itemCategory: await dictValue('wms_item_category', cargoType),
     mineralSource: mineArea,
     originCountry: text(body.originCountry).trim(),
     orderNum: orderNumOf(body.orderNum) ?? 0,
   }
-  if (id) payload.id = idOf(id)
+  if (id) payload.id = idOf(id) as ItemBo['id']
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/item', payload)
   if (!result.ok) return fail(result.message)
   clearItemCache()
   return ok(true, '已保存')
 }
+
+/** 导出物料档案 CSV。 */
 async function exportItems(query: Query) {
   const listed = await listItems({ ...query, page: 1, pageSize: 500 })
   if (!listed.success || !listed.data) return fail(listed.message || '导出失败')
@@ -83,17 +97,21 @@ async function exportItems(query: Query) {
     ], byOrderNum(rows)),
   })
 }
+
+/** 矿源备案状态兜底选项 */
 const FILING_STATUS = [
   { label: '有效', value: '1' },
   { label: '即将用尽', value: '2' },
   { label: '已用尽', value: '3' },
 ]
 
-function dayText(value: unknown) {
+/** 截取日期到 YYYY-MM-DD。 */
+function dayOnly(value: unknown) {
   const raw = text(value).trim()
   return raw ? raw.slice(0, 10) : ''
 }
 
+/** 将用量数值格式化为百分比文案。 */
 function usageText(value: unknown) {
   const raw = text(value).trim()
   if (!raw) return '0.00%'
@@ -102,11 +120,13 @@ function usageText(value: unknown) {
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : raw
 }
 
+/** 读取矿源备案状态字典（无则用兜底）。 */
 async function filingStatusOptions() {
   const listed = await dictOf('wms_filing_status')
   return listed.length ? listed : FILING_STATUS
 }
 
+/** 将状态标签或编码转为字典值。 */
 async function filingStatusCode(label: unknown) {
   const raw = text(label)
   if (!raw) return undefined
@@ -114,19 +134,21 @@ async function filingStatusCode(label: unknown) {
   return hit ? hit.value : raw
 }
 
+/** 由前端筛选条件组装矿源备案查询参数。 */
 async function filingQuery(query: Query) {
   return {
     mineralSource: text(query.source).trim() || undefined,
     recordNumber: text(query.keyword).trim() || undefined,
     category: text(query.sourceKind).trim() || undefined,
     status: await filingStatusCode(query.status),
-    startTime: query.from ? dayText(query.from) : undefined,
-    endTime: query.to ? dayText(query.to) : undefined,
+    startTime: query.from ? dayOnly(query.from) : undefined,
+    endTime: query.to ? dayOnly(query.to) : undefined,
   }
 }
 
+/** 将矿源备案 Vo 映射为列表行。 */
 function filingRow(
-  row: Row,
+  row: FilingVo,
   sources: { label: string; value: string }[],
   kinds: { label: string; value: string }[],
   statuses: { label: string; value: string }[],
@@ -141,7 +163,7 @@ function filingRow(
     sourceKind: labelOf(kinds, row.category),
     originCountry: text(row.originCountry),
     code: text(row.recordNumber),
-    filingDate: dayText(row.recordTime),
+    filingDate: dayOnly(row.recordTime),
     harmfulContent: text(row.hazardousElementsRemark ?? row.harmfulElementContent ?? row.harmfulContent),
     status: labelOf(statuses, row.status) || '有效',
     qty,
@@ -155,16 +177,16 @@ function filingRow(
   }
 }
 
-async function filingRows(rows: Row[]) {
-  const [sources, kinds, statuses, categories, typeKinds, items] = await Promise.all([
+/** 批量映射矿源备案行并补物料展示名。 */
+async function filingRows(rows: FilingVo[]) {
+  const [sources, kinds, statuses, categories, items] = await Promise.all([
     dictOf('wms_mineral_source'),
     dictOf('wms_mineral_type'),
     filingStatusOptions(),
     dictOf('wms_item_category'),
-    dictOf('wms_item_type'),
     itemCatalogRows(),
   ])
-  const materials = items.map((row) => itemRow(row, categories, typeKinds))
+  const materials = items.map((row) => itemRow(row, categories))
   return rows.map((row) => {
     const mapped = filingRow(row, sources, kinds, statuses)
     const itemId = text(row.itemId)
@@ -183,18 +205,21 @@ async function filingRows(rows: Row[]) {
   })
 }
 
+/** 清除矿源备案会话缓存。 */
 function clearFilingCache() {
   clearSessionList(SESSION_LIST.filing)
 }
 
+/** 拉取矿源备案目录（会话缓存）。 */
 async function filingCatalog() {
   const listed = await loadSessionList(SESSION_LIST.filing, SESSION_LIST.filing, async () => {
-    const result = await ruoyiGet('/wms/mineralSourceFiling/list', { pageNum: 1, pageSize: 500 })
-    return { ok: result.ok, rows: result.ok ? result.rows : [] }
+    const result = await ruoyiGet<MineralSourceFilingVo>('/wms/mineralSourceFiling/list', { pageNum: 1, pageSize: 500 })
+    return { ok: result.ok, rows: result.ok ? result.rows as CacheRow[] : [] }
   })
-  return listed.rows
+  return listed.rows as FilingVo[]
 }
 
+/** 是否可用本地缓存目录代替远端筛选查询。 */
 function filingCatalogQuery(query: Query, filters: Query) {
   return Number(query.pageSize || 10) >= 500
     && !filters.mineralSource
@@ -205,6 +230,7 @@ function filingCatalogQuery(query: Query, filters: Query) {
     && !filters.endTime
 }
 
+/** 分页查询矿源备案。 */
 async function listFilings(query: Query) {
   const filters = await filingQuery(query)
   if (filingCatalogQuery(query, filters)) {
@@ -219,26 +245,28 @@ async function listFilings(query: Query) {
       pageSize,
     })
   }
-  const result = await ruoyiGet('/wms/mineralSourceFiling/list', pageParams(query, filters))
-  return pageOf(result, await filingRows(result.rows), query)
+  const result = await ruoyiGet<MineralSourceFilingVo>('/wms/mineralSourceFiling/list', pageParams(query, filters))
+  return pageOf(result, await filingRows(result.rows as FilingVo[]), query)
 }
 
 /** 入库预约：按物料拉取可用矿源备案（listNoPage + itemId）。 */
 async function listFilingsByItem(itemId: string) {
   const id = text(itemId).trim()
   if (!id) return fail('缺少物料 id')
-  const result = await ruoyiGet('/wms/mineralSourceFiling/listNoPage', { itemId: idOf(id) ?? id })
+  const result = await ruoyiGet<MineralSourceFilingVo>('/wms/mineralSourceFiling/listNoPage', { itemId: idOf(id) ?? id })
   if (!result.ok) return fail(result.message || '矿源备案查询失败')
-  const raw = Array.isArray(result.data) ? result.data as Row[] : result.rows
+  const raw = Array.isArray(result.data) ? result.data as FilingVo[] : result.rows as FilingVo[]
   return ok(await filingRows(raw))
 }
 
+/** 校验矿源备案附件类型（图片或 PDF）。 */
 function filingFileOk(file: Blob, name: string) {
   const type = file.type || ''
   const lower = name.toLowerCase()
   return type.startsWith('image/') || type === 'application/pdf' || lower.endsWith('.pdf') || /\.(png|jpe?g|gif|webp|bmp)$/.test(lower)
 }
 
+/** 从上传接口 data/message 中解析附件路径。 */
 function filingUploadPath(data: unknown) {
   const raw = typeof data === 'string'
     ? data.trim()
@@ -249,6 +277,7 @@ function filingUploadPath(data: unknown) {
   return raw.startsWith('/') || /^https?:/i.test(raw) || /\.[a-z0-9]{2,5}$/i.test(raw) ? raw : ''
 }
 
+/** 上传矿源备案附件并返回路径。 */
 async function uploadFilingFile(file: Blob) {
   const name = file instanceof File && file.name ? file.name : 'filing.png'
   if (!filingFileOk(file, name)) return fail('附件仅支持图片或 PDF')
@@ -261,21 +290,21 @@ async function uploadFilingFile(file: Blob) {
   return ok(path)
 }
 
+/** 新建或更新矿源备案。 */
 async function saveFiling(id: string | undefined, body: Row) {
   const materialId = text(body.materialId).trim()
   if (!materialId) return fail('请选择物料')
-  const [categories, typeKinds, items] = await Promise.all([
+  const [categories, items] = await Promise.all([
     dictOf('wms_item_category'),
-    dictOf('wms_item_type'),
     itemCatalogRows(),
   ])
-  const material = items.map((row) => itemRow(row, categories, typeKinds)).find((item) => String(item.id) === materialId)
+  const material = items.map((row) => itemRow(row, categories)).find((item) => String(item.id) === materialId)
   if (!material) return fail('所选物料不存在，请先在物料档案维护')
   const source = text(material.mineArea || material.source || material.name).trim()
   const originCountry = text(material.originCountry).trim()
   const sourceKind = text(material.cargoType).trim()
   const code = text(body.code).trim()
-  const filingDate = dayText(body.filingDate)
+  const filingDate = dayOnly(body.filingDate)
   const qty = num(body.qty)
   if (!source || !originCountry) return fail('所选物料缺少矿区或原产国，请先在物料档案补全')
   if (!code) return fail('请填写矿源备案编号')
@@ -288,8 +317,8 @@ async function saveFiling(id: string | undefined, body: Row) {
     if (!uploaded.success || !uploaded.data) return fail(uploaded.message || '附件上传失败')
     fileUrl = uploaded.data
   }
-  const payload: Row = {
-    itemId: idOf(materialId) ?? materialId,
+  const payload: Partial<MineralSourceFilingBo> & { mineralSource?: string; originCountry?: string } = {
+    itemId: (idOf(materialId) ?? materialId) as MineralSourceFilingBo['itemId'],
     mineralSource: source,
     originCountry,
     recordNumber: code,
@@ -298,7 +327,7 @@ async function saveFiling(id: string | undefined, body: Row) {
   if (sourceKind) payload.category = sourceKind
   if (filingDate) payload.recordTime = filingDate
   if (qty != null) payload.filingsNum = qty
-  if (id) payload.id = idOf(id) ?? id
+  if (id) payload.id = (idOf(id) ?? id) as MineralSourceFilingBo['id']
   if (fileUrl || id) payload.fileUrl = fileUrl
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/mineralSourceFiling', payload)
   if (!result.ok) return fail(result.message)
@@ -306,6 +335,7 @@ async function saveFiling(id: string | undefined, body: Row) {
   return ok(true, id ? '已保存' : '备案已创建')
 }
 
+/** 导出矿源备案（优先服务端 blob）。 */
 async function exportFilings(query: Query) {
   const filters = await filingQuery(query)
   try {
@@ -328,10 +358,11 @@ async function exportFilings(query: Query) {
   }
 }
 
+/** 将库存票货行压成矿源备案关联列表行。 */
 function filingLotRow(row: Row) {
   return {
-    customsNo: text(row.customsNo || row.batchNo),
-    prodBatch: row.batchKind === '生产批次号' ? text(row.batchNo) : '—',
+    customsNo: text(row.customsNo || row.recordNo),
+    prodBatch: text(row.batchNo) || '—',
     consignor: text(row.consignor),
     material: text(row.material),
     cargoType: text(row.cargoType),
@@ -343,22 +374,23 @@ function filingLotRow(row: Row) {
   }
 }
 
+/** 按矿源备案号查询关联票货。 */
 async function filingLots(code: string) {
   const recordNumber = text(code).trim()
   if (!recordNumber) return fail('缺少矿源备案号')
-  const [result, categories, kinds, houses, translates] = await Promise.all([
-    ruoyiGet('/wms/inventory/listNoPage', { recordNumber }),
+  const [result, categories, houses, translates] = await Promise.all([
+    ruoyiGet<InventoryVo>('/wms/inventory/listNoPage', { recordNumber }),
     dictOf('wms_item_category'),
-    dictOf('wms_item_type'),
     loadHouses(),
     dictOf('wms_translate_type'),
   ])
   if (!result.ok) return fail(brief(result.message) || '票货查询失败')
-  const raw = Array.isArray(result.data) ? result.data as Row[] : result.rows
-  const rows = await Promise.all(raw.map((row) => inventoryLot(row, categories, kinds, houses, translates)).map(enrichLot))
+  const raw = Array.isArray(result.data) ? result.data as InventoryVo[] : result.rows
+  const rows = raw.map((row) => inventoryLot(row as Row, categories, houses, translates))
   return ok(rows.map(filingLotRow))
 }
 
+/** 导出矿源备案关联票货 CSV。 */
 async function exportFilingLots(code: string) {
   const listed = await filingLots(code)
   if (!listed.success || !Array.isArray(listed.data)) return fail(listed.message || '票货查询失败')
@@ -381,6 +413,7 @@ async function exportFilingLots(code: string) {
 
 export { itemRow, uploadFilingFile }
 
+/** 物料与矿源备案路由表 */
 export const materialRoutes: Route[] = [
   { method: 'GET', match: '/materials/export', handle: ({ query }) => exportItems(query) },
   { method: 'GET', match: '/materials', handle: ({ query }) => listItems(query) },

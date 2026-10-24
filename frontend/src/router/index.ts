@@ -21,7 +21,6 @@ import ResourceView from '@/views/ResourceView.vue'
 import AuditView from '@/views/AuditView.vue'
 import WarningLogView from '@/views/WarningLogView.vue'
 import DictView from '@/views/DictView.vue'
-import BondedView from '@/views/BondedView.vue'
 
 const pages: Record<string, RouteRecordRaw['component']> = {
   dashboard: DashboardView,
@@ -39,7 +38,6 @@ const pages: Record<string, RouteRecordRaw['component']> = {
   warningLogs: WarningLogView,
   audit: AuditView,
   dicts: DictView,
-  bonded: BondedView,
 }
 
 const children: RouteRecordRaw[] = NAV.map((item) => ({

@@ -24,7 +24,7 @@ const batch = ref(false)
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const ledgerOpen = ref(false)
-const focus = ref('inbound')
+const focus = ref('basic')
 const current = ref<Record<string, unknown> | null>(null)
 const form = reactive({
   stackId: '', customsKeyword: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
@@ -32,6 +32,7 @@ const form = reactive({
   fromDate: '', fromHour: '08', toDate: '', toHour: '12',
 })
 const batchQuery = reactive({ warehouse: '', stack: '', consignor: '', keyword: '' })
+const batchTime = reactive({ fromDate: '', fromHour: '08', toDate: '', toHour: '12' })
 type BatchPick = { toStack: string; toAreaId: string; cells: string; scene: string; weight: string }
 const picked = ref<Record<string, BatchPick>>({})
 /** 当前在平面图上框选目标的票 */
@@ -61,8 +62,8 @@ function lotKey(row: Record<string, unknown>) {
 
 function lotText(row: Record<string, unknown> | undefined, key: 'customs' | 'prod') {
   if (!row) return '—'
-  if (key === 'customs') return row.batchKind === '报关单号' ? String(row.batchNo) : '—'
-  return row.batchKind === '生产批次号' ? String(row.batchNo) : '—'
+  if (key === 'customs') return dash(row.recordNo || row.customsNo)
+  return dash(row.batchNo)
 }
 
 async function load() {
@@ -112,9 +113,9 @@ onMounted(async () => {
   load()
 })
 
-async function openDetail(row: Record<string, unknown>, section = 'inbound') {
+async function openDetail(row: Record<string, unknown>) {
   const batchNo = String(row.batchNo || row.customsNo || row.prodBatch || '')
-  focus.value = section
+  focus.value = 'basic'
   detailOpen.value = true
   detailLoading.value = true
   current.value = {
@@ -312,6 +313,7 @@ function batchRowClass({ row }: { row: Record<string, unknown> }) {
 function openBatch() {
   picked.value = {}
   batchFocus.value = ''
+  Object.assign(batchTime, { fromDate: '', fromHour: '08', toDate: '', toHour: '12' })
   batch.value = true
 }
 
@@ -319,6 +321,16 @@ async function submitBatch() {
   const items = Object.entries(picked.value)
   if (!items.length) {
     ElMessage.warning('请勾选矿批次')
+    return
+  }
+  if (!batchTime.fromDate || !batchTime.toDate) {
+    ElMessage.warning('请选择移库时间')
+    return
+  }
+  const from = `${batchTime.fromDate} ${batchTime.fromHour}`
+  const to = `${batchTime.toDate} ${batchTime.toHour}`
+  if (to < from) {
+    ElMessage.warning('结束时间不能早于开始时间')
     return
   }
   for (const [key, value] of items) {
@@ -352,7 +364,11 @@ async function submitBatch() {
   saving.value = true
   try {
     const res = await transferApi.batch({
-      items: items.map(([key, value]) => {
+      startDate: batchTime.fromDate,
+      startHour: `${batchTime.fromHour}:00:00`,
+      endDate: batchTime.toDate,
+      endHour: `${batchTime.toHour}:00:00`,
+      list: items.map(([key, value]) => {
         const source = findBatchLot(key)!
         const split = value.scene === '拆票移位'
         return {
@@ -365,8 +381,8 @@ async function submitBatch() {
           weight: split ? Number(value.weight) : undefined,
           shipName: source.shipName || '—',
           containerCount: Number(source.containerCount || 0),
-          timeFrom: '',
-          timeTo: '',
+          timeFrom: `${from}:00`,
+          timeTo: `${to}:00`,
         }
       }),
     })
@@ -416,14 +432,17 @@ async function submitBatch() {
       <el-table-column prop="scene" label="场景" width="110" />
       <el-table-column label="报关单号" min-width="160">
         <template #default="{ row }">
-          <el-button v-if="row.customsNo" link type="primary" @click="openDetail(row, 'inbound')">{{ row.customsNo }}</el-button>
+          <el-button v-if="row.customsNo" link type="primary" @click="openDetail(row)">{{ row.customsNo }}</el-button>
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column prop="prodBatch" label="生产批次" min-width="130" />
+      <el-table-column prop="prodBatch" label="生产批次" min-width="130">
+        <template #default="{ row }">{{ dash(row.prodBatch) }}</template>
+      </el-table-column>
       <el-table-column prop="material" label="矿区" width="150" />
-      <el-table-column label="船名" width="90"><template #default="{ row }">{{ dash(row.shipName) }}</template></el-table-column>
-      <el-table-column label="柜数" width="70"><template #default="{ row }">{{ row.containerCount || '—' }}</template></el-table-column>
+      <el-table-column prop="cargoType" label="货物类型" width="100">
+        <template #default="{ row }">{{ dash(row.cargoType) }}</template>
+      </el-table-column>
       <el-table-column prop="weight" label="重量" width="80" />
       <el-table-column prop="fromStack" label="原堆位" width="100" />
       <el-table-column prop="toStack" label="目标堆位" width="100" />
@@ -437,7 +456,7 @@ async function submitBatch() {
       :lot="current"
       :loading="detailLoading"
       :focus="focus"
-      @open-batch="(batch, section) => openDetail({ batchNo: batch, customsNo: batch }, section || 'inbound')"
+      @open-batch="(batch) => openDetail({ batchNo: batch, customsNo: batch })"
     />
 
     <el-dialog v-model="single" class="transfer-create" width="94vw" align-center destroy-on-close :close-on-click-modal="false">
@@ -532,6 +551,15 @@ async function submitBatch() {
             <el-form-item label="关键字"><el-input v-model="batchQuery.keyword" clearable placeholder="报关单 / 批次 / 物料" style="width: 160px" /></el-form-item>
             <el-form-item><el-checkbox @change="toggleAll(Boolean($event))">全选</el-checkbox></el-form-item>
             <el-form-item><span class="hint">已选 {{ Object.keys(picked).length }} 条 / 共 {{ batchLots.length }} 条可移</span></el-form-item>
+            <el-form-item label="移库时间" required>
+              <div class="hours">
+                <el-date-picker v-model="batchTime.fromDate" type="date" value-format="YYYY-MM-DD" />
+                <el-select v-model="batchTime.fromHour" style="width: 90px"><el-option v-for="hour in HOURS" :key="hour" :label="`${hour}时`" :value="hour" /></el-select>
+                <span>至</span>
+                <el-date-picker v-model="batchTime.toDate" type="date" value-format="YYYY-MM-DD" />
+                <el-select v-model="batchTime.toHour" style="width: 90px"><el-option v-for="hour in HOURS" :key="`bt${hour}`" :label="`${hour}时`" :value="hour" /></el-select>
+              </div>
+            </el-form-item>
           </el-form>
           <el-table
             :data="batchLots"
@@ -630,7 +658,8 @@ async function submitBatch() {
 .fields { min-height: 0; overflow: auto; padding-right: 4px; }
 .stack-query { display: flex; gap: 8px; align-items: center; width: 100%; }
 .lot-line { margin: 0; line-height: 1.5; }
-.hours { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hours { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+.hours :deep(.el-date-editor) { width: 136px; }
 .map-pane { min-height: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ececec; border-radius: 8px; padding: 12px; }
 .map-label { display: flex; align-items: baseline; gap: 10px; font-weight: 600; }
 .map-label span { color: var(--el-color-danger); }

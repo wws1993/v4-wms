@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { customsApi } from '@/api'
 import { downloadText } from '@/api/result'
+import { dash } from './ops/samples'
 
 const rows = ref<Record<string, unknown>[]>([])
 const loading = ref(false)
@@ -82,8 +83,8 @@ async function writeOff() {
       <p class="hint">从汇总差异穿透至核注清单、报关单号与生产批次。当前账册 {{ current?.book }} / {{ current?.item }}。</p>
       <el-table :data="details" border empty-text="暂无穿透明细">
         <el-table-column prop="checklistNo" label="核注清单" />
-        <el-table-column prop="customsNo" label="报关单号" min-width="160" />
-        <el-table-column prop="prodBatch" label="生产批次" />
+        <el-table-column label="报关单号" min-width="160"><template #default="{ row }">{{ dash(row.customsNo) }}</template></el-table-column>
+        <el-table-column label="生产批次"><template #default="{ row }">{{ dash(row.prodBatch) }}</template></el-table-column>
         <el-table-column prop="bookWet" label="账册数量" />
         <el-table-column prop="stockWet" label="实物数量" />
         <el-table-column prop="diff" label="差异" />

@@ -5,22 +5,32 @@ import { mediaUrl } from '@/api/media'
 import { ruoyiBlob, ruoyiGet, type RuoyiResult } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
 import {
-  brief, cellsText, clockBound, elementFields, elementListOf, hourText, idOf, inDayRange,
+  brief, cellsText, clockBound, elementFields, elementListOf, hourText, idOf,
   nested, num, objectRows, resultObject, stamp, text,
 } from '@/controller/shared/coerce'
 import { pageParams } from '@/controller/shared/page'
 import { codeFromDict, dictOf, dictValue, labelOf } from '@/controller/shared/dict'
 import {
-  areaLabelHit, areaLabelText, areaRows, findArea, findItem, findMerchant, loadHouses, warehouseRows,
+  areaLabelText, areaRows, findArea, findItem, findMerchant, loadHouses, warehouseRows,
 } from '@/controller/shared/catalog'
 import { filingNoOf, shipModeOf } from '@/controller/inbound'
 import { OCR_STATUS, OCR_TYPE_LABEL } from '@/controller/ocr'
+import type {
+  InventoryDetailVo,
+  InventoryVo,
+  OcrLogVo,
+  ReceiptOrderVo,
+  WarehouseVo,
+} from '@/typings/openapi'
 
+/** 库存 Vo + 运行时扩展字段 */
+type InventoryRow = InventoryVo & Row
+
+/** 将库存 Vo 映射为票货列表行。 */
 function inventoryLot(
-  row: Row,
+  row: InventoryRow | Row,
   categories: { label: string; value: string }[],
-  kinds: { label: string; value: string }[],
-  houses: Row[],
+  houses: WarehouseVo[] | Row[],
   translates: { label: string; value: string }[] = [],
 ): Row {
   const consignor = nested(row, 'consignor')
@@ -30,11 +40,12 @@ function inventoryLot(
   const warehouseId = text(row.warehouseId || area?.warehouseId)
   const house = houses.find((entry) => text(entry.id) === warehouseId)
   const recordNo = text(receipt?.recordNo || row.recordNo)
-  const batchNo = text(row.batchNo || recordNo || row.orderNo || row.id)
+  const batchNo = text(row.batchNo || row.batch_no)
   const remain = num(row.remainQuantity ?? row.quantity ?? receipt?.dryWeight)
-  const cargoType = labelOf(categories, item?.itemCategory ?? row.itemCategory) || text(row.cargoType)
-  const kind = labelOf(kinds, item?.type ?? row.itemType)
-  const finished = cargoType === '混成品' || kind === '成品'
+  const cargoType = labelOf(categories, item?.itemCategory ?? row.itemCategory)
+    || text(row.cargoType)
+    || text(item?.itemCategory ?? row.itemCategory)
+  const finished = cargoType === '混成品' || cargoType === '成品'
   const mineArea = text(item?.mineralSource ?? item?.mineArea ?? row.mineralSource ?? row.mineArea)
   const quality = elementFields(receipt || row)
   return {
@@ -42,13 +53,14 @@ function inventoryLot(
     inventoryId: text(row.id),
     orderId: text(row.orderId || receipt?.id),
     batchNo,
-    batchKind: finished || /^FL-/.test(batchNo) ? '生产批次号' : '报关单号',
+    batchKind: finished || (batchNo && /^FL-/.test(batchNo)) ? '生产批次号' : '报关单号',
     consignor: text(consignor?.merchantName || row.consignorName),
     consignorId: text(row.consignorId || consignor?.id),
     itemId: text(row.itemId || item?.id),
     material: text(item?.itemName || row.itemName),
     mineArea,
     cargoType,
+    itemCategory: cargoType,
     shipMode: shipModeOf(receipt || row, translates),
     filingNo: filingNoOf(row) || filingNoOf(receipt),
     warehouse: text(house?.warehouseName || house?.warehouseCode || warehouseId),
@@ -75,26 +87,6 @@ function inventoryLot(
     cd: quality.cd || row.cd || '',
     f: quality.f || row.f || '',
     hg: quality.hg || row.hg || '',
-  }
-}
-
-async function enrichLot(row: Row) {
-  if (!row.orderId || row.customsNo) return row
-  const detail = await ruoyiGet(`/wms/receiptOrder/${row.orderId}`)
-  if (!detail.ok || !detail.data || typeof detail.data !== 'object') return row
-  const receipt = detail.data as Row
-  const recordNo = text(receipt.recordNo)
-  const batchNo = recordNo || text(row.batchNo)
-  return {
-    ...row,
-    customsNo: recordNo,
-    batchNo,
-    batchKind: /^FL-/.test(batchNo) ? '生产批次号' : '报关单号',
-    blNo: text(receipt.waybillNo || row.blNo),
-    wet: receipt.wetWeight ?? row.wet,
-    dry: receipt.dryWeight ?? row.dry,
-    shipName: text(receipt.shipName || row.shipName),
-    inDate: row.inDate || stamp(receipt.arrivalDate, 13),
   }
 }
 
@@ -177,7 +169,7 @@ function homeLot(
 
 async function inventoryHome() {
   const [result, areas, houses, categories] = await Promise.all([
-    ruoyiGet('/wms/inventory/home'),
+    ruoyiGet<InventoryVo>('/wms/inventory/home'),
     areaRows(),
     warehouseRows(),
     dictOf('wms_item_category'),
@@ -188,9 +180,8 @@ async function inventoryHome() {
 }
 async function listInventory(query: Query) {
   const materialKey = text(query.materialId || query.mineArea).trim()
-  const [categories, kinds, houses, translates, areaNames, consignor, area, item, itemCategory, shippingMethodId] = await Promise.all([
+  const [categories, houses, translates, areaNames, consignor, area, item, itemCategory, shippingMethodId] = await Promise.all([
     dictOf('wms_item_category'),
-    dictOf('wms_item_type'),
     loadHouses(),
     dictOf('wms_translate_type'),
     dictOf('wms_area_identification'),
@@ -216,76 +207,63 @@ async function listInventory(query: Query) {
     warehouseId: house ? idOf(house.id) : undefined,
     recordNo: query.keyword || undefined,
     itemId: item ? idOf(item.id) ?? text(item.id) : undefined,
-    itemCategory,
+    itemCategory: itemCategory || undefined,
     shippingMethodId: shippingMethodId == null ? undefined : shippingMethodId,
     recordNumber: query.filingNo || undefined,
     ...(span.from || span.to ? { params: { beginTime: span.from || undefined, endTime: span.to || undefined } } : {}),
   }
   let note = ''
-  let result = await ruoyiGet('/wms/inventory/list', pageParams(query, filters))
+  let result = await ruoyiGet<InventoryVo>('/wms/inventory/list', pageParams(query, filters))
   if (result.ok && query.keyword && result.total === 0) {
-    const retry = await ruoyiGet('/wms/inventory/list', pageParams(query, { ...filters, recordNo: undefined, batchNo: query.keyword }))
+    const retry = await ruoyiGet<InventoryVo>('/wms/inventory/list', pageParams(query, { ...filters, recordNo: undefined, batchNo: query.keyword }))
     if (retry.ok) result = retry
   }
   if (!result.ok && (span.from || span.to)) {
     const rest = { ...filters }
     delete rest.params
-    const retry = await ruoyiGet('/wms/inventory/list', pageParams(query, rest))
+    const retry = await ruoyiGet<InventoryVo>('/wms/inventory/list', pageParams(query, rest))
     if (!retry.ok) return fail(brief(retry.message))
     result = retry
     note = '库存列表暂不支持起止时间，已按其它条件查询'
   }
   if (!result.ok) return fail(brief(result.message))
-  let rows = await Promise.all(result.rows.map((row) => {
-    const lot = inventoryLot(row, categories, kinds, houses, translates)
-    lot.areaLabel = areaLabelText(lot.areaLabel, areaNames)
-    return enrichLot(lot)
-  }))
+  const areas = await areaRows()
   const seen = new Set<string>()
-  rows = rows.filter((row) => {
+  const rows = result.rows.map((row) => {
+    const lot = inventoryLot(row as InventoryRow, categories, houses, translates)
+    if (!lot.areaLabel && lot.areaId) {
+      const area = areas.find((item) => text(item.id) === text(lot.areaId))
+      if (area) lot.areaLabel = text(area.areaIdentification)
+    }
+    lot.areaLabel = areaLabelText(lot.areaLabel, areaNames)
+    return lot
+  }).filter((row) => {
     const id = text(row.id)
-    if (!id || seen.has(id)) return false
+    if (!id) return true
+    if (seen.has(id)) return false
     seen.add(id)
     return true
   })
-  const whole = rows.length >= result.total
-  const shipLabel = text(query.shipMode)
-  const areaWant = text(query.areaLabel)
-  rows = rows.filter((row) => {
-    if (query.status && row.status !== query.status) return false
-    if (shipLabel && text(row.shipMode) && text(row.shipMode) !== shipLabel) return false
-    if (areaWant && !areaLabelHit(row, areaWant, areaNames)) return false
-    if (!whole) return true
-    if (query.cargoType && row.cargoType !== query.cargoType) return false
-    if (materialKey) {
-      const hit = text(row.itemId) === text(item?.id) || text(row.material) === text(item?.itemName) || text(row.mineArea) === text(item?.mineralSource || item?.itemName)
-      if (!hit && (row.itemId || row.material || row.mineArea)) return false
-    }
-    // 已用 recordNumber 交给后端筛选；行上若未解析出 filingNo 则不再误杀
-    if (query.filingNo) {
-      const no = text(row.filingNo)
-      if (no && !no.includes(text(query.filingNo))) return false
-    }
-    if (query.warehouse && row.warehouse !== query.warehouse) return false
-    if (query.keyword && !`${row.batchNo}${row.customsNo}${row.stackText}`.includes(text(query.keyword))) return false
-    if ((span.from || span.to) && !inDayRange(row.inDate, span.from, span.to)) return false
-    return true
-  })
-  const total = whole || areaWant ? rows.length : result.total
-  return inventoryPage(query, rows, total, note || result.message)
+  return inventoryPage(query, rows, result.total, note || result.message)
 }
 
+/** 按批次号/报关单号定位库存行。 */
 async function locateInventory(batchNo: string) {
-  const listed = await ruoyiGet('/wms/inventory/list', { pageNum: 1, pageSize: 500 })
+  const listed = await ruoyiGet<InventoryVo>('/wms/inventory/list', { pageNum: 1, pageSize: 500 })
   if (!listed.ok) return undefined
-  const direct = listed.rows.find((row) => [row.id, row.orderNo, row.recordNo, row.batchNo].some((value) => text(value) === batchNo))
-  if (direct) return direct
+  const direct = listed.rows.find((row) => {
+    const bag = row as InventoryRow
+    return [bag.id, bag.orderNo, bag.recordNo, bag.batchNo].some((value) => text(value) === batchNo)
+  })
+  if (direct) return direct as InventoryRow
   for (const row of listed.rows.slice(0, 40)) {
     const orderId = text(row.orderId)
     if (!orderId) continue
-    const detail = await ruoyiGet(`/wms/receiptOrder/${orderId}`)
-    const receipt = detail.ok && detail.data && typeof detail.data === 'object' ? detail.data as Row : undefined
-    if (receipt && [receipt.recordNo, receipt.waybillNo, receipt.receiptOrderNo].some((value) => text(value) === batchNo)) return row
+    const detail = await ruoyiGet<ReceiptOrderVo, ReceiptOrderVo>(`/wms/receiptOrder/${orderId}`)
+    const receipt = detail.ok && detail.data && typeof detail.data === 'object' ? detail.data : undefined
+    if (receipt && [receipt.recordNo, receipt.waybillNo, receipt.receiptOrderNo].some((value) => text(value) === batchNo)) {
+      return row as InventoryRow
+    }
   }
   return undefined
 }
@@ -307,7 +285,7 @@ function shotFrom(row: Row) {
 async function ocrShot(id: unknown) {
   const key = text(id).trim()
   if (!key || key === '0') return undefined
-  const detail = await ruoyiGet(`/wms/ocr/${encodeURIComponent(key)}`)
+  const detail = await ruoyiGet<OcrLogVo, OcrLogVo>(`/wms/ocr/${encodeURIComponent(key)}`)
   if (!detail.ok || !detail.data || typeof detail.data !== 'object') return undefined
   return shotFrom(detail.data as Row)
 }
@@ -502,7 +480,7 @@ async function inventoryLedger(raw: Row) {
   const query = ledgerFilter(raw)
   if (!query) return [] as Row[]
   const [result, areas] = await Promise.all([
-    ruoyiGet('/wms/inventoryDetail/listNoPage', query),
+    ruoyiGet<InventoryDetailVo>('/wms/inventoryDetail/listNoPage', query),
     areaRows(),
   ])
   if (!result.ok) return [] as Row[]
@@ -547,18 +525,17 @@ async function exportInventoryLedger(query: Query) {
 async function inventoryBatch(batchNo: string, query: Query = {}) {
   const raw = await locateInventory(batchNo)
   if (!raw) return fail('批次不存在')
-  const [categories, kinds, houses, ledger] = await Promise.all([
+  const [categories, houses, ledger] = await Promise.all([
     dictOf('wms_item_category'),
-    dictOf('wms_item_type'),
     loadHouses(),
     inventoryLedger(raw),
   ])
-  const enriched = await enrichLot(inventoryLot(raw, categories, kinds, houses))
-  const row = wantsDocs(query.docs) ? await attachLotDocs(enriched) : enriched
+  const mapped = inventoryLot(raw, categories, houses)
+  const row = wantsDocs(query.docs) ? await attachLotDocs(mapped) : mapped
   return ok({ ...row, ledger, products: [] })
 }
 
-export { inventoryLot, enrichLot, locateInventory, inventoryHome, homeLot, homeSource }
+export { inventoryLot, locateInventory, inventoryHome, homeLot, homeSource }
 
 export const inventoryRoutes: Route[] = [
   { method: 'GET', match: '/inventory/home', handle: () => inventoryHome() },

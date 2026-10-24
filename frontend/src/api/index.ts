@@ -228,9 +228,6 @@ export const ledgerApi = {
 export const bondedApi = {
   list: (params: Q) => request<Page>('GET', '/bonded-books', { params }),
   create: (body: B) => request('POST', '/bonded-books', { body }),
-  update: (id: string, body: B) => request('PUT', `/bonded-books/${id}`, { body }),
-  lots: (code: string) => request<Record<string, unknown>[]>('GET', `/bonded-books/${encodeURIComponent(code)}/lots`),
-  exportLots: (code: string) => request<FilePayload>('GET', `/bonded-books/${encodeURIComponent(code)}/lots/export`),
 }
 
 /** 平面图。丰联放行后整图 JSON 经 `/wms/floorPlan` 上传，驾驶舱与设置页都从服务器读回。 */
@@ -278,6 +275,11 @@ export const productionApi = {
   process: (id: string, body: B) => request('POST', `/production/${encodeURIComponent(id)}/process`, { body }),
   finish: (id: string, body: B) => request('POST', `/production/${encodeURIComponent(id)}/finish`, { body }),
   detail: (batchNo: string) => request<{ list: Record<string, unknown>[] }>('GET', `/production/${encodeURIComponent(batchNo)}`),
+  inspections: (params: Q) => request<Page>('GET', '/production/inspections', { params }),
+  inspectLots: (params: Q = {}) => request<Page>('GET', '/production/inspections/lots', { params }),
+  getInspection: (id: string) => request<Record<string, unknown>>('GET', `/production/inspections/${encodeURIComponent(id)}`),
+  createInspection: (body: B) => request('POST', '/production/inspections', { body }),
+  updateInspection: (id: string, body: B) => request('PUT', `/production/inspections/${encodeURIComponent(id)}`, { body }),
 }
 
 export const outboundApi = {

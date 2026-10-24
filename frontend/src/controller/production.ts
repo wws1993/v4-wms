@@ -2,11 +2,16 @@ import type { Route } from '@/api-map/types'
 import { fail, ok } from '@/api/result'
 import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
-import { brief, clockBound, idOf, nested, num, stamp, text } from '@/controller/shared/coerce'
+import { brief, cellsBody, clockBound, idOf, nested, num, stamp, text } from '@/controller/shared/coerce'
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { dictOf, labelOf } from '@/controller/shared/dict'
 import { areaCodeValue, areaNameValue, areaRows, findMerchant, merchantRows } from '@/controller/shared/catalog'
+import type { ProductionOrderBo, ProductionOrderVo } from '@/typings/openapi'
 
+/** 生产单 Vo + 运行时扩展 */
+type ProductionRow = ProductionOrderVo & Row
+
+/** 从明细嵌套出库单取报关单号。 */
 function shipmentNo(detail: Row) {
   const shipment = nested(detail, 'shipmentOrder')
   if (!shipment) return ''
@@ -48,6 +53,39 @@ function lineConsignor(detail: Row, order: Row, names: Map<string, string>) {
     || namedMerchant(order.consignorId, names)
 }
 
+function feedEntry(
+  detail: Row,
+  order: Row,
+  categories: { label: string; value: string }[],
+  areaNames: { label: string; value: string }[],
+  merchants: Map<string, string>,
+  feedDry: number,
+) {
+  const receipt = nested(detail, 'receiptOrder')
+  const inventory = nested(detail, 'inventory')
+  const item = nested(detail, 'item')
+  const area = nested(detail, 'area') || nested(inventory, 'area')
+  const ship = text(receipt?.shipName)
+  const voyage = text(receipt?.voyage || receipt?.voyageNo)
+  return {
+    inventoryId: text(detail.inventoryId || inventory?.id),
+    customsNo: text(receipt?.recordNo || detail.recordNo || detail.batchNo || inventory?.batchNo),
+    consignor: lineConsignor(detail, order, merchants),
+    cargoType: labelOf(categories, item?.itemCategory ?? detail.itemCategory ?? inventory?.itemCategory),
+    material: text(item?.itemName || detail.itemName || detail.materialName || inventory?.itemName),
+    voyage: [ship, voyage].filter(Boolean).join(' / '),
+    blNo: text(receipt?.waybillNo),
+    originCountry: text(receipt?.originCountry || receipt?.country || detail.originCountry),
+    wet: num(detail.wetWeight ?? receipt?.wetWeight) ?? 0,
+    dry: feedDry,
+    feedDry,
+    stack: text(area?.areaCode || area?.areaName || detail.areaCode),
+    areaLabel: labelOf(areaNames, area?.areaIdentification),
+    outCustomsNo: shipmentNo(detail),
+  }
+}
+
+/** 投入原料取 productionOrderItems；明细 dryWeight 为投入重量。 */
 function productionLines(
   row: Row,
   categories: { label: string; value: string }[],
@@ -55,28 +93,23 @@ function productionLines(
   merchants: Map<string, string>,
 ) {
   const details = Array.isArray(row.productionOrderDetails) ? row.productionOrderDetails as Row[] : []
-  return details.filter((detail) => num(detail.direction) !== 1).map((detail) => {
-    const receipt = nested(detail, 'receiptOrder')
-    const item = nested(detail, 'item')
-    const area = nested(detail, 'area')
-    const ship = text(receipt?.shipName)
-    const voyage = text(receipt?.voyage || receipt?.voyageNo)
-    return {
-      inventoryId: text(detail.inventoryId),
-      customsNo: text(receipt?.recordNo || detail.batchNo),
-      consignor: lineConsignor(detail, row, merchants),
-      cargoType: labelOf(categories, item?.itemCategory ?? detail.itemCategory),
-      material: text(item?.itemName || detail.itemName),
-      voyage: [ship, voyage].filter(Boolean).join(' / '),
-      blNo: text(receipt?.waybillNo),
-      originCountry: text(receipt?.originCountry || receipt?.country),
-      wet: num(detail.wetWeight ?? receipt?.wetWeight) ?? 0,
-      dry: num(receipt?.dryWeight ?? detail.dryWeight) ?? 0,
-      feedDry: num(detail.dryWeight) ?? 0,
-      stack: text(area?.areaCode || area?.areaName),
-      areaLabel: labelOf(areaNames, area?.areaIdentification),
-      outCustomsNo: shipmentNo(detail),
-    }
+  const items = Array.isArray(row.productionOrderItems) ? row.productionOrderItems as Row[] : []
+  const feedItems = items.filter((entry) => (
+    text(entry.inventoryId)
+    || nested(entry, 'inventory')
+    || nested(entry, 'receiptOrder')
+    || nested(entry, 'item')
+    || text(entry.materialName || entry.itemName || entry.recordNo)
+  ))
+  const source = feedItems.length ? feedItems : details
+  return source.map((entry, index) => {
+    const matched = details.find((detail) => {
+      const a = text(detail.inventoryId)
+      const b = text(entry.inventoryId || nested(entry, 'inventory')?.id)
+      return a && b && a === b
+    }) || details[index]
+    const feedDry = num(matched?.dryWeight ?? entry.dryWeight ?? entry.weight) ?? 0
+    return feedEntry(entry, row, categories, areaNames, merchants, feedDry)
   })
 }
 
@@ -93,6 +126,7 @@ function productionDoc(
   const item = nested(row, 'item')
   const kind = num(row.productionType)
   const weighed = num(row.productionWeight)
+  const inputDry = num(row.dryWeight)
   const finished = asFinish || num(row.productionOrderStatus) === 1 || (text(row.targetAreaId) !== '' && weighed != null && weighed > 0)
   const docType = finished ? '完工入库' : kind === 1 ? '加工过程' : '投料出库'
   const customs = [...new Set(lines.map((line) => line.customsNo).filter(Boolean))]
@@ -116,7 +150,8 @@ function productionDoc(
     customsNos: customs.join('、'),
     outCustomsNo: outNos.join('、'),
     sourceStacks: stacks.join(' / '),
-    outputDry: row.productionWeight ?? '',
+    inputDry: inputDry ?? lines.reduce((sum, line) => sum + (num(line.feedDry) ?? 0), 0),
+    outputDry: weighed ?? '',
     product: text(item?.itemName),
     stackCode: text(area?.areaCode || area?.areaName),
     areaLabel: labelOf(areaNames, area?.areaIdentification),
@@ -136,7 +171,7 @@ async function productionDicts() {
 function productionFilters(query: Query, consignorId: unknown) {
   const filters: Query = {}
   if (consignorId != null) filters.consignorId = consignorId
-  const batch = text(query.batchNo).trim()
+  const batch = text(query.batchNo).trim() || text(query.keyword).trim()
   if (batch) filters.batchNo = batch
   if (query.from) filters.startTime = clockBound(query.from, false)
   if (query.to) filters.endTime = clockBound(query.to, true)
@@ -154,21 +189,15 @@ async function listProduction(query: Query) {
   const consignor = query.consignor ? await findMerchant(query.consignor) : undefined
   const filters = productionFilters(query, consignor ? idOf(consignor.id) : undefined)
   const kind = productionKind(query)
-  const result = await ruoyiGet('/wms/productionOrder/list', pageParams(query, { ...filters, type: kind }))
+  const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/list', pageParams(query, { ...filters }))
   if (!result.ok) return fail(brief(result.message))
-  const word = text(query.keyword).trim()
-  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, kind === 2)).filter((row) => {
-    if (!word) return true
-    const lines = Array.isArray(row.feedLines) ? row.feedLines as Row[] : []
-    return `${row.id}${row.orderNo}${row.prodBatch}${row.customsNos}${row.outCustomsNo}${lines.map((line) => line.customsNo).join('')}`.includes(word)
-  })
-  if (word) return ok({ list, total: list.length, page: 1, pageSize: list.length || Number(query.pageSize || 10) })
+  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, kind === 2))
   return pageOf(result, list, query)
 }
 
 async function productionBatch(batchNo: string) {
   const [{ categories, areaNames }, merchants] = await Promise.all([productionDicts(), merchantNameMap()])
-  const result = await ruoyiGet('/wms/productionOrder/listNoPage', { batchNo })
+  const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/listNoPage', { batchNo })
   if (!result.ok) return fail(result.message)
   const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, num(row.productionOrderStatus) === 1))
   return ok({ list, prodBatch: batchNo })
@@ -202,7 +231,7 @@ function consignorToken(id: string, name: string) {
 }
 
 async function batchConsignorClash(batchNo: string, consignorId: string, lines: Row[]) {
-  const existing = await ruoyiGet('/wms/productionOrder/listNoPage', { batchNo })
+  const existing = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/listNoPage', { batchNo })
   if (!existing.ok) return brief(existing.message)
   const rows = existing.rows.filter((row) => text(row.batchNo) === batchNo)
   const known = new Set<string>()
@@ -236,7 +265,8 @@ async function createProductionFeed(body: Row) {
   if (tokens.size > 1) return fail('同一生产批次不能添加不同委托方的原料')
   const clash = await batchConsignorClash(batchNo, ids[0], lines)
   if (clash) return fail(clash)
-  const result = await ruoyiSend('POST', '/wms/productionOrder', { batchNo, consignorId: ids[0], productionOrderDetails: details })
+  const payload: Partial<ProductionOrderBo> & Row = { batchNo, consignorId: ids[0], productionOrderDetails: details }
+  const result = await ruoyiSend('POST', '/wms/productionOrder', payload)
   return result.ok ? ok(result.data, '投料已登记') : fail(brief(result.message))
 }
 
@@ -261,22 +291,73 @@ async function finishProduction(id: string, body: Row) {
   if (!id) return fail('请选择生产单')
   let areaId = text(body.areaId)
   let warehouseId = text(body.warehouseId)
+  const [detail, areaNames, stacks] = await Promise.all([
+    ruoyiGet<ProductionOrderVo, ProductionOrderVo>(`/wms/productionOrder/${encodeURIComponent(id)}`),
+    dictOf('wms_area_identification'),
+    areaRows(),
+  ])
   if (!areaId || !warehouseId) {
-    const areas = await areaRows()
     const code = text(body.stackCode)
-    const area = areas.find((row) => text(row.id) === areaId || areaCodeValue(row) === code || areaNameValue(row) === code)
+    const area = stacks.find((row) => text(row.id) === areaId || areaCodeValue(row) === code || areaNameValue(row) === code)
     if (area) {
       areaId = areaId || text(area.id)
       warehouseId = warehouseId || text(area.warehouseId || nested(area, 'warehouse')?.id)
     }
   }
   if (!areaId) return fail('请选择待检区堆位')
+
+  const order = (detail.ok && detail.data && typeof detail.data === 'object' ? detail.data as Row : null)
+    || (detail.ok ? detail.rows[0] : undefined)
+
+  const batchNo = text(body.prodBatch || body.batchNo || order?.batchNo).trim()
+  if (!batchNo) return fail('缺少生产批次')
+
+  const target = stacks.find((row) => text(row.id) === areaId)
+  if (target) {
+    const label = labelOf(areaNames, target.areaIdentification) || text(target.areaIdentification)
+    if (label && label !== '待检区' && !label.includes('待检')) {
+      return fail('成品完工入库只能存入待检区')
+    }
+  }
+
+  const cells = cellsBody(body.cells)
+  if (!cells.length) return fail('请在待检区堆位上框选存放格子')
+  // 同一待检区允许不同生产批次并存，不校验堆位上是否已有其它批次
   const payload: Row = {
     id: idOf(id),
+    batchNo,
+    type: 2,
     productionWeight: weight,
     targetAreaId: idOf(areaId),
+    areas: cells,
   }
   if (warehouseId) payload.targetWarehouseId = idOf(warehouseId)
+
+  const consignorId = idOf(body.consignorId || order?.consignorId)
+  if (consignorId != null) payload.consignorId = consignorId
+  const processName = text(body.process || body.processName || order?.processName).trim()
+  if (processName) payload.processName = processName
+  const productionType = num(body.productionType ?? order?.productionType)
+  if (productionType != null) payload.productionType = productionType
+  const itemId = idOf(body.itemId || order?.itemId)
+  if (itemId != null) payload.itemId = itemId
+  if (order?.startTime) payload.startTime = order.startTime
+  if (order?.endTime) payload.endTime = order.endTime
+  if (order?.workOrderNo) payload.workOrderNo = order.workOrderNo
+  if (order?.productionOrderNo) payload.productionOrderNo = order.productionOrderNo
+
+  const rawDetails = Array.isArray(body.productionOrderDetails)
+    ? body.productionOrderDetails as Row[]
+    : Array.isArray(order?.productionOrderDetails)
+      ? order.productionOrderDetails as Row[]
+      : []
+  const details = rawDetails.map((line) => ({
+    inventoryId: idOf(line.inventoryId),
+    dryWeight: num(line.dryWeight ?? line.feedDry),
+    wetWeight: num(line.wetWeight ?? line.wet),
+  })).filter((item) => item.inventoryId != null)
+  if (details.length) payload.productionOrderDetails = details
+
   const result = await ruoyiSend('PUT', '/wms/productionOrder', payload)
   return result.ok ? ok(true, '已完工入库') : fail(brief(result.message))
 }

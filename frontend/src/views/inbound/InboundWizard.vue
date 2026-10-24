@@ -4,7 +4,9 @@ import { ElMessage } from 'element-plus'
 import { inboundApi, materialApi, ocrApi, settingsApi } from '@/api'
 import ImageViewer from '@/components/ImageViewer.vue'
 import StackGridPicker from '@/components/StackGridPicker.vue'
+import type { StackPick } from '@/components/YardPlanMap.vue'
 import { cellKeys, dash } from '../ops/samples'
+import { MONEY_ROW } from '@/controller/shared/constants'
 
 type QualityKey = { key: string; symbol: string; name: string; label: string; unit: string; required: boolean }
 
@@ -77,6 +79,8 @@ const form = reactive<Record<string, any>>({
   stackCode: '',
   areaId: '',
   cells: '',
+  stackPicks: [] as StackPick[],
+  receiptOrderDetails: [Object.assign({}, MONEY_ROW)],
   orcId: '',
   wet: '',
   dry: '',
@@ -96,7 +100,25 @@ for (const item of qualityKeys.value) form[item.key] = form[item.key] ?? ''
 if (props.seed) {
   Object.assign(form, props.seed, { category: '原料' })
   if (Array.isArray(form.cells)) form.cells = form.cells.join(',')
+  if (!Array.isArray(form.stackPicks) || !form.stackPicks.length) {
+    if (form.stackCode || form.areaId) {
+      form.stackPicks = [{
+        stackCode: String(form.stackCode || ''),
+        areaId: String(form.areaId || ''),
+        cells: String(form.cells || ''),
+      }]
+    } else {
+      form.stackPicks = []
+    }
+  }
   if (props.seed.orcId) ocrStatus.value = `已关联报关单任务 ${props.seed.orcId}`
+  if (Array.isArray(form.stackPicks)) {
+    form.stackPicks = form.stackPicks.map((row: StackPick) => ({
+      ...row,
+      wet: row.wet ?? '',
+      dry: row.dry ?? '',
+    }))
+  }
 }
 
 function applyQualityItems(items: unknown) {
@@ -141,9 +163,8 @@ onMounted(async () => {
 })
 
 const rawMaterials = computed(() => props.materials.filter((row) => {
-  const kind = String(row.kind || '')
   const cargo = String(row.cargoType || '')
-  return kind !== '成品' && cargo !== '混成品'
+  return cargo !== '成品' && cargo !== '混成品'
 }))
 const containerMode = computed(() => String(form.shipMode).includes('集装箱'))
 const reportedOre = computed(() => form.cargoType === '报备矿')
@@ -275,6 +296,33 @@ const DOC_TYPE: Record<'bl' | 'customs' | 'weight' | 'quality', string> = {
 function filled(value: unknown) {
   return value != null && String(value).trim() !== ''
 }
+
+function cellCount(cells: unknown) {
+  return String(cells || '').split(',').filter(Boolean).length
+}
+
+function nearEqual(a: number, b: number) {
+  return Math.abs(a - b) < 0.011
+}
+
+const allocWet = computed(() => (form.stackPicks as StackPick[]).reduce((sum, row) => {
+  const value = numberOrBlank(row.wet)
+  return sum + (Number.isFinite(value) ? value : 0)
+}, 0))
+const allocDry = computed(() => (form.stackPicks as StackPick[]).reduce((sum, row) => {
+  const value = numberOrBlank(row.dry)
+  return sum + (Number.isFinite(value) ? value : 0)
+}, 0))
+
+function syncSingleAlloc() {
+  if (!receiveMode || form.stackPicks.length !== 1) return
+  const pick = form.stackPicks[0] as StackPick
+  if (!filled(pick.wet) && filled(form.wet)) pick.wet = form.wet
+  if (!filled(pick.dry) && filled(form.dry)) pick.dry = form.dry
+}
+
+syncSingleAlloc()
+watch(() => [form.wet, form.dry], syncSingleAlloc)
 
 function copyFields(keys: string[], from: Record<string, any>, to: Record<string, any>) {
   for (const key of keys) to[key] = from[key]
@@ -445,13 +493,18 @@ async function submitReserve() {
     ElMessage.warning('请填写订单金额')
     return
   }
-  if (!form.stackCode) {
+  const picks = (Array.isArray(form.stackPicks) ? form.stackPicks as StackPick[] : [])
+    .filter((row) => row.stackCode || row.areaId)
+  if (!picks.length) {
     ElMessage.warning('请放大仓库并选择堆位')
     return
   }
-  if (cellKeys(pickedStack.value).length && !form.cells) {
-    ElMessage.warning('请在平面图上框选存放格子')
-    return
+  for (const pick of picks) {
+    const stack = props.stacks.find((row) => String(row.code) === pick.stackCode || String(row.id) === pick.areaId)
+    if (cellKeys(stack).length && !String(pick.cells || '').trim()) {
+      ElMessage.warning(`请为堆位 ${pick.stackCode || pick.areaId} 框选存放格子`)
+      return
+    }
   }
   if (!form.orcId) {
     ElMessage.warning('请先上传报关单完成识别')
@@ -459,13 +512,15 @@ async function submitReserve() {
   }
   saving.value = true
   try {
-    const status = String(form.stackCode).includes('码头') ? '暂存码头' : '待收货'
+    const dock = picks.some((row) => String(row.stackCode).includes('码头'))
+    const status = dock ? '暂存码头' : '待收货'
     const created = await inboundApi.create({
       ...form,
-      areaId: form.areaId || pickedStack.value?.id,
+      stackPicks: picks,
+      areaId: form.areaId || picks[0]?.areaId || pickedStack.value?.id,
       category: '原料',
       status,
-      containerCount: containerMode.value ? form.containerCount : ''
+      containerCount: containerMode.value ? form.containerCount : '',
     })
 
     if (!created.success) {
@@ -503,6 +558,24 @@ async function submitReceive() {
     ElMessage.warning('请填写水分，或上传重量单')
     return
   }
+  const picks = (Array.isArray(form.stackPicks) ? form.stackPicks as StackPick[] : [])
+    .filter((row) => row.stackCode || row.areaId)
+  if (!picks.length) {
+    ElMessage.warning('本单没有预定堆位，无法收货')
+    return
+  }
+  for (const pick of picks) {
+    const areaWet = numberOrBlank(pick.wet)
+    const areaDry = numberOrBlank(pick.dry)
+    if (!Number.isFinite(areaWet) || !Number.isFinite(areaDry)) {
+      ElMessage.warning(`请为堆位 ${pick.stackCode || pick.areaId} 填写湿重和干重`)
+      return
+    }
+  }
+  if (!nearEqual(allocWet.value, wet) || !nearEqual(allocDry.value, dry)) {
+    ElMessage.warning(`各堆位湿重/干重合计需等于本票湿重 ${wet} / 干重 ${dry}`)
+    return
+  }
   const missingQuality = qualityKeys.value.find((item) => item.required && !String(form[item.key] || '').trim())
   if (missingQuality) {
     ElMessage.warning(`请填写${missingQuality.label}，或上传品质证书`)
@@ -517,6 +590,7 @@ async function submitReceive() {
   try {
     const received = await inboundApi.update(String(form.id), {
       ...form,
+      stackPicks: picks,
       wet, dry, moisture: `${moisture}%`,
       wetWeight: wet, dryWeight: dry, moistureContent: moisture,
       elements,
@@ -535,6 +609,16 @@ async function submitReceive() {
   }
 }
 
+/** 添加金额行 */
+function addReceiptOrderDetails() {
+  form.receiptOrderDetails.push(Object.assign({}, MONEY_ROW))
+}
+
+/** 删除金额行 */
+function deleteReceiptOrderDetails(idx: number) {
+  form.receiptOrderDetails.splice(idx, 1)
+}
+
 onBeforeUnmount(() => {
   for (const item of Object.values(previews)) {
     if (item.url) URL.revokeObjectURL(item.url)
@@ -546,8 +630,8 @@ onBeforeUnmount(() => {
   <div>
     <el-dialog
       :model-value="true"
-      :class="receiveMode ? 'inbound-receive' : 'inbound-wizard'"
-      :width="receiveMode ? '920px' : '94vw'"
+      :class="receiveMode ? 'inbound-receive inbound-receive-wide' : 'inbound-wizard'"
+      :width="receiveMode ? '96vw' : '94vw'"
       align-center
       append-to-body
       destroy-on-close
@@ -579,12 +663,28 @@ onBeforeUnmount(() => {
             <el-form-item label="船名" required><el-input v-model="form.shipName" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="核注清单号"><el-input v-model="form.checklistNo" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="提运单号" required><el-input v-model="form.blNo" placeholder="OCR 回填" /></el-form-item>
-
             <el-form-item label="金额" required>
-              <div class="money">
-                <el-select v-model="form.currency" style="width: 120px"><el-option v-for="item in currencies" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-                <el-input v-model="form.amount" type="number" placeholder="金额" />
+              <div class="money" v-for="(item, idx) in form.receiptOrderDetails" :key="item.id" style="margin-bottom:8px">
+                <el-input v-model="item.itemCode" type="string" placeholder="编号" />
+                <el-input v-model="item.itemName" type="string" placeholder="名称" />
+                <el-input v-model="item.quantity" type="string" placeholder="数量" />
+                <el-input v-model="item.unit" type="string" placeholder="单位" />
+                <el-input v-model="item.unitPrice" type="string" placeholder="单价" />
+                <el-input v-model="item.totalPrice" type="string" placeholder="总价" />
+                <el-select v-model="item.currency" style="width: 120px" placeholder="币制">
+                  <el-option v-for="item in currencies" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+                <el-input v-model="item.originCountry" type="string" placeholder="原产国" />
+                <el-input v-model="item.destCountry" type="string" placeholder="目的地" />
+
+                <el-icon style="transform:translateY(10px); cursor:pointer;" @click="deleteReceiptOrderDetails(idx)" v-if="!!idx"><Delete /></el-icon>
+                <div v-else style="width:14px;"></div>
               </div>
+
+              <el-button type="button" @click="addReceiptOrderDetails">
+                <el-icon><Plus /></el-icon>
+                再加一行
+              </el-button>
             </el-form-item>
             <el-form-item label="矿区" required>
               <el-select v-model="form.material" @change="onMaterial">
@@ -604,13 +704,19 @@ onBeforeUnmount(() => {
           </el-form>
           <div class="map-pane">
             <div class="map-label">存放位置 <span>*</span></div>
-            <StackGridPicker v-model:stack-code="form.stackCode" v-model:area-id="form.areaId" v-model:cells="form.cells" :stacks="stacks" />
+            <StackGridPicker
+              multi
+              v-model:stack-code="form.stackCode"
+              v-model:area-id="form.areaId"
+              v-model:cells="form.cells"
+              v-model:picks="form.stackPicks"
+              :stacks="stacks"
+            />
           </div>
         </div>
       </section>
 
       <section v-else class="receive">
-        <div style="height:12px"></div>
         <el-form label-width="108px">
           <el-row :gutter="16">
             <el-col :span="12"><el-form-item label="入库单号" required><el-input :model-value="dash(form.orderNo || form.id)" readonly disabled /></el-form-item></el-col>
@@ -663,8 +769,49 @@ onBeforeUnmount(() => {
               </el-form-item>
             </el-col>
             <el-col :span="12"><el-form-item label="品质证书号"><el-input v-model="form.qualityNo" readonly placeholder="OCR 回填" /></el-form-item></el-col>
-            <el-col :span="24"><el-form-item label="收货备注"><el-input v-model="form.remark" type="textarea" /></el-form-item></el-col>
           </el-row>
+        </el-form>
+
+        <div class="receive-split">
+          <div class="map-pane">
+            <div class="map-label">本票堆位</div>
+            <StackGridPicker
+              multi
+              readonly
+              v-model:stack-code="form.stackCode"
+              v-model:area-id="form.areaId"
+              v-model:cells="form.cells"
+              v-model:picks="form.stackPicks"
+              :stacks="stacks"
+            />
+          </div>
+          <div class="alloc-pane">
+            <div class="map-label">堆位重量分配 <span>*</span></div>
+            <el-table :data="form.stackPicks" border size="small" empty-text="本单暂无预定堆位">
+              <el-table-column prop="stackCode" label="堆位" min-width="100" />
+              <el-table-column label="格数" width="72" align="center">
+                <template #default="{ row }">{{ cellCount(row.cells) || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="湿重(吨)" min-width="120">
+                <template #default="{ row }">
+                  <el-input v-model="row.wet" type="number" placeholder="必填" />
+                </template>
+              </el-table-column>
+              <el-table-column label="干重(吨)" min-width="120">
+                <template #default="{ row }">
+                  <el-input v-model="row.dry" type="number" placeholder="必填" />
+                </template>
+              </el-table-column>
+            </el-table>
+            <p class="alloc-sum">
+              已分配湿重 {{ tonText(allocWet) }} / {{ dash(form.wet) }}
+              · 干重 {{ tonText(allocDry) }} / {{ dash(form.dry) }}
+            </p>
+          </div>
+        </div>
+
+        <el-form label-width="108px" class="receive-remark">
+          <el-form-item label="收货备注"><el-input v-model="form.remark" type="textarea" /></el-form-item>
         </el-form>
       </section>
 
@@ -746,7 +893,7 @@ onBeforeUnmount(() => {
 }
 .ocr-bar button.text { border: none; color: var(--el-color-primary); background: transparent; }
 .status { color: #5c5c5c; font-size: 13px; }
-.split { flex: 1; min-height: 0; display: grid; grid-template-columns: 420px 1fr; gap: 16px; }
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .fields { overflow: auto; padding-right: 4px; }
 .fields small, .map-pane small { display: block; margin-top: 4px; color: #8a8a8a; }
 .map-pane { min-height: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ececec; border-radius: 8px; padding: 12px; }
@@ -756,6 +903,26 @@ onBeforeUnmount(() => {
 .money { display: flex; gap: 8px; width: 100%; }
 .money :deep(.el-input) { flex: 1; }
 .ocr-dual { margin-bottom: 16px; align-items: stretch; }
+.receive { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.receive-split {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  min-height: 320px;
+}
+.receive-split .map-pane { min-height: 320px; }
+.receive-split .map-pane :deep(.yard-plan) { flex: 1; min-height: 280px; }
+.alloc-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #ececec;
+  border-radius: 8px;
+  padding: 12px;
+}
+.alloc-sum { margin: 0; color: #5c5c5c; font-size: 13px; }
+.receive-remark { margin-top: 4px; }
 .ocr-dual > div { flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .slot { height: auto; min-height: 72px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; text-align: left; }
 .slot span { color: #8a8a8a; font-size: 12px; }
@@ -834,6 +1001,24 @@ onBeforeUnmount(() => {
   background: #f3f3f3;
 }
 .inbound-receive .el-dialog__body { max-height: 70vh; overflow: auto; }
+.inbound-receive-wide.el-dialog {
+  width: 96vw;
+  height: 92vh;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+}
+.inbound-receive-wide .el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  padding: 16px 20px;
+  background: #f3f3f3;
+}
 .inbound-wizard .el-dialog__footer,
 .inbound-receive .el-dialog__footer {
   display: flex;

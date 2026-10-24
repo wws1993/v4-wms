@@ -6,14 +6,20 @@ import type { Query, Row } from '@/controller/shared/types'
 import { brief, dayText, nested, slashDay, text } from '@/controller/shared/coerce'
 import { pageParams } from '@/controller/shared/page'
 import { areaRows } from '@/controller/shared/catalog'
+import type { AreaVo, CheckOrderVo } from '@/typings/openapi'
 
+/** 盘点单 Vo + 运行时扩展 */
+type CheckRow = CheckOrderVo & Row
+
+/** 将附件路径压成展示文案。 */
 function fileLabel(path: string) {
   if (!path) return '—'
   const names = path.split(/[、,]/).map((item) => item.trim().split(/[\\/]/).pop() || item.trim()).filter(Boolean)
   return names.join('、') || '—'
 }
 
-function checkScope(row: Row, areas: Row[]) {
+/** 根据明细与堆位档案拼盘点区域文案。 */
+function checkScope(row: CheckRow | Row, areas: AreaVo[]) {
   const details = Array.isArray(row.details) ? row.details as Row[] : []
   const groups = new Map<string, { name: string; codes: string[]; ids: Set<string> }>()
   const order: string[] = []
@@ -47,7 +53,8 @@ function checkScope(row: Row, areas: Row[]) {
   return parts.filter(Boolean).join(', ') || '—'
 }
 
-function checkView(row: Row, areas: Row[]) {
+/** 将盘点单 Vo 映射为列表行。 */
+function checkView(row: CheckRow | Row, areas: AreaVo[]) {
   const attachment = text(row.attachmentPath)
   const paths = attachment.split(/[、,]/).map((item) => item.trim()).filter(Boolean)
   return {
@@ -62,9 +69,10 @@ function checkView(row: Row, areas: Row[]) {
   }
 }
 
+/** 分页查询盘点单。 */
 async function listCheckOrders(query: Query) {
   const day = text(query.date).slice(0, 10)
-  const result = await ruoyiGet('/wms/checkOrder/list', pageParams(query, {
+  const result = await ruoyiGet<CheckOrderVo>('/wms/checkOrder/list', pageParams(query, {
     checkOrderNo: query.keyword || undefined,
     checkUser: query.person || undefined,
     planDate: day ? `${day} 00:00:00` : undefined,
@@ -72,7 +80,7 @@ async function listCheckOrders(query: Query) {
   if (!result.ok) return fail(brief(result.message))
   const page = Number(query.page || 1)
   const pageSize = Number(query.pageSize || 10)
-  let source = result.rows
+  let source = result.rows as CheckRow[]
   let total = result.total
   if (source.length > pageSize) {
     total = Math.max(total, source.length)
@@ -82,6 +90,7 @@ async function listCheckOrders(query: Query) {
   return ok({ list: source.map((row) => checkView(row, areas)), total, page, pageSize }, result.message)
 }
 
+/** 新建盘点单（multipart 含附件）。 */
 async function createCheckOrder(body: Row) {
   const uploads = Array.isArray(body.__files) ? body.__files.filter((file): file is File => file instanceof File) : []
   if (!uploads.length) return fail('请上传附件')
@@ -102,6 +111,7 @@ async function createCheckOrder(body: Row) {
   return result.ok ? ok(true, '盘点记录已提交') : fail(brief(result.message))
 }
 
+/** 导出盘点单 CSV。 */
 async function exportCheckOrders(query: Query) {
   const pageSize = 200
   const rows: Row[] = []
@@ -136,6 +146,7 @@ async function exportCheckOrders(query: Query) {
   })
 }
 
+/** 盘点单路由表 */
 export const stocktakeRoutes: Route[] = [
   { method: 'GET', match: '/stocktakes/export', handle: ({ query }) => exportCheckOrders(query) },
   { method: 'GET', match: '/stocktakes', handle: ({ query }) => listCheckOrders(query) },
