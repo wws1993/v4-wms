@@ -90,6 +90,12 @@ const router = useRouter()
 const auth = useAuthStore()
 const passwordOpen = ref(false)
 const boardRef = ref<HTMLElement>()
+const warnsViewportRef = ref<HTMLElement>()
+const warnsListRef = ref<HTMLElement>()
+const logsViewportRef = ref<HTMLElement>()
+const logsListRef = ref<HTMLElement>()
+const warnsOverflow = ref(false)
+const logsOverflow = ref(false)
 const yardRef = ref<{ reload?: (quiet?: boolean) => Promise<void> }>()
 let yardBooted = false
 const barRef = ref<HTMLElement>()
@@ -101,15 +107,13 @@ const usage = ref<UsageItem[]>([])
 const trend = ref<TrendItem[]>([])
 const warnings = ref<WarnItem[]>([])
 const refreshedAt = ref('')
-/** 无缝滚动：列表复制一份，动画 translateY(-50%)。 */
-const warnTrack = computed(() => (warnings.value.length ? [...warnings.value, ...warnings.value] : []))
 const warnScrollSec = computed(() => Math.max(18, warnings.value.length * 4))
-const logTrack = computed(() => (logs.value.length ? [...logs.value, ...logs.value] : []))
 const logScrollSec = computed(() => Math.max(20, logs.value.length * 2.4))
 let barChart: echarts.ECharts | null = null
 let lineChart: echarts.ECharts | null = null
 let feedTimer = 0
 let pollIntervalMs = pollMs(DEFAULT_REFRESH_MINUTES)
+let scrollObserver: ResizeObserver | null = null
 
 function stampRefreshed() {
   const date = new Date()
@@ -142,6 +146,32 @@ function resizeCharts() {
   if ((boardRef.value?.clientWidth || 0) < 2) return
   barChart?.resize()
   lineChart?.resize()
+}
+
+function updateFeedOverflow() {
+  warnsOverflow.value = Boolean(
+    warnsListRef.value
+    && warnsViewportRef.value
+    && warnsListRef.value.scrollHeight > warnsViewportRef.value.clientHeight + 1,
+  )
+  logsOverflow.value = Boolean(
+    logsListRef.value
+    && logsViewportRef.value
+    && logsListRef.value.scrollHeight > logsViewportRef.value.clientHeight + 1,
+  )
+}
+
+function observeFeedSizes() {
+  scrollObserver?.disconnect()
+  for (const element of [
+    warnsViewportRef.value,
+    warnsListRef.value,
+    logsViewportRef.value,
+    logsListRef.value,
+  ]) {
+    if (element) scrollObserver?.observe(element)
+  }
+  updateFeedOverflow()
 }
 
 async function logout() {
@@ -333,6 +363,7 @@ async function refreshDashboard() {
   }
   stampRefreshed()
   await nextTick()
+  observeFeedSizes()
   renderCharts()
   const nextMs = pollMs(paramRes.success && paramRes.data ? paramRes.data.refreshInterval : undefined)
   if (nextMs !== pollIntervalMs) {
@@ -344,18 +375,24 @@ async function refreshDashboard() {
 
 onMounted(async () => {
   await refreshDashboard()
+  scrollObserver = new ResizeObserver(updateFeedOverflow)
+  observeFeedSizes()
   observer = new ResizeObserver(() => resizeCharts())
   if (boardRef.value) observer.observe(boardRef.value)
   if (!feedTimer) schedulePoll(pollIntervalMs)
 })
 
 onActivated(() => {
-  nextTick(() => resizeCharts())
+  nextTick(() => {
+    resizeCharts()
+    observeFeedSizes()
+  })
 })
 
 onBeforeUnmount(() => {
   window.clearInterval(feedTimer)
   observer?.disconnect()
+  scrollObserver?.disconnect()
   barChart?.dispose()
   lineChart?.dispose()
 })
@@ -423,18 +460,35 @@ onBeforeUnmount(() => {
         </div>
         <div class="logs-body">
           <p v-if="!logs.length" class="logs-empty">暂无作业日志</p>
-          <div v-else class="logs-viewport">
-            <ul class="logs-track" :style="{ animationDuration: `${logScrollSec}s` }">
-              <li
-                v-for="(item, index) in logTrack"
-                :key="`${item.time}-${item.type}-${item.text}-${index}`"
-                :class="{ alt: index % 2 === 1 }"
-              >
-                <time>{{ item.time }}</time>
-                <em :style="{ color: tagColor[item.type] || '#c5d0dc' }">{{ item.type }}</em>
-                <span>{{ item.text }}</span>
-              </li>
-            </ul>
+          <div v-else ref="logsViewportRef" class="logs-viewport">
+            <div
+              class="logs-track"
+              :class="{ 'is-scrolling': logsOverflow }"
+              :style="{ animationDuration: `${logScrollSec}s` }"
+            >
+              <ul ref="logsListRef" class="logs-list">
+                <li
+                  v-for="(item, index) in logs"
+                  :key="`${item.time}-${item.type}-${item.text}-${index}`"
+                  :class="{ alt: index % 2 === 1 }"
+                >
+                  <time>{{ item.time }}</time>
+                  <em :style="{ color: tagColor[item.type] || '#c5d0dc' }">{{ item.type }}</em>
+                  <span>{{ item.text }}</span>
+                </li>
+              </ul>
+              <ul v-if="logsOverflow" class="logs-list" aria-hidden="true">
+                <li
+                  v-for="(item, index) in logs"
+                  :key="`${item.time}-${item.type}-${item.text}-${index}-clone`"
+                  :class="{ alt: index % 2 === 1 }"
+                >
+                  <time>{{ item.time }}</time>
+                  <em :style="{ color: tagColor[item.type] || '#c5d0dc' }">{{ item.type }}</em>
+                  <span>{{ item.text }}</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </section>
@@ -462,21 +516,41 @@ onBeforeUnmount(() => {
           </div>
           <div class="warns">
             <p v-if="!warnings.length" class="warn-empty">近 5 日暂无预警</p>
-            <div v-else class="warns-viewport">
-              <ul class="warns-track" :style="{ animationDuration: `${warnScrollSec}s` }">
-                <li
-                  v-for="(item, index) in warnTrack"
-                  :key="`${item.time}-${item.title}-${index}`"
-                  @click="router.push(item.link)"
-                >
-                  <i :class="item.tone || 'red'" />
-                  <div>
-                    <b>{{ item.title }}</b>
-                    <span>{{ item.detail }}</span>
-                  </div>
-                  <time>{{ item.time }}</time>
-                </li>
-              </ul>
+            <div v-else ref="warnsViewportRef" class="warns-viewport">
+              <div
+                class="warns-track"
+                :class="{ 'is-scrolling': warnsOverflow }"
+                :style="{ animationDuration: `${warnScrollSec}s` }"
+              >
+                <ul ref="warnsListRef" class="warns-list">
+                  <li
+                    v-for="(item, index) in warnings"
+                    :key="`${item.time}-${item.title}-${index}`"
+                    @click="router.push(item.link)"
+                  >
+                    <i :class="item.tone || 'red'" />
+                    <div>
+                      <b>{{ item.title }}</b>
+                      <span>{{ item.detail }}</span>
+                    </div>
+                    <time>{{ item.time }}</time>
+                  </li>
+                </ul>
+                <ul v-if="warnsOverflow" class="warns-list" aria-hidden="true">
+                  <li
+                    v-for="(item, index) in warnings"
+                    :key="`${item.time}-${item.title}-${index}-clone`"
+                    @click="router.push(item.link)"
+                  >
+                    <i :class="item.tone || 'red'" />
+                    <div>
+                      <b>{{ item.title }}</b>
+                      <span>{{ item.detail }}</span>
+                    </div>
+                    <time>{{ item.time }}</time>
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </article>
@@ -700,19 +774,27 @@ onBeforeUnmount(() => {
   -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
 }
 .warns-track {
-  list-style: none;
-  margin: 0;
-  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  animation: none;
+}
+.warns-track.is-scrolling {
   animation-name: warnScroll;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
-.warns:hover .warns-track { animation-play-state: paused; }
+.warns-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px;
+}
+.warns-list[aria-hidden="true"] { pointer-events: none; }
+.warns:hover .warns-track.is-scrolling { animation-play-state: paused; }
 @keyframes warnScroll {
   from { transform: translateY(0); }
   to { transform: translateY(-50%); }
 }
-.warns-track li {
+.warns-list li {
   display: grid;
   grid-template-columns: 8px 1fr auto;
   gap: 8px;
@@ -721,7 +803,7 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
 }
-.warns-track li:hover { background: rgba(231, 201, 138, 0.06); }
+.warns-list li:hover { background: rgba(231, 201, 138, 0.06); }
 .warns i {
   width: 8px;
   height: 8px;
@@ -804,19 +886,26 @@ onBeforeUnmount(() => {
   -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
 }
 .logs-track {
-  list-style: none;
-  margin: 0;
-  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  animation: none;
+}
+.logs-track.is-scrolling {
   animation-name: logScroll;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
-.logs:hover .logs-track { animation-play-state: paused; }
+.logs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px;
+}
+.logs:hover .logs-track.is-scrolling { animation-play-state: paused; }
 @keyframes logScroll {
   from { transform: translateY(0); }
   to { transform: translateY(-50%); }
 }
-.logs-track li {
+.logs-list li {
   display: grid;
   grid-template-columns: 108px 36px 1fr;
   gap: 6px;
@@ -826,20 +915,20 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 12px;
 }
-.logs-track li.alt { background: rgba(255, 255, 255, 0.03); }
-.logs-track time {
+.logs-list li.alt { background: rgba(255, 255, 255, 0.03); }
+.logs-list time {
   color: #9aa8b8;
   font-size: 11px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.logs-track em {
+.logs-list em {
   font-style: normal;
   font-weight: 600;
   text-align: center;
   white-space: nowrap;
 }
-.logs-track span {
+.logs-list span {
   color: #d5e0ec;
   min-width: 0;
   overflow: hidden;
