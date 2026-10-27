@@ -14,6 +14,7 @@ import {
 } from '@/controller/shared/catalog'
 import { savedId, statusReply } from '@/controller/shared/reply'
 import { gridsFromPlan } from '@/controller/floor'
+import { readDirectory } from '@/controller/shared/directory'
 import type { AreaBo, AreaVo, WarehouseBo, WarehouseVo } from '@/typings/openapi'
 
 /** 将仓库 Vo 映射为列表行。 */
@@ -54,6 +55,10 @@ function stackRow(row: AreaVo) {
 /** 删除仓库。 */
 async function removeWarehouse(id: string) {
   const result = await ruoyiSend('DELETE', `/wms/warehouse/${id}`)
+  if (result.ok) {
+    clearWarehouseCache()
+    clearAreaCache()
+  }
   return result.ok ? ok(true, '已删除') : fail(result.message)
 }
 
@@ -78,7 +83,10 @@ async function saveWarehouse(id: string | undefined, body: Row) {
   if (orderNum != null) payload.orderNum = orderNum
   if (id) payload.id = idOf(id) as WarehouseBo['id']
   const result = await ruoyiSend(id ? 'PUT' : 'POST', '/wms/warehouse', payload)
-  if (result.ok && !id) clearWarehouseCache()
+  if (result.ok) {
+    clearWarehouseCache()
+    clearAreaCache()
+  }
   return result.ok ? ok({ id: savedId(result) }, '已保存') : fail(result.message)
 }
 
@@ -110,6 +118,30 @@ export const warehouseRoutes: Route[] = [
   { method: 'GET', match: '/warehouses/catalog', handle: async () => {
     const rows = byOrderNum((await warehouseRows()).map(warehouseRow))
     return ok({ list: rows, total: rows.length, page: 1, pageSize: rows.length || 1 })
+  } },
+  { method: 'GET', match: '/warehouses/stacks/catalog', handle: async () => {
+    const listed = await readDirectory<AreaVo>('areas')
+    if (!listed.ok) return fail('堆位目录读取失败')
+    const [houses, grids, areaNames] = await Promise.all([
+      warehouseRows(),
+      gridsFromPlan(),
+      dictOf('wms_area_identification'),
+    ])
+    const rows = byOrderNum(listed.rows.map(stackRow).map((row) => {
+      const house = !row.warehouse || /^\d+$/.test(row.warehouse)
+        ? houses.find((item) => text(item.id) === text(row.warehouseId))
+        : undefined
+      const grid = grids.get(row.id) || grids.get(row.code)
+      return {
+        ...row,
+        areaLabel: areaLabelText(row.areaLabel, areaNames),
+        warehouse: house ? text(house.warehouseCode || house.warehouseName || row.warehouse) : row.warehouse,
+        grid: grid?.grid || row.grid,
+        gridCols: grid?.gridCols,
+        gridRows: grid?.gridRows,
+      }
+    }))
+    return ok(rows)
   } },
   { method: 'GET', match: '/warehouses', handle: async ({ query }) => {
     const result = await ruoyiGet<WarehouseVo>('/wms/warehouse/list', pageParams(query, {

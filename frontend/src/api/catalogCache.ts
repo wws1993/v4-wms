@@ -11,6 +11,12 @@ export const SESSION_LIST = {
   filing: 'wms_filing_list',
   merchant: 'wms_merchant_list',
   floorPlan: 'wms_floor_plan_list',
+  accountBook: 'wms_account_book_list',
+  shippingMethod: 'wms_shipping_method_list',
+  inventory: 'wms_inventory_catalog',
+  inventoryDetail: 'wms_inventory_detail_catalog',
+  receiptOrder: 'wms_receipt_order_catalog',
+  productionOrder: 'wms_production_order_catalog',
 } as const
 
 export type SessionListName = typeof SESSION_LIST[keyof typeof SESSION_LIST]
@@ -24,6 +30,12 @@ export const SESSION_LABELS: Record<SessionListName, string> = {
   [SESSION_LIST.filing]: '矿源备案',
   [SESSION_LIST.merchant]: '往来主体',
   [SESSION_LIST.floorPlan]: '平面图列表',
+  [SESSION_LIST.accountBook]: '账册档案',
+  [SESSION_LIST.shippingMethod]: '运输方式',
+  [SESSION_LIST.inventory]: '库存目录',
+  [SESSION_LIST.inventoryDetail]: '库存明细目录',
+  [SESSION_LIST.receiptOrder]: '入库单目录',
+  [SESSION_LIST.productionOrder]: '生产单目录',
 }
 
 export type CacheEntry = {

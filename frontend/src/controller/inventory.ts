@@ -13,6 +13,7 @@ import { codeFromDict, dictOf, dictValue, labelOf } from '@/controller/shared/di
 import {
   areaLabelText, areaRows, findArea, findItem, findMerchant, loadHouses, warehouseRows,
 } from '@/controller/shared/catalog'
+import { readDirectory } from '@/controller/shared/directory'
 import { filingNoOf, shipModeOf } from '@/controller/inbound'
 import { OCR_STATUS, OCR_TYPE_LABEL } from '@/controller/ocr'
 import type {
@@ -235,9 +236,41 @@ async function listInventory(query: Query) {
   return inventoryPage(query, rows, result.total, note || result.message)
 }
 
+/** 读取完整库存目录供选择器和关联记录使用。 */
+async function inventoryCatalog(query: Query = {}) {
+  const [listed, categories, houses, translates, areas, areaNames] = await Promise.all([
+    readDirectory<InventoryVo>('inventories'),
+    dictOf('wms_item_category'),
+    loadHouses(),
+    dictOf('wms_translate_type'),
+    areaRows(),
+    dictOf('wms_area_identification'),
+  ])
+  if (!listed.ok) return fail('库存目录读取失败')
+  const areaList = objectRows(areas)
+  const rows = listed.rows.map((row) => {
+    const lot = inventoryLot(row as InventoryRow, categories, houses, translates)
+    if (!lot.areaLabel && lot.areaId) {
+      const area = areaList.find((item) => text(item.id) === text(lot.areaId))
+      if (area) lot.areaLabel = text(area.areaIdentification)
+    }
+    lot.areaLabel = areaLabelText(lot.areaLabel, areaNames)
+    return lot
+  })
+  const status = text(query.status).trim()
+  const stack = text(query.stack).trim()
+  const keyword = text(query.keyword).trim()
+  return ok(rows.filter((row) => {
+    if (status && text(row.status) !== status) return false
+    if (stack && text(row.areaId) !== stack && text(row.stackText) !== stack) return false
+    if (keyword && ![row.customsNo, row.batchNo, row.id, row.orderId].some((value) => text(value).includes(keyword))) return false
+    return true
+  }))
+}
+
 /** 按批次号/报关单号定位库存行。 */
 async function locateInventory(batchNo: string) {
-  const listed = await ruoyiGet<InventoryVo>('/wms/inventory/list', { pageNum: 1, pageSize: 500 })
+  const listed = await readDirectory<InventoryVo>('inventories')
   if (!listed.ok) return undefined
   const direct = listed.rows.find((row) => {
     const bag = row as InventoryRow
@@ -468,12 +501,11 @@ async function inventoryLedger(raw: Row) {
   const query = ledgerFilter(raw)
   if (!query) return [] as Row[]
   const [result, areas] = await Promise.all([
-    ruoyiGet<InventoryDetailVo>('/wms/inventoryDetail/listNoPage', query),
+    readDirectory<InventoryDetailVo>('inventoryDetails', query),
     areaRows(),
   ])
   if (!result.ok) return [] as Row[]
-  const rows = Array.isArray(result.data) ? objectRows(result.data) : objectRows(result.rows)
-  return rows.map((row) => mapLedgerRow(row, objectRows(areas)))
+  return result.rows.map((row) => mapLedgerRow(row as Row, objectRows(areas)))
 }
 
 /** 库存台账导出：/wms/inventoryDetail/export */
@@ -542,6 +574,7 @@ export { inventoryLot, locateInventory, inventoryHome, homeLot, homeSource }
 
 export const inventoryRoutes: Route[] = [
   { method: 'GET', match: '/inventory/home', handle: () => inventoryHome() },
+  { method: 'GET', match: '/inventory/catalog', handle: ({ query }) => inventoryCatalog(query) },
   { method: 'GET', match: '/inventory', handle: ({ query }) => listInventory(query) },
   { method: 'GET', match: '/inventory/ledger/export', handle: ({ query }) => exportInventoryLedger(query) },
   { method: 'GET', match: /^\/inventory\/items\/([^/]+)$/, handle: ({ params, query }) => inventoryItem(params[0], query) },

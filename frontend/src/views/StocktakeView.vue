@@ -87,15 +87,11 @@ function clearFilters() {
 onMounted(load)
 
 async function loadAreaNodes() {
-  const pageSize = 200
-  const stacks: Record<string, unknown>[] = []
-  const [houseRes] = await Promise.all([warehouseApi.list({ page: 1, pageSize: 200 })])
-  for (let pageNo = 1; pageNo <= 20; pageNo += 1) {
-    const res = await warehouseApi.stacks({ page: pageNo, pageSize })
-    if (!res.success || !res.data) break
-    stacks.push(...res.data.list)
-    if (stacks.length >= res.data.total || res.data.list.length < pageSize) break
-  }
+  const [houseRes, stackRes] = await Promise.all([
+    warehouseApi.catalog(),
+    warehouseApi.stackCatalog(),
+  ])
+  const stacks = stackRes.success && Array.isArray(stackRes.data) ? stackRes.data : []
   const houses = houseRes.success && houseRes.data ? houseRes.data.list : []
   const houseName = new Map(houses.map((row) => [String(row.id), String(row.code || row.id)]))
   const groups = new Map<string, AreaNode>()

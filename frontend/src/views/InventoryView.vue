@@ -137,13 +137,13 @@ onMounted(async () => {
   applyRoute()
   const [who, materialRes, shipRes, houseRes, categoryRes] = await Promise.all([
     partnerApi.consignors(),
-    materialApi.list({ page: 1, pageSize: 500 }),
+    materialApi.catalog(),
     shippingApi.list(),
     warehouseApi.catalog(),
     dictApi.labels('wms_item_category'),
   ])
   if (who.success && who.data) consignors.value = who.data
-  if (materialRes.success && materialRes.data) materials.value = materialRes.data.list
+  if (materialRes.success && Array.isArray(materialRes.data)) materials.value = materialRes.data
   if (shipRes.success && shipRes.data?.list.length) {
     shipModes.value = shipRes.data.list.map((row) => String(row.name)).filter(Boolean)
   }

@@ -4,6 +4,7 @@ import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
 import { areaPoints, brief, cellsBody, hourText, idOf, nested, num, text } from '@/controller/shared/coerce'
 import { pageParams, range } from '@/controller/shared/page'
+import { clearDirectory } from '@/controller/shared/directory'
 import { dictOf, labelOf } from '@/controller/shared/dict'
 import { areaRows, findArea, findMerchant } from '@/controller/shared/catalog'
 import { locateInventory } from '@/controller/inventory'
@@ -137,6 +138,8 @@ async function createMovement(body: Row) {
   if (!built.ok) return fail(built.message)
   const result = await ruoyiSend('POST', '/wms/movementOrder', built.data)
   if (!result.ok) return fail(brief(result.message))
+  clearDirectory('inventories')
+  clearDirectory('inventoryDetails')
   return ok({ orderNo: built.orderNo, id: text((result.data as Row | undefined)?.id || result.data) }, '移库单已生成')
 }
 
@@ -172,6 +175,8 @@ async function createMovements(body: Row) {
     ...(sharedTo.date ? { endDate: sharedTo.date, endHour: sharedTo.hour } : {}),
   })
   if (!result.ok) return fail(brief(result.message))
+  clearDirectory('inventories')
+  clearDirectory('inventoryDetails')
   return ok({ count: list.length }, `已生成 ${list.length} 条移库单`)
 }
 

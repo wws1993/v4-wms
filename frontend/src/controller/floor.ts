@@ -2,9 +2,9 @@ import type { Route } from '@/api-map/types'
 import { defaultPlan, hostOf, stackCode } from '@/plan/model'
 import { loadFloorPlan, parseFloorPlan, saveFloorPlan } from '@/plan/storage'
 import type { FloorPlan } from '@/types'
-import { clearSessionList, loadSessionList, SESSION_LIST, type CacheRow } from '@/api/catalogCache'
 import { fail, ok } from '@/api/result'
-import { ruoyiGet, ruoyiSend, type RuoyiResult } from '@/api/ruoyi'
+import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
+import { clearDirectory, readDirectory } from '@/controller/shared/directory'
 import type { Row } from '@/controller/shared/types'
 import { text } from '@/controller/shared/coerce'
 import type { FloorPlanBo } from '@/typings/openapi'
@@ -16,20 +16,6 @@ let floorRead: Promise<{ success: boolean; message: string; plan: FloorPlan | nu
 
 /** 平面图 Bo 行（契约仅有 Bo） */
 type FloorRow = Partial<FloorPlanBo> & Row
-
-/** 从若依结果中提取平面图行列表。 */
-function floorRows(result: RuoyiResult<FloorRow>) {
-  const data = result.data
-  if (Array.isArray(data)) return data as Row[]
-  if (result.rows.length) return result.rows
-  if (!data || typeof data !== 'object') return []
-  const row = data as Row
-  if (Array.isArray(row.records)) return row.records as Row[]
-  if (Array.isArray(row.list)) return row.list as Row[]
-  if (Array.isArray(row.rows)) return row.rows as Row[]
-  if ('jsonData' in row) return [row]
-  return []
-}
 
 /** 解析存储的平面图 JSON（最多解包两层字符串）。 */
 function parseStoredPlan(value: unknown) {
@@ -53,18 +39,14 @@ function rememberFloor(plan: FloorPlan) {
 
 /** 拉取平面图目录（带会话缓存）。 */
 async function fetchFloorRows() {
-  const listed = await loadSessionList(SESSION_LIST.floorPlan, SESSION_LIST.floorPlan, async () => {
-    const result = await ruoyiGet<FloorRow>('/wms/floorPlan/listNoPage')
-    if (!result.ok) return { ok: false, rows: [] as CacheRow[] }
-    return { ok: true, rows: floorRows(result) as CacheRow[] }
-  })
+  const listed = await readDirectory<FloorRow>('floorPlans')
   if (!listed.ok) return { ok: false as const, message: '平面图列表读取失败', rows: [] as FloorRow[] }
-  return { ok: true as const, message: '', rows: listed.rows as FloorRow[] }
+  return { ok: true as const, message: '', rows: listed.rows }
 }
 
 /** 清除平面图会话缓存与进行中读取。 */
 function clearFloorCache() {
-  clearSessionList(SESSION_LIST.floorPlan)
+  clearDirectory('floorPlans')
   floorRead = null
 }
 

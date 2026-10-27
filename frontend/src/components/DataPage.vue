@@ -156,12 +156,12 @@ function uses(kind: FieldSchema['optionsFrom']) {
 
 async function loadLookups() {
   if (uses('stacks')) {
-    const res = await warehouseApi.stacks({ page: 1, pageSize: 200 })
-    stackRows.value = res.success && res.data ? res.data.list : []
+    const res = await warehouseApi.stackCatalog()
+    stackRows.value = res.success && Array.isArray(res.data) ? res.data : []
   }
   if (uses('materials')) {
-    const res = await materialApi.list({ page: 1, pageSize: 200 })
-    materialRows.value = res.success && res.data ? res.data.list : []
+    const res = await materialApi.catalog()
+    materialRows.value = res.success && Array.isArray(res.data) ? res.data : []
   }
   if (uses('shipping')) {
     const res = await shippingApi.list()

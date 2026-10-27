@@ -45,14 +45,8 @@ async function load() {
 }
 
 async function loadAllStacks() {
-  const rows: Record<string, unknown>[] = []
-  for (let page = 1; page <= 20; page += 1) {
-    const res = await warehouseApi.stacks({ page, pageSize: 200 })
-    if (!res.success || !res.data?.list.length) break
-    rows.push(...res.data.list)
-    if (rows.length >= Number(res.data.total || rows.length)) break
-  }
-  return rows
+  const res = await warehouseApi.stackCatalog()
+  return res.success && Array.isArray(res.data) ? res.data : []
 }
 
 function applyKeyword() {
@@ -75,24 +69,20 @@ onActivated(() => {
 onMounted(async () => {
   const [who, materialRes, stackRes] = await Promise.all([
     partnerApi.consignors(),
-    materialApi.list({ page: 1, pageSize: 100 }),
+    materialApi.catalog(),
     loadAllStacks(),
   ])
   if (who.success && who.data) consignors.value = who.data
-  if (materialRes.success && materialRes.data) materials.value = materialRes.data.list
+  if (materialRes.success && Array.isArray(materialRes.data)) materials.value = materialRes.data
   if (stackRes.length) stacks.value = stackRes
   const [statusRes, currencyRes, shipRes, oreRes] = await Promise.all([
     dictApi.labels('wms_receipt_status'),
-    dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 }),
+    dictApi.options('wms_currency_type'),
     dictApi.labels('wms_translate_type'),
     dictApi.labels('wms_mineral_type'),
   ])
   if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
-  if (currencyRes.success && currencyRes.data?.list.length) {
-    currencies.value = currencyRes.data.list
-      .filter((row) => String(row.status || '正常') !== '停用')
-      .map((row) => ({ label: String(row.label), value: String(row.value) }))
-  }
+  if (currencyRes.success && currencyRes.data?.length) currencies.value = currencyRes.data
   if (shipRes.success && shipRes.data?.length) shipModes.value = shipRes.data
   if (oreRes.success && oreRes.data?.length) oreTypes.value = oreRes.data
   applyKeyword()

@@ -10,9 +10,39 @@ import {
 } from './catalogCache'
 import { request } from './http'
 import type { AuthUser, FloorPlan, PageResult } from '@/types'
+import type { ProductionOrderBo } from '@/typings/openapi'
 
 type Q = Record<string, unknown>
 type B = Record<string, unknown>
+type ProductionFeedBody = B & {
+  batchNo: string
+  consignorId?: number | string
+  productionOrderDetails: Array<{
+    inventoryId: number | string
+    dryWeight: number
+    wetWeight?: number
+  }>
+}
+type ProductionProcessBody = B & Pick<ProductionOrderBo, 'processName' | 'startTime' | 'endTime'> & { remark?: string }
+type ProductionFinishBody = B & {
+  productionWeight: number
+  batchNo?: string
+  consignorId?: number | string
+  processName?: string
+  productionOrderAreas: Array<{
+    areaId: number | string
+    warehouseId?: number | string
+    dryWeight: number
+    areas: string
+  }>
+}
+
+function createProduction(body: ProductionFeedBody): ReturnType<typeof request>
+function createProduction(body: B): ReturnType<typeof request>
+function createProduction(body: B) {
+  return request('POST', '/production', { body })
+}
+
 type Page = ApiPage
 interface ApiPage extends PageResult<Record<string, unknown>> {}
 interface FilePayload { filename: string; content?: string; blob?: Blob }
@@ -55,6 +85,7 @@ export const settingsApi = {
 export const warehouseApi = {
   list: (params: Q) => request<Page>('GET', '/warehouses', { params }),
   catalog: () => request<Page>('GET', '/warehouses/catalog'),
+  stackCatalog: () => request<Record<string, unknown>[]>('GET', '/warehouses/stacks/catalog'),
   create: (body: B) => request('POST', '/warehouses', { body }),
   update: (id: string, body: B) => request('PUT', `/warehouses/${id}`, { body }),
   setStatus: (id: string, body: B) => request('PUT', `/warehouses/${id}/status`, { body }),
@@ -78,6 +109,7 @@ export const dictApi = {
   },
   data: (params: Q) => request<Page>('GET', '/dicts/data', { params }),
   labels: (type: string) => request<string[]>('GET', '/dicts/labels', { params: { type } }),
+  options: (type: string) => request<{ label: string; value: string }[]>('GET', '/dicts/options', { params: { type } }),
   createData: (body: B) => request('POST', '/dicts/data', { body }),
   updateData: (id: string, body: B) => request('PUT', `/dicts/data/${id}`, { body }),
   removeData: (id: string) => request('DELETE', `/dicts/data/${id}`),
@@ -158,8 +190,8 @@ async function importMaterials(file: File) {
   const rows = parseMaterialCsv(await file.text())
   if (!rows) return { success: false, data: null, message: '表头需要矿区、矿种类型、原产国、排序' }
   if (!rows.length) return { success: false, data: null, message: '没有可导入的物料' }
-  const listed = await materialApi.list({ page: 1, pageSize: 500 })
-  const existing = listed.success && listed.data ? listed.data.list : []
+  const listed = await materialApi.catalog()
+  const existing = listed.success && Array.isArray(listed.data) ? listed.data : []
   let saved = 0
   const errors: string[] = []
   for (const row of rows) {
@@ -193,6 +225,7 @@ async function importMaterials(file: File) {
 
 export const materialApi = {
   list: (params: Q) => request<Page>('GET', '/materials', { params }),
+  catalog: () => request<Record<string, unknown>[]>('GET', '/materials/catalog'),
   create: (body: B) => request('POST', '/materials', { body }),
   update: (id: string, body: B) => request('PUT', `/materials/${id}`, { body }),
   remove: (id: string) => request('DELETE', `/materials/${id}`),
@@ -213,6 +246,7 @@ export const shippingApi = {
 
 export const partnerApi = {
   list: (params: Q) => request<Page>('GET', '/partners', { params }),
+  catalog: (params: Q = {}) => request<Record<string, unknown>[]>('GET', '/partners/catalog', { params }),
   create: (body: B) => request('POST', '/partners', { body }),
   update: (id: string, body: B) => request('PUT', `/partners/${id}`, { body }),
   setStatus: (id: string, body: B) => request('PUT', `/partners/${id}/status`, { body }),
@@ -257,6 +291,7 @@ export const transferApi = {
 
 export const inventoryApi = {
   list: (params: Q) => request<Page>('GET', '/inventory', { params }),
+  catalog: (params: Q = {}) => request<Record<string, unknown>[]>('GET', '/inventory/catalog', { params }),
   home: () => request<CargoLot[]>('GET', '/inventory/home'),
   detail: (batchNo: string, params?: Q) => request<Record<string, unknown>>('GET', `/inventory/batches/${encodeURIComponent(batchNo)}`, { params }),
   itemDetail: (inventoryId: string, params?: Q) => request<Record<string, unknown>>('GET', `/inventory/items/${encodeURIComponent(inventoryId)}`, { params }),
@@ -272,9 +307,10 @@ export const stocktakeApi = {
 
 export const productionApi = {
   list: (params: Q) => request<Page>('GET', '/production', { params }),
-  create: (body: B) => request('POST', '/production', { body }),
-  process: (id: string, body: B) => request('POST', `/production/${encodeURIComponent(id)}/process`, { body }),
-  finish: (id: string, body: B) => request('POST', `/production/${encodeURIComponent(id)}/finish`, { body }),
+  catalog: (params: Q = {}) => request<Record<string, unknown>[]>('GET', '/production/catalog', { params }),
+  create: createProduction,
+  process: (id: string, body: ProductionProcessBody) => request('POST', `/production/${encodeURIComponent(id)}/process`, { body }),
+  finish: (id: string, body: ProductionFinishBody) => request('POST', `/production/${encodeURIComponent(id)}/finish`, { body }),
   detail: (id: string) => request<{ list: Record<string, unknown>[] }>('GET', `/production/${encodeURIComponent(id)}`),
   inspections: (params: Q) => request<Page>('GET', '/production/inspections', { params }),
   inspectLots: (params: Q = {}) => request<Page>('GET', '/production/inspections/lots', { params }),

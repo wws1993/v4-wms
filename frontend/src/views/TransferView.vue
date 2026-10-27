@@ -108,8 +108,8 @@ async function load() {
 }
 
 async function reloadLots() {
-  const lotRes = await inventoryApi.list({ page: 1, pageSize: 200, status: '在库' })
-  if (lotRes.success && lotRes.data) lots.value = lotRes.data.list
+  const lotRes = await inventoryApi.catalog({ status: '在库' })
+  if (lotRes.success && Array.isArray(lotRes.data)) lots.value = lotRes.data
 }
 
 function applyKeyword() {
@@ -136,10 +136,10 @@ onActivated(() => {
 onMounted(async () => {
   const [who, stackRes] = await Promise.all([
     partnerApi.consignors(),
-    warehouseApi.stacks({ page: 1, pageSize: 200 }),
+    warehouseApi.stackCatalog(),
   ])
   if (who.success && who.data) consignors.value = who.data
-  if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
+  if (stackRes.success && Array.isArray(stackRes.data)) stacks.value = stackRes.data
   await reloadLots()
   applyKeyword()
   load()
@@ -190,20 +190,18 @@ async function loadSourceLots(stackId = form.stackId) {
   if (!stackId && !keyword) return
   const token = ++lotToken
   lotsLoading.value = true
-  const res = await inventoryApi.list({
+  const res = await inventoryApi.catalog({
     stack: stackId || undefined,
     keyword: keyword || undefined,
     status: '在库',
-    page: 1,
-    pageSize: 200,
   })
   if (token !== lotToken) return
   lotsLoading.value = false
-  if (!res.success || !res.data) {
+  if (!res.success || !Array.isArray(res.data)) {
     ElMessage.error(res.message || '票货查询失败')
     return
   }
-  sourceLots.value = res.data.list
+  sourceLots.value = res.data
   if (!form.stackId && sourceLots.value.length) {
     const stackText = String(sourceLots.value[0].stackText || '')
     const hit = stacks.value.find((row) => String(row.code) === stackText || String(row.id) === stackText)

@@ -65,7 +65,7 @@ async function loadBoard(quiet = false) {
     floorApi.get(),
     dashboardApi.areas(),
     warehouseApi.catalog(),
-    warehouseApi.stacks({ page: 1, pageSize: 500 }),
+    warehouseApi.stackCatalog(),
     settingsApi.get(),
     inventoryApi.alerts({ page: 1, pageSize: 100 }),
   ])
@@ -73,7 +73,7 @@ async function loadBoard(quiet = false) {
   if (planRes.success && planRes.data) Object.assign(plan, planRes.data)
   else if (!quiet) planError.value = planRes.message || '平面图读取失败'
   if (houseRes.success && houseRes.data) houses.value = houseRes.data.list
-  if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
+  if (stackRes.success && Array.isArray(stackRes.data)) stacks.value = stackRes.data
   if (paramRes.success && paramRes.data) {
     const value = Number(paramRes.data.capacityWarn)
     if (value > 0) capacityWarn.value = value

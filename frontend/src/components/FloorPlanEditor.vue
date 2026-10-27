@@ -1172,12 +1172,12 @@ async function initStacks() {
   const warehouse = warehouseCodeOf(host.name)
   initBusy.value = true
   try {
-    const res = await warehouseApi.stacks({ page: 1, pageSize: 500, warehouse })
+    const res = await warehouseApi.stackCatalog()
     if (!res.success || !res.data) {
       ElMessage.error(res.message || '读取堆位失败')
       return
     }
-    const stacks = res.data.list.filter((row) => warehouseCodeOf(String(row.warehouse || '')) === warehouse)
+    const stacks = res.data.filter((row) => warehouseCodeOf(String(row.warehouse || '')) === warehouse)
     if (!stacks.length) {
       ElMessage.warning(`${warehouse}没有堆位档案，请先在堆位管理维护`)
       return
@@ -1270,25 +1270,19 @@ function sameHouse(stack: ArchiveRow, house: ArchiveRow) {
 }
 
 async function loadRows(kind: 'warehouses' | 'stacks') {
-  const pageSize = 200
-  const rows: ArchiveRow[] = []
+  const res = kind === 'warehouses'
+    ? await warehouseApi.catalog()
+    : await warehouseApi.stackCatalog()
+  if (!res.success || !res.data) return { ok: false as const, message: res.message || '读取失败', rows: [] as ArchiveRow[] }
+  const rows = Array.isArray(res.data) ? res.data : res.data.list
   const seen = new Set<string>()
-  for (let page = 1; page <= 20; page += 1) {
-    const res = kind === 'warehouses'
-      ? await warehouseApi.catalog()
-      : await warehouseApi.stacks({ page, pageSize })
-    if (!res.success || !res.data) return { ok: false as const, message: res.message || '读取失败', rows }
-    const fresh = (res.data.list as ArchiveRow[]).filter((row) => {
-      const id = textOf(row.id)
-      if (!id || seen.has(id)) return false
-      seen.add(id)
-      return true
-    })
-    if (!fresh.length) break
-    rows.push(...fresh)
-    if (rows.length >= Number(res.data.total || rows.length)) break
-  }
-  return { ok: true as const, message: '', rows }
+  const unique = (rows as ArchiveRow[]).filter((row) => {
+    const id = textOf(row.id)
+    if (!id || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+  return { ok: true as const, message: '', rows: unique }
 }
 
 function stackCodeOf(item: PlanItem, host: PlanItem) {

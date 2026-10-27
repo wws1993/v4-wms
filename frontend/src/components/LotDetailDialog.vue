@@ -398,7 +398,8 @@ async function loadPage(id: PageId) {
       inboundRows.value = inbound
       if (!inbound.some((row) => clean(row.customsNo || row.id) === inboundPick.value)) inboundPick.value = clean(inbound[0]?.customsNo || inbound[0]?.id)
     } else if (source === 'production') {
-      const listed = await rowsOf(productionApi.list({ page: 1, pageSize: 200 }))
+      const response = await productionApi.catalog()
+      const listed = response.success && Array.isArray(response.data) ? response.data : []
       if (mine !== listTicket) return
       productionRows.value = listed.filter((row) => {
         const lines = Array.isArray(row.feedLines) ? row.feedLines as Row[] : []

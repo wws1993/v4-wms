@@ -7,6 +7,7 @@ import { brief, idOf, nested, num, stamp, text } from '@/controller/shared/coerc
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { dictOf, labelOf } from '@/controller/shared/dict'
 import { areaCodeValue, areaNameValue, areaRows, findMerchant } from '@/controller/shared/catalog'
+import { readDirectory } from '@/controller/shared/directory'
 import type {
   ProductionOrderInspectionBo,
   ProductionOrderInspectionVo,
@@ -112,7 +113,7 @@ async function resolveProductionOrderId(body: Row) {
   if (direct) return direct
   const batchNo = text(body.prodBatch || body.batchNo).trim()
   if (!batchNo) return ''
-  const listed = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/listNoPage', { batchNo })
+  const listed = await readDirectory<ProductionOrderVo>('productionOrders', { batchNo })
   if (!listed.ok) return ''
   const hit = listed.rows.find((row) => {
     if (text(row.batchNo) !== batchNo) return false
@@ -156,11 +157,9 @@ async function saveInspection(id: string | undefined, body: Row) {
 async function listInspectLots(query: Query) {
   const areaNames = await dictOf('wms_area_identification')
   const areas = await areaRows()
-  const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/list', pageParams(query, {
-    type: 2,
-    batchNo: text(query.keyword || query.batchNo).trim() || undefined,
-  }))
+  const result = await readDirectory<ProductionOrderVo>('productionOrders', { type: 2 })
   if (!result.ok) return fail(brief(result.message))
+  const batch = text(query.keyword || query.batchNo).trim()
   const list = result.rows.map((row) => {
     const order = row as Row
     const area = orderArea(order)
@@ -189,7 +188,8 @@ async function listInspectLots(query: Query) {
     }
   }).filter((row) => {
     const label = text(row.areaLabel)
-    return label === '待检区' || label.includes('待检')
+    return (label === '待检区' || label.includes('待检'))
+      && (!batch || [row.prodBatch, row.orderNo, row.customsNos].some((value) => text(value).includes(batch)))
   })
   return ok({
     list,

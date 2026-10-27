@@ -1,5 +1,4 @@
 import type { Route } from '@/api-map/types'
-import { clearSessionList, loadSessionList, SESSION_LIST, type CacheRow } from '@/api/catalogCache'
 import { fail, ok, toCsv } from '@/api/result'
 import { isMediaPath, mediaUrl } from '@/api/media'
 import { ruoyiBlob, ruoyiGet, ruoyiSend } from '@/api/ruoyi'
@@ -8,6 +7,7 @@ import { brief, byOrderNum, idOf, num, orderNumOf, text } from '@/controller/sha
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { dictOf, dictValue, labelOf } from '@/controller/shared/dict'
 import { clearItemCache, itemCatalogRows, loadHouses } from '@/controller/shared/catalog'
+import { clearDirectory, readDirectory } from '@/controller/shared/directory'
 import { inventoryLot } from '@/controller/inventory'
 import type { InventoryVo, ItemBo, ItemVo, MineralSourceFilingBo, MineralSourceFilingVo } from '@/typings/openapi'
 
@@ -82,10 +82,17 @@ async function saveItem(id: string | undefined, body: Row) {
 
 /** 导出物料档案 CSV。 */
 async function exportItems(query: Query) {
-  const listed = await listItems({ ...query, page: 1, pageSize: 500 })
-  if (!listed.success || !listed.data) return fail(listed.message || '导出失败')
-  const data = listed.data as { list?: Row[] }
-  const rows = data.list || []
+  const keyword = text(query.keyword).trim()
+  const cargoType = text(query.cargoType).trim()
+  const itemCategory = cargoType ? await dictValue('wms_item_category', cargoType) : undefined
+  const [listed, categories] = await Promise.all([
+    readDirectory<ItemVo>('items', { mineralSource: keyword || undefined, itemCategory }),
+    dictOf('wms_item_category'),
+  ])
+  if (!listed.ok) return fail(listed.message || '导出失败')
+  const rows = byOrderNum(listed.rows.map((row) => itemRow(row, categories))
+    .filter((row) => !keyword || text(row.mineArea || row.name).includes(keyword))
+    .filter((row) => !cargoType || text(row.cargoType) === cargoType))
   const day = new Date().toISOString().slice(0, 10)
   return ok({
     filename: `物料档案_${day}.csv`,
@@ -207,16 +214,13 @@ async function filingRows(rows: FilingVo[]) {
 
 /** 清除矿源备案会话缓存。 */
 function clearFilingCache() {
-  clearSessionList(SESSION_LIST.filing)
+  clearDirectory('filings')
 }
 
 /** 拉取矿源备案目录（会话缓存）。 */
 async function filingCatalog() {
-  const listed = await loadSessionList(SESSION_LIST.filing, SESSION_LIST.filing, async () => {
-    const result = await ruoyiGet<MineralSourceFilingVo>('/wms/mineralSourceFiling/list', { pageNum: 1, pageSize: 500 })
-    return { ok: result.ok, rows: result.ok ? result.rows as CacheRow[] : [] }
-  })
-  return listed.rows as FilingVo[]
+  const listed = await readDirectory<FilingVo>('filings')
+  return listed.rows
 }
 
 /** 是否可用本地缓存目录代替远端筛选查询。 */
@@ -253,10 +257,9 @@ async function listFilings(query: Query) {
 async function listFilingsByItem(itemId: string) {
   const id = text(itemId).trim()
   if (!id) return fail('缺少物料 id')
-  const result = await ruoyiGet<MineralSourceFilingVo>('/wms/mineralSourceFiling/listNoPage', { itemId: idOf(id) ?? id })
-  if (!result.ok) return fail(result.message || '矿源备案查询失败')
-  const raw = Array.isArray(result.data) ? result.data as FilingVo[] : result.rows as FilingVo[]
-  return ok(await filingRows(raw))
+  const result = await readDirectory<FilingVo>('filings', { itemId: idOf(id) ?? id })
+  if (!result.ok) return fail('矿源备案查询失败')
+  return ok(await filingRows(result.rows))
 }
 
 /** 校验矿源备案附件类型（图片或 PDF）。 */
@@ -379,14 +382,13 @@ async function filingLots(code: string) {
   const recordNumber = text(code).trim()
   if (!recordNumber) return fail('缺少矿源备案号')
   const [result, categories, houses, translates] = await Promise.all([
-    ruoyiGet<InventoryVo>('/wms/inventory/listNoPage', { recordNumber }),
+    readDirectory<InventoryVo>('inventories', { recordNumber }),
     dictOf('wms_item_category'),
     loadHouses(),
     dictOf('wms_translate_type'),
   ])
-  if (!result.ok) return fail(brief(result.message) || '票货查询失败')
-  const raw = Array.isArray(result.data) ? result.data as InventoryVo[] : result.rows
-  const rows = raw.map((row) => inventoryLot(row as Row, categories, houses, translates))
+  if (!result.ok) return fail('票货查询失败')
+  const rows = result.rows.map((row) => inventoryLot(row as Row, categories, houses, translates))
   return ok(rows.map(filingLotRow))
 }
 
@@ -415,6 +417,14 @@ export { itemRow, uploadFilingFile }
 
 /** 物料与矿源备案路由表 */
 export const materialRoutes: Route[] = [
+  { method: 'GET', match: '/materials/catalog', handle: async () => {
+    const [listed, categories] = await Promise.all([
+      readDirectory<ItemVo>('items'),
+      dictOf('wms_item_category'),
+    ])
+    if (!listed.ok) return fail('物料目录读取失败')
+    return ok(byOrderNum(listed.rows.map((row) => itemRow(row, categories))))
+  } },
   { method: 'GET', match: '/materials/export', handle: ({ query }) => exportItems(query) },
   { method: 'GET', match: '/materials', handle: ({ query }) => listItems(query) },
   { method: 'POST', match: '/materials', handle: ({ body }) => saveItem(undefined, body) },

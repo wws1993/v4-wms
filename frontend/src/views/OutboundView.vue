@@ -91,24 +91,18 @@ onActivated(() => {
 })
 
 async function loadStacks() {
-  const listed: Record<string, unknown>[] = []
-  for (let pageNo = 1; pageNo <= 20; pageNo += 1) {
-    const res = await warehouseApi.stacks({ page: pageNo, pageSize: 200 })
-    if (!res.success || !res.data?.list.length) break
-    listed.push(...res.data.list)
-    if (listed.length >= Number(res.data.total || listed.length)) break
-  }
-  stacks.value = listed
+  const res = await warehouseApi.stackCatalog()
+  stacks.value = res.success && Array.isArray(res.data) ? res.data : []
 }
 
 onMounted(async () => {
   const [partnersRes, statusRes] = await Promise.all([
-    partnerApi.list({ role: '委托方', page: 1, pageSize: 500 }),
+    partnerApi.catalog({ role: '委托方' }),
     dictApi.labels('wms_shipment_status'),
     loadStacks(),
   ])
-  if (partnersRes.success && partnersRes.data) {
-    consignors.value = partnersRes.data.list.map((row) => ({
+  if (partnersRes.success && Array.isArray(partnersRes.data)) {
+    consignors.value = partnersRes.data.map((row) => ({
       id: String(row.id || ''),
       name: String(row.name || ''),
     })).filter((row) => row.id && row.name)
@@ -117,12 +111,8 @@ onMounted(async () => {
     ElMessage.error(partnersRes.message || '委托方列表加载失败')
   }
   if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
-  const currencyRes = await dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 })
-  if (currencyRes.success && currencyRes.data?.list.length) {
-    currencies.value = currencyRes.data.list
-      .filter((row) => String(row.status || '正常') !== '停用')
-      .map((row) => ({ label: String(row.label), value: String(row.value) }))
-  }
+  const currencyRes = await dictApi.options('wms_currency_type')
+  if (currencyRes.success && Array.isArray(currencyRes.data)) currencies.value = currencyRes.data
   applyKeyword()
   load()
 })

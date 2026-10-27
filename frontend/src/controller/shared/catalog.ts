@@ -1,9 +1,8 @@
-import { clearSessionList, loadSessionList, SESSION_LIST, type CacheRow } from '@/api/catalogCache'
 import { ruoyiGet } from '@/api/ruoyi'
 import { warehouseCodeOf } from '@/plan/model'
 import type { AccountBookVo, AreaVo, ItemVo, MerchantVo, WarehouseVo } from '@/typings/openapi'
 import { flat, idOf, nested, text } from './coerce'
-import { labelOf } from './dict'
+import { clearDirectory, directoryForPath, readDirectory, translateLabel } from './directory'
 import type { Query, Row } from './types'
 
 /**
@@ -11,33 +10,23 @@ import type { Query, Row } from './types'
  * @typeParam TRow OpenAPI Vo 行类型
  */
 export async function catalog<TRow = Row>(path: string) {
-  const result = await ruoyiGet<TRow>(path)
-  if (!result.ok) return { ok: false as const, message: result.message, rows: [] as TRow[] }
-  const rows = Array.isArray(result.data) ? result.data as TRow[] : result.rows
-  return { ok: true as const, message: result.message, rows }
+  const name = directoryForPath(path)
+  if (!name) return { ok: false as const, message: `未注册的无分页目录接口：${path}`, rows: [] as TRow[] }
+  const result = await readDirectory<TRow>(name)
+  return result.ok
+    ? { ok: true as const, message: '', rows: result.rows }
+    : { ok: false as const, message: `目录读取失败：${path}`, rows: [] as TRow[] }
 }
 
 /** 清除仓库目录会话缓存。 */
 export function clearWarehouseCache() {
-  clearSessionList(SESSION_LIST.warehouse)
+  clearDirectory('warehouses')
 }
 
-/** 拉取仓库列表（listNoPage，失败则分页兜底）。 */
+/** 拉取并缓存全部仓库。 */
 export async function warehouseRows() {
-  const listed = await loadSessionList(SESSION_LIST.warehouse, SESSION_LIST.warehouse, async () => {
-    const cataloged = await catalog<WarehouseVo>('/wms/warehouse/listNoPage')
-    let rows = cataloged.rows as CacheRow[]
-    let loaded = cataloged.ok && rows.length > 0
-    if (!rows.length) {
-      const page = await ruoyiGet<WarehouseVo>('/wms/warehouse/list', { pageNum: 1, pageSize: 200 })
-      if (page.ok) {
-        rows = page.rows as CacheRow[]
-        loaded = true
-      }
-    }
-    return { ok: loaded, rows }
-  })
-  return listed.rows as WarehouseVo[]
+  const listed = await readDirectory<WarehouseVo>('warehouses')
+  return listed.rows
 }
 
 /** 按编号/名称/id 查找仓库主键。 */
@@ -84,40 +73,19 @@ export function areaNameValue(row: AreaVo | Row) {
 
 /** 清除堆位目录会话缓存。 */
 export function clearAreaCache() {
-  clearSessionList(SESSION_LIST.area)
+  clearDirectory('areas')
 }
 
-/** 拉取全量堆位（listNoPage，失败则分页扫）。 */
+/** 拉取并缓存全部堆位。 */
 export async function areaRows() {
-  const listed = await loadSessionList(SESSION_LIST.area, SESSION_LIST.area, async () => {
-    const rows: CacheRow[] = []
-    const seen = new Set<string>()
-    const push = (list: AreaVo[]) => {
-      for (const row of list) {
-        const key = flat(row.id) || areaCodeValue(row) || areaNameValue(row)
-        if (!key || seen.has(key)) continue
-        seen.add(key)
-        rows.push(row as CacheRow)
-      }
-    }
-    const list = await catalog<AreaVo>('/wms/area/listNoPage')
-    let loaded = list.ok
-    if (list.ok) push(list.rows)
-    if (!rows.length) {
-      let paged = 0
-      for (let page = 1; page <= 20; page += 1) {
-        const result = await ruoyiGet<AreaVo>('/wms/area/list', { pageNum: page, pageSize: 200 })
-        if (!result.ok) break
-        loaded = true
-        if (!result.rows.length) break
-        push(result.rows)
-        paged += result.rows.length
-        if (result.rows.length < 200 || (result.total > 0 && paged >= result.total)) break
-      }
-    }
-    return { ok: loaded, rows }
+  const listed = await readDirectory<AreaVo>('areas')
+  const seen = new Set<string>()
+  return listed.rows.filter((row) => {
+    const key = flat(row.id) || areaCodeValue(row) || areaNameValue(row)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
   })
-  return listed.rows as AreaVo[]
 }
 
 /** 规范化堆位文案便于比较。 */
@@ -207,16 +175,12 @@ export async function findArea(code: unknown) {
 
 /** 清除物料目录会话缓存。 */
 export function clearItemCache() {
-  clearSessionList(SESSION_LIST.item)
+  clearDirectory('items')
 }
 
 /** 拉取物料目录（带缓存）。 */
 export async function itemCatalog() {
-  const listed = await loadSessionList(SESSION_LIST.item, SESSION_LIST.item, async () => {
-    const result = await catalog<ItemVo>('/wms/item/listNoPage')
-    return { ok: result.ok, rows: result.ok ? result.rows as CacheRow[] : [] }
-  })
-  return { ok: listed.ok, rows: listed.rows as ItemVo[] }
+  return readDirectory<ItemVo>('items')
 }
 
 /** 物料目录行列表。 */
@@ -239,16 +203,12 @@ export async function findItem(value: unknown) {
 
 /** 拉取往来单位目录（带缓存）。 */
 export async function merchantRows() {
-  const listed = await loadSessionList(SESSION_LIST.merchant, SESSION_LIST.merchant, async () => {
-    const result = await catalog<MerchantVo>('/wms/merchant/listNoPage')
-    return { ok: result.ok, rows: result.rows as CacheRow[] }
-  })
-  return { ok: listed.ok, rows: listed.rows as MerchantVo[] }
+  return readDirectory<MerchantVo>('merchants')
 }
 
 /** 清除往来单位目录会话缓存。 */
 export function clearMerchantCache() {
-  clearSessionList(SESSION_LIST.merchant)
+  clearDirectory('merchants')
 }
 
 /** 按名称/编码/id 查找往来单位。 */
@@ -260,7 +220,7 @@ export async function findMerchant(name: unknown) {
 
 /** 按编号/名称/id 查找账册。 */
 export async function findBook(name: unknown) {
-  const list = await catalog<AccountBookVo>('/wms/accountBook/listNoPage')
+  const list = await readDirectory<AccountBookVo>('accountBooks')
   const raw = text(name)
   return list.rows.find((row) => text(row.accountCode) === raw || text(row.accountName) === raw || text(row.id) === raw)
 }
@@ -274,7 +234,7 @@ export async function loadHouses() {
 export function areaLabelText(value: unknown, areaNames: { label: string; value: string }[] = []) {
   const raw = text(value)
   if (!raw) return ''
-  return labelOf(areaNames, raw) || raw
+  return translateLabel(areaNames, raw) || raw
 }
 
 /** 行上的片区标识是否匹配目标标签。 */

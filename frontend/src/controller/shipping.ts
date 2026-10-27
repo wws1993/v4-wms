@@ -1,14 +1,14 @@
 import type { Route } from '@/api-map/types'
 import { fail, ok } from '@/api/result'
 import { text } from '@/controller/shared/coerce'
-import { catalog } from '@/controller/shared/catalog'
+import { readDirectory } from '@/controller/shared/directory'
 import type { ShippingMethodVo } from '@/typings/openapi'
 
 /** 运输方式路由表 */
 export const shippingRoutes: Route[] = [
   { method: 'GET', match: '/shipping-methods', handle: async () => {
-    const list = await catalog<ShippingMethodVo>('/wms/shippingMethod/listNoPage')
-    if (!list.ok) return fail(list.message)
+    const list = await readDirectory<ShippingMethodVo>('shippingMethods')
+    if (!list.ok) return fail('运输方式列表读取失败')
     const rows = list.rows.map((row) => ({
       id: text(row.id),
       name: text(row.shippingMethodName),

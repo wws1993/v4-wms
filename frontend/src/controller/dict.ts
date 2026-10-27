@@ -4,7 +4,7 @@ import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
 import { dictStatusCode, dictStatusLabel, idOf, num, text } from '@/controller/shared/coerce'
 import { pageOf, pageParams } from '@/controller/shared/page'
-import { clearDictCache, dictLabels } from '@/controller/shared/dict'
+import { clearDictCache, dictLabels, dictOptions } from '@/controller/shared/dict'
 import type { SysDictDataBo, SysDictDataVo, SysDictTypeBo, SysDictTypeVo } from '@/typings/openapi'
 
 /** 将字典类型 Vo 映射为列表行。 */
@@ -95,6 +95,7 @@ export const dictRoutes: Route[] = [
     return result.ok ? ok(true, '字典缓存已刷新') : fail(result.message)
   } },
   { method: 'GET', match: '/dicts/labels', handle: async ({ query }) => ok(await dictLabels(text(query.type))) },
+  { method: 'GET', match: '/dicts/options', handle: async ({ query }) => ok(await dictOptions(text(query.type))) },
   { method: 'PUT', match: /^\/dicts\/types\/([^/]+)$/, handle: ({ params, body }) => saveDictType(params[0], body) },
   { method: 'DELETE', match: /^\/dicts\/types\/([^/]+)$/, handle: async ({ params }) => {
     const result = await ruoyiSend('DELETE', `/system/dict/type/${params[0]}`)

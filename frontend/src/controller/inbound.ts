@@ -7,6 +7,7 @@ import {
   idOf, nested, num, text,
 } from '@/controller/shared/coerce'
 import { pageParams, range } from '@/controller/shared/page'
+import { clearDirectory } from '@/controller/shared/directory'
 import { codeFromDict, currencyMark, currencyValue, dictOf, labelOf } from '@/controller/shared/dict'
 import {
   areaCodeValue, areaNameValue, areaRows, findArea, findBook, findItem, findMerchant, itemCatalog,
@@ -352,6 +353,11 @@ async function createReceipt(body: Row) {
   }
   if (blWeight != null) payload.ladingWeight = blWeight
   const result = await ruoyiSend('POST', '/wms/receiptOrder', payload)
+  if (result.ok) {
+    clearDirectory('receiptOrders')
+    clearDirectory('inventories')
+    clearDirectory('inventoryDetails')
+  }
   return result.ok ? ok(result.data, '入库预约已创建') : fail(result.message)
 }
 
@@ -462,6 +468,11 @@ async function receiveReceipt(id: string, body: Row) {
   if (elementsOrcId != null) payload.elementsOrcId = elementsOrcId
   if (elements.length) payload.elements = elements
   const result = await ruoyiSend('PUT', '/wms/receiptOrder', payload)
+  if (result.ok) {
+    clearDirectory('receiptOrders')
+    clearDirectory('inventories')
+    clearDirectory('inventoryDetails')
+  }
   return result.ok ? ok(true, '到货收货已提交') : fail(result.message)
 }
 

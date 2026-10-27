@@ -7,6 +7,7 @@ import { flagLabel, flagStatus, idOf, text } from '@/controller/shared/coerce'
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { codeOf, merchantTypes, labelOf } from '@/controller/shared/dict'
 import { clearMerchantCache, merchantRows } from '@/controller/shared/catalog'
+import { readDirectory } from '@/controller/shared/directory'
 import { statusReply } from '@/controller/shared/reply'
 import { SOURCE_LABEL } from '@/controller/shared/constants'
 import { uploadFilingFile } from '@/controller/material'
@@ -71,6 +72,20 @@ async function saveMerchant(id: string | undefined, body: Row) {
 
 /** 往来单位路由表 */
 export const partnerRoutes: Route[] = [
+  { method: 'GET', match: '/partners/catalog', handle: async ({ query }) => {
+    const [listed, types] = await Promise.all([
+      readDirectory<MerchantVo>('merchants'),
+      merchantTypes(),
+    ])
+    if (!listed.ok) return fail('往来单位读取失败')
+    const role = text(query.role).trim()
+    const roleCode = role ? codeOf(types, role) : undefined
+    const keyword = text(query.keyword).trim()
+    return ok(listed.rows
+      .filter((row) => roleCode == null || text(row.merchantType) === text(roleCode))
+      .filter((row) => !keyword || text(row.merchantName).includes(keyword) || text(row.merchantCode).includes(keyword))
+      .map((row) => merchantRow(row as MerchantRow, types)))
+  } },
   { method: 'GET', match: '/partners/consignors', handle: async () => {
     const types = await merchantTypes()
     const consignor = types.find((item) => item.label === '委托方')

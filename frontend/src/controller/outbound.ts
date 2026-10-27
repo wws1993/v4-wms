@@ -4,6 +4,7 @@ import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
 import { brief, idOf, nested, num, stamp, text } from '@/controller/shared/coerce'
 import { pageParams, range } from '@/controller/shared/page'
+import { clearDirectory } from '@/controller/shared/directory'
 import { codeFromDict, dictOf, labelOf } from '@/controller/shared/dict'
 import {
   findMerchant, merchantRows,
@@ -133,6 +134,10 @@ async function getShipment(id: string) {
 /** 创建出库单。 */
 async function createShipment(body: Row) {
   const result = await ruoyiSend('POST', '/wms/shipmentOrder', body)
+  if (result.ok) {
+    clearDirectory('inventories')
+    clearDirectory('inventoryDetails')
+  }
   return result.ok ? ok(result.data, '出库单已创建') : fail(brief(result.message))
 }
 
@@ -162,6 +167,10 @@ async function updateShipment(id: string, body: Row) {
     remark: text(body.remark ?? current.remark),
   }
   const result = await ruoyiSend('PUT', '/wms/shipmentOrder', payload)
+  if (result.ok) {
+    clearDirectory('inventories')
+    clearDirectory('inventoryDetails')
+  }
   return result.ok ? ok(true, '出库单已更新') : fail(brief(result.message))
 }
 
@@ -191,6 +200,10 @@ async function completeShipment(id: string) {
     remark: current.remark,
   }
   const result = await ruoyiSend('PUT', '/wms/shipmentOrder/shipment', payload)
+  if (result.ok) {
+    clearDirectory('inventories')
+    clearDirectory('inventoryDetails')
+  }
   return result.ok ? ok(true, '出库已完成') : fail(brief(result.message))
 }
 

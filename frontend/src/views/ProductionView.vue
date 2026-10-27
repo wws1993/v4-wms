@@ -35,6 +35,7 @@ const tab = usePageTab('feed', ['feed', 'inspect'])
 const filters = reactive({ consignor: '', from: '', to: '', keyword: '' })
 const consignors = ref<string[]>([])
 const docs = ref<Doc[]>([])
+const productionTotal = ref(0)
 const stacks = ref<Doc[]>([])
 const feedLots = ref<Doc[]>([])
 const feedTotal = ref(0)
@@ -232,15 +233,6 @@ const opsRows = computed(() => flatOps.value.filter((row) => {
   if (filters.to && day > filters.to) return false
   return true
 }))
-const opsPageRows = computed(() => {
-  const start = (opsPage.value - 1) * opsPageSize.value
-  return opsRows.value.slice(start, start + opsPageSize.value)
-})
-
-watch(opsRows, (rows) => {
-  const pages = Math.max(1, Math.ceil(rows.length / opsPageSize.value) || 1)
-  if (opsPage.value > pages) opsPage.value = pages
-})
 
 watch(() => [filters.keyword, filters.consignor, filters.from, filters.to], () => {
   opsPage.value = 1
@@ -256,6 +248,7 @@ const finishAllocatedDry = computed(() => finish.picks.reduce((sum, pick) => {
   const weight = Number(pick.dryWeight)
   return sum + (Number.isFinite(weight) ? weight : 0)
 }, 0))
+let productionLoadSequence = 0
 
 const ledgerRows = computed(() => {
   const map = new Map<string, { date: string; consume: number; output: number; orders: Set<string> }>()
@@ -305,45 +298,25 @@ function orderLabel(row: Doc) {
   return `${row.orderNo || row.id} · ${row.prodBatch || ''}`
 }
 
-function listKind() {
-  return tab.value === 'finish' ? 2 : 1
-}
-
-async function load(kind = listKind()) {
+async function load() {
+  const sequence = ++productionLoadSequence
   loading.value = true
-  const pageSize = 200
-  const incoming: Doc[] = []
-  const seen = new Set<string>()
-  let page = 1
-  while (page <= 50) {
-    const res = await productionApi.list({
-      page,
-      pageSize,
-      type: kind,
-      consignor: filters.consignor || undefined,
-      from: filters.from || undefined,
-      to: filters.to || undefined,
-    })
-    if (!res.success || !res.data) {
-      loading.value = false
-      if (!res.success) ElMessage.error(res.message)
-      return false
-    }
-    const list = res.data.list
-    let added = 0
-    for (const row of list) {
-      const id = String(row.id || `${row.orderNo}|${row.prodBatch}|${row.docType}|${row.time}`)
-      if (seen.has(id)) continue
-      seen.add(id)
-      incoming.push(row)
-      added += 1
-    }
-    const total = Number(res.data.total || 0)
-    if (!added || (total > 0 && incoming.length >= total) || list.length < pageSize) break
-    page += 1
-  }
+  const res = await productionApi.list({
+    page: opsPage.value,
+    pageSize: opsPageSize.value,
+    batchNo: filters.keyword.trim() || undefined,
+    consignor: filters.consignor || undefined,
+    from: filters.from || undefined,
+    to: filters.to || undefined,
+  })
+  if (sequence !== productionLoadSequence) return false
   loading.value = false
-  docs.value = incoming
+  if (!res.success || !res.data) {
+    if (!res.success) ElMessage.error(res.message)
+    return false
+  }
+  docs.value = res.data.list
+  productionTotal.value = Number(res.data.total || 0)
   return true
 }
 
@@ -365,13 +338,8 @@ watch(tab, (name, previous) => {
     loadInspections()
     return
   }
-  if (previous === 'inspect') {
-    load(name === 'finish' ? 2 : 1)
-    return
-  }
-  const next = name === 'finish' ? 2 : 1
-  const prev = previous === 'finish' ? 2 : 1
-  if (next !== prev) load(next)
+  opsPage.value = 1
+  load()
 })
 
 watch(() => feed.prodBatch, (batch) => {
@@ -403,11 +371,11 @@ onActivated(() => {
 onMounted(async () => {
   const [who, stackRes, categoryRes] = await Promise.all([
     partnerApi.consignors(),
-    warehouseApi.stacks({ page: 1, pageSize: 200 }),
+    warehouseApi.stackCatalog(),
     dictApi.labels('wms_item_category'),
   ])
   if (who.success && Array.isArray(who.data) && who.data.length) consignors.value = who.data
-  if (stackRes.success && stackRes.data) stacks.value = stackRes.data.list
+  if (stackRes.success && Array.isArray(stackRes.data)) stacks.value = stackRes.data
   if (categoryRes.success && Array.isArray(categoryRes.data)) {
     feedCargoTypes.value = categoryRes.data.filter((item) => item !== '混成品' && item !== '成品')
   }
@@ -467,7 +435,6 @@ async function loadInspectLots() {
   const res = await productionApi.inspectLots({
     keyword: inspectLotKeyword.value.trim() || undefined,
     page: 1,
-    pageSize: 200,
   })
   inspectLotsLoading.value = false
   if (!res.success || !res.data) {
@@ -575,10 +542,21 @@ async function search() {
   const done = await load()
   if (!done) return
   if (tab.value === 'finish') {
-    ElMessage.success(finishRows.value.length ? `已查询，共 ${finishRows.value.length} 条` : '该条件下暂无完工记录')
+    ElMessage.success(productionTotal.value ? `已查询，共 ${productionTotal.value} 条` : '该条件下暂无完工记录')
     return
   }
-  ElMessage.success(opsRows.value.length ? `已查询，共 ${opsRows.value.length} 条` : '该条件下暂无投料或加工记录')
+  ElMessage.success(productionTotal.value ? `已查询，共 ${productionTotal.value} 条` : '该条件下暂无投料或加工记录')
+}
+
+function changeProductionPage(page: number) {
+  opsPage.value = page
+  load()
+}
+
+function changeProductionPageSize(pageSize: number) {
+  opsPageSize.value = pageSize
+  opsPage.value = 1
+  load()
 }
 
 type Party = { tokens: string[]; names: string[] }
@@ -796,7 +774,15 @@ async function saveFeed() {
     ElMessage.warning('同一生产批次不能添加不同委托方的原料')
     return
   }
-  const res = await productionApi.create({ prodBatch: feed.prodBatch, consignorId: consignorIds[0] || '', feedLines: lines })
+  const res = await productionApi.create({
+    batchNo: feed.prodBatch,
+    consignorId: consignorIds[0] || '',
+    productionOrderDetails: lines.map((line) => ({
+      inventoryId: line.inventoryId,
+      dryWeight: line.feedDry,
+      wetWeight: line.wet,
+    })),
+  })
   if (!res.success) {
     ElMessage.error(res.message)
     return
@@ -839,9 +825,9 @@ async function saveProcess() {
     return
   }
   const res = await productionApi.process(process.id, {
-    process: process.process,
-    time: process.from,
-    timeTo: process.to,
+    processName: process.process,
+    startTime: process.from,
+    endTime: process.to,
     remark: process.remark,
   })
   if (!res.success) {
@@ -913,16 +899,16 @@ async function saveFinish() {
   }
   const doc = docs.value.find((row) => String(row.id) === finish.id)
   const res = await productionApi.finish(finish.id, {
-    outputDry,
+    productionWeight: outputDry,
     productionOrderAreas: picks.map((pick) => ({
       areaId: pick.areaId,
       warehouseId: pick.warehouseId,
       areas: pick.cells,
       dryWeight: Number(pick.dryWeight),
     })),
-    prodBatch: finish.prodBatch || doc?.prodBatch,
-    consignorId: doc?.consignorId,
-    process: doc?.process,
+    batchNo: String(finish.prodBatch || doc?.prodBatch || ''),
+    consignorId: doc?.consignorId == null ? undefined : String(doc.consignorId),
+    processName: doc?.process == null ? undefined : String(doc.process),
   })
   if (!res.success) {
     ElMessage.error(res.message)
@@ -996,7 +982,7 @@ function openLedger(date: string) {
           </el-form-item>
           <el-form-item><el-button type="primary" @click="search">查询</el-button></el-form-item>
         </el-form>
-        <el-table v-loading="loading" :data="opsPageRows" border stripe>
+        <el-table v-loading="loading" :data="opsRows" border stripe>
           <el-table-column label="类型" width="100">
             <template #default="{ row }"><el-tag :type="row.type === '加工过程' ? 'primary' : 'success'" effect="plain">{{ row.type }}</el-tag></template>
           </el-table-column>
@@ -1027,11 +1013,12 @@ function openLedger(date: string) {
           <el-pagination
             v-model:current-page="opsPage"
             v-model:page-size="opsPageSize"
-            :total="opsRows.length"
+            :total="productionTotal"
             :page-sizes="[10, 20, 50]"
             layout="total, sizes, prev, pager, next"
             background
-            @size-change="opsPage = 1"
+            @current-change="changeProductionPage"
+            @size-change="changeProductionPageSize"
           />
         </div>
       </el-tab-pane>
