@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { auditApi, authApi, dashboardApi, settingsApi, warningApi } from '@/api'
+import { auditApi, authApi, dashboardApi, productionApi, settingsApi, warningApi } from '@/api'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import PulseDot from '@/components/PulseDot.vue'
@@ -12,9 +13,20 @@ interface LogItem { type: string; text: string; time: string }
 interface UsageItem { name: string; rate: number }
 interface TrendItem { day: string; dry: number }
 interface WarnItem { title: string; detail: string; time: string; link: string; tone?: string }
+interface ProductionPlan {
+  id: string
+  batchNo: string
+  total: number
+  date: string
+  eta: string
+  startAt: number | null
+  endAt: number | null
+}
 
 const DEFAULT_REFRESH_MINUTES = 3
 const FLOW_LIMIT = 30
+const PRODUCTION_ROTATE_MS = 10 * 1000
+const PRODUCTION_TICK_MS = 1000
 
 function pollMs(minutes: unknown) {
   const value = Number(minutes)
@@ -101,7 +113,18 @@ let yardBooted = false
 const barRef = ref<HTMLElement>()
 const lineRef = ref<HTMLElement>()
 const kpi = ref({ rawWet: 0, rawDry: 0, fgWet: 0, fgDry: 0, inboundToday: 0, outboundToday: 0, pendingQc: 0, alerts: 0 })
-const production = ref({ batchNo: '', total: 0, date: '', eta: '' })
+const production = ref<ProductionPlan & { accumulated: number }>({
+  id: '',
+  batchNo: '',
+  total: 0,
+  date: '',
+  eta: '',
+  startAt: null,
+  endAt: null,
+  accumulated: 0,
+})
+const productionPlans = ref<ProductionPlan[]>([])
+const productionIndex = ref(0)
 const logs = ref<LogItem[]>([])
 const usage = ref<UsageItem[]>([])
 const trend = ref<TrendItem[]>([])
@@ -114,6 +137,8 @@ let lineChart: echarts.ECharts | null = null
 let feedTimer = 0
 let pollIntervalMs = pollMs(DEFAULT_REFRESH_MINUTES)
 let scrollObserver: ResizeObserver | null = null
+let productionRotationTimer = 0
+let productionTickTimer = 0
 
 function stampRefreshed() {
   const date = new Date()
@@ -142,6 +167,68 @@ const tagColor: Record<string, string> = {
 
 let observer: ResizeObserver | null = null
 const num = (value: number) => value.toLocaleString('zh-CN')
+const weightText = (value: number) => value.toLocaleString('zh-CN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+function dateTimeMs(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return null
+  const timestamp = Date.parse(text.includes('T') ? text : text.replace(' ', 'T'))
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+function mapProductionPlan(row: Record<string, unknown>): ProductionPlan {
+  const start = String(row.time || '')
+  const end = String(row.timeTo || '')
+  return {
+    id: String(row.id || ''),
+    batchNo: String(row.prodBatch || row.batchNo || ''),
+    total: Math.max(0, Number(row.inputDry) || 0),
+    date: start ? start.slice(0, 10) : '',
+    eta: end ? end.slice(0, 10) : '',
+    startAt: dateTimeMs(start),
+    endAt: dateTimeMs(end),
+  }
+}
+
+function selectProductionPlan(index: number) {
+  const plan = productionPlans.value[index]
+  productionIndex.value = index
+  production.value = plan
+    ? { ...plan, accumulated: 0 }
+    : { id: '', batchNo: '', total: 0, date: '', eta: '', startAt: null, endAt: null, accumulated: 0 }
+  updateProductionProgress()
+}
+
+function advanceProductionPlan() {
+  if (productionPlans.value.length < 2) return
+  selectProductionPlan((productionIndex.value + 1) % productionPlans.value.length)
+}
+
+function updateProductionProgress() {
+  const { total, startAt, endAt } = production.value
+  if (!total || startAt == null || endAt == null || endAt <= startAt) {
+    production.value.accumulated = 0
+    return
+  }
+  const durationMs = endAt - startAt
+  const elapsedMs = Math.max(0, Date.now() - startAt)
+  production.value.accumulated = Math.min(total, total * elapsedMs / durationMs)
+}
+
+async function loadProductionPlans() {
+  const res = await productionApi.list({ page: 1, pageSize: 10, type: 1 })
+  if (!res.success || !res.data) {
+    ElMessage.error(res.message || '生产计划加载失败')
+    return false
+  }
+  productionPlans.value = res.data.list.map((row) => mapProductionPlan(row))
+  selectProductionPlan(0)
+  return true
+}
+
 function resizeCharts() {
   if ((boardRef.value?.clientWidth || 0) < 2) return
   barChart?.resize()
@@ -349,6 +436,7 @@ async function refreshDashboard() {
     dashboardApi.weight(),
     dashboardApi.receiptDaily(),
     settingsApi.get(),
+    loadProductionPlans(),
     loadWarnings(),
     loadFlowLogs(),
     yardRef.value?.reload?.(quietYard),
@@ -375,6 +463,8 @@ async function refreshDashboard() {
 
 onMounted(async () => {
   await refreshDashboard()
+  productionRotationTimer = window.setInterval(advanceProductionPlan, PRODUCTION_ROTATE_MS)
+  productionTickTimer = window.setInterval(updateProductionProgress, PRODUCTION_TICK_MS)
   scrollObserver = new ResizeObserver(updateFeedOverflow)
   observeFeedSizes()
   observer = new ResizeObserver(() => resizeCharts())
@@ -391,6 +481,8 @@ onActivated(() => {
 
 onBeforeUnmount(() => {
   window.clearInterval(feedTimer)
+  window.clearInterval(productionRotationTimer)
+  window.clearInterval(productionTickTimer)
   observer?.disconnect()
   scrollObserver?.disconnect()
   barChart?.dispose()
@@ -439,10 +531,14 @@ onBeforeUnmount(() => {
       <section class="hero">
         <video src="/factory.mp4" autoplay muted loop playsinline />
         <div class="hero-meta">
-          <span>生产批次：<b>{{ production.batchNo }}</b></span>
-          <span>总生产量：<b>{{ production.total }}</b></span>
-          <span>生产日期：<b>{{ production.date }}</b></span>
-          <span>预计完工：<b>{{ production.eta }}</b></span>
+          <span>生产批次：<b>{{ production.batchNo || '—' }}</b></span>
+          <span>总生产量：<b>{{ weightText(production.total) }}</b> 吨</span>
+          <span>生产日期：<b>{{ production.date || '—' }}</b></span>
+          <span>预计完工：<b>{{ production.eta || '—' }}</b></span>
+          <span class="production-progress">
+            累计生产重量 / 投料总重：
+            <b>{{ weightText(production.accumulated) }} / {{ weightText(production.total) }}</b> 吨
+          </span>
         </div>
       </section>
 
@@ -680,18 +776,30 @@ onBeforeUnmount(() => {
 .hero-meta {
   position: absolute;
   left: 0; right: 0; bottom: 0;
-  height: 78px;
+  height: 104px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: 1.15fr .85fr;
   align-content: center;
   column-gap: 8px;
-  row-gap: 6px;
+  row-gap: 5px;
   padding: 8px 16px 10px;
   background: linear-gradient(transparent, rgba(6, 12, 20, .55) 30%, rgba(6, 12, 20, .2));
   font-size: 13px;
   color: rgba(255,255,255,.9);
 }
 .hero-meta b { font-weight: 600; }
+.hero-meta .production-progress {
+  grid-column: 1 / -1;
+  padding-top: 5px;
+  border-top: 1px solid rgba(231, 201, 138, .2);
+  color: rgba(255, 255, 255, .75);
+}
+.hero-meta .production-progress b {
+  color: #e7a05a;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
 
 .minis {
   position: relative;

@@ -8,10 +8,12 @@ import type { Query } from './types'
  * 将前端分页 query 转为若依 pageNum/pageSize，并合并业务筛选项。
  */
 export function pageParams(query: Query, extra: Query = {}): PageQuery & Query {
-  const params: PageQuery & Query = { pageNum: Number(query.page || 1), pageSize: Number(query.pageSize || 10), ...extra }
-  Object.keys(params).forEach((key) => {
-    if (params[key] === '' || params[key] == null) delete params[key]
-  })
+  const params: PageQuery & Query = { pageNum: Number(query.page || 1), pageSize: Number(query.pageSize || 10), ...query, ...extra }
+
+  for (const key in params) {
+    if (params[key] === '' || params[key] === null) delete params[key]
+  }
+
   return params
 }
 

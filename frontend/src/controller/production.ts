@@ -194,7 +194,8 @@ async function listProduction(query: Query) {
   const consignor = query.consignor ? await findMerchant(query.consignor) : undefined
   const filters = productionFilters(query, consignor ? idOf(consignor.id) : undefined)
   const kind = productionKind(query)
-  const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/list', pageParams(query, { ...filters }))
+  const data = pageParams(query, { ...filters });
+  const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/list', data)
   if (!result.ok) return fail(brief(result.message))
   const list = result.rows.map((row) => productionDoc(row as Row, categories, areaNames, merchants, kind === 2))
   return pageOf(result, list, query)
