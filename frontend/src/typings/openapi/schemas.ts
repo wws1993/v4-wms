@@ -262,6 +262,7 @@ export interface ReceiptOrderDetailBo {
   elements?: ReceiptOrderElementBo[]
   /** 堆位信息 */
   receiptOrderAreas?: ReceiptOrderAreaBo[]
+  areaNames?: string
 }
 
 /** OCR 编辑对象 */
@@ -859,9 +860,9 @@ export interface GenTable {
   parentMenuId?: string
   /** 上级菜单名称字段 */
   parentMenuName?: string
-  crud?: boolean
   tree?: boolean
   sub?: boolean
+  crud?: boolean
 }
 
 export interface SysUserBo {
@@ -967,14 +968,14 @@ export interface GenTableColumn {
   sort?: number
   required?: boolean
   list?: boolean
-  insert?: boolean
-  edit?: boolean
   pk?: boolean
-  usableColumn?: boolean
+  insert?: boolean
   superColumn?: boolean
+  usableColumn?: boolean
+  edit?: boolean
+  capJavaField?: string
   query?: boolean
   increment?: boolean
-  capJavaField?: string
 }
 
 /** 个人信息业务处理 */
@@ -1371,6 +1372,29 @@ export interface RShippingMethodVo {
   data?: ShippingMethodVo
 }
 
+export interface AreaVo {
+  id?: number
+  /** 编号 */
+  areaCode?: string
+  /** 名称 */
+  areaName?: string
+  /** 所属仓库ID */
+  warehouseId?: number
+  /** 库容（吨） */
+  inventoryCapacity?: number
+  /** 当前库容（吨） */
+  currentCapacity?: number
+  /** 片区标识 */
+  areaIdentification?: string
+  /** 状态 */
+  status?: string
+  /** 排序 */
+  orderNum?: number
+  /** 备注 */
+  remark?: string
+  warehouse?: WarehouseVo
+}
+
 /** 入库单业务对象 wms_receipt_order */
 export interface ReceiptOrderBo {
   /** 创建者 */
@@ -1418,31 +1442,10 @@ export interface ReceiptOrderBo {
   arrivalDate?: string
   /** 堆位信息 */
   receiptOrderAreas?: ReceiptOrderAreaBo[]
+  /** 明细 */
+  receiptOrderDetails?: RecordOrderDetailBo[]
   /** 入库状态 */
   receiptOrderStatus?: number
-}
-
-export interface AreaVo {
-  id?: number
-  /** 编号 */
-  areaCode?: string
-  /** 名称 */
-  areaName?: string
-  /** 所属仓库ID */
-  warehouseId?: number
-  /** 库容（吨） */
-  inventoryCapacity?: number
-  /** 当前库容（吨） */
-  currentCapacity?: number
-  /** 片区标识 */
-  areaIdentification?: string
-  /** 状态 */
-  status?: string
-  /** 排序 */
-  orderNum?: number
-  /** 备注 */
-  remark?: string
-  warehouse?: WarehouseVo
 }
 
 /** 系统访问记录业务对象 sys_logininfor */
@@ -1505,6 +1508,50 @@ export interface LoginBody {
   code?: string
   /** 唯一标识 */
   uuid?: string
+}
+
+/** ReceiptOrderItemBo */
+export interface RecordOrderDetailBo {
+  /** 创建者 */
+  createBy?: string
+  /** 创建时间 */
+  createTime?: string
+  /** 更新者 */
+  updateBy?: string
+  /** 更新时间 */
+  updateTime?: string
+  /** 请求参数 */
+  params?: Record<string, unknown>
+  /** 项号/序号（如 1、2、3） */
+  itemNo?: number
+  /** 商品编号（如 2603000010） */
+  itemCode?: string
+  /** 商品名称及规格型号 */
+  itemName?: string
+  /** 规格型号（如 0|3|浮选，未烧结...） */
+  itemDesc?: string
+  /** 数量 */
+  quantity?: number
+  /** 计量单位（千克/吨） */
+  unit?: string
+  /** 法定数量 */
+  legalQuantity?: number
+  /** 法定单位 */
+  legalUnit?: string
+  /** 单价 */
+  unitPrice?: number
+  /** 总价 */
+  totalPrice?: number
+  /** 币制（美元/USD） */
+  currency?: string
+  /** 原产国(地区) */
+  originCountry?: string
+  /** 原产国代码（SRB、PER） */
+  originCountryCode?: string
+  /** 最终目的国(地区) */
+  destCountry?: string
+  /** 最终目的国代码（CHN） */
+  destCountryCode?: string
 }
 
 /** 邮箱登录对象 */
@@ -1682,6 +1729,51 @@ export interface TableDataInfoWarehouseVo {
   msg?: string
 }
 
+/** 响应信息主体 */
+export interface RListWarehouseVo {
+  code?: number
+  msg?: string
+  data?: WarehouseVo[]
+}
+
+/** 装运方式 */
+export interface ShippingMethod {
+  /** 创建者 */
+  createBy?: string
+  /** 创建时间 */
+  createTime?: string
+  /** 更新者 */
+  updateBy?: string
+  /** 更新时间 */
+  updateTime?: string
+  /** 请求参数 */
+  params?: Record<string, unknown>
+  id?: number
+  /** 编码 */
+  shippingMethodCode?: string
+  /** 名称 */
+  shippingMethodName?: string
+  /** 柜数 */
+  areaNumber?: number
+}
+
+export interface ItemCategoryVo {
+  /** 物料类型id */
+  id?: number
+  /** 父物料类型id */
+  parentId?: number
+  /** 祖级列表 */
+  ancestors?: string
+  /** 物料类型名称 */
+  categoryName?: string
+  /** 显示顺序 */
+  orderNum?: number
+  /** 物料类型状态（0正常 1停用） */
+  status?: string
+  /** 子物料类型 */
+  children?: ItemCategoryVo[]
+}
+
 /** 入库单视图对象 wms_receipt_order */
 export interface ReceiptOrderVo {
   /** 创建者 */
@@ -1749,136 +1841,8 @@ export interface ReceiptOrderVo {
   mineralSourceFiling?: MineralSourceFilingVo[]
   /** 堆位信息 */
   receiptOrderAreas?: ReceiptOrderAreaVo[]
-}
-
-/** 投料/产出记录 */
-export interface ProductionOrderDetailVo {
-  id?: number
-  /** 生产单id */
-  productionOrderId?: number
-  /** 委托方 */
-  consignorId?: number
-  /** 库存id */
-  inventoryId?: number
-  /** 方向 0 领料(原料) 1 产出(成品) */
-  direction?: number
-  /** 入库报关单id */
-  orderId?: number
-  /** 物料id */
-  itemId?: number
-  /** 源/目标仓库 */
-  warehouseId?: number
-  /** 源/目标堆位 */
-  areaId?: number
-  /** 湿重(吨) */
-  wetWeight?: number
-  /** 干重(吨) */
-  dryWeight?: number
-  /** 批次号 */
-  batchNo?: string
-  /** 备注 */
-  remark?: string
-  receiptOrder?: ReceiptOrderVo
-  shipmentOrder?: ShipmentOrderVo
-  item?: ItemVo
-  area?: AreaVo
-}
-
-/** 响应信息主体 */
-export interface RListWarehouseVo {
-  code?: number
-  msg?: string
-  data?: WarehouseVo[]
-}
-
-/** 装运方式 */
-export interface ShippingMethod {
-  /** 创建者 */
-  createBy?: string
-  /** 创建时间 */
-  createTime?: string
-  /** 更新者 */
-  updateBy?: string
-  /** 更新时间 */
-  updateTime?: string
-  /** 请求参数 */
-  params?: Record<string, unknown>
-  id?: number
-  /** 编码 */
-  shippingMethodCode?: string
-  /** 名称 */
-  shippingMethodName?: string
-  /** 柜数 */
-  areaNumber?: number
-}
-
-/** 生产加工单视图对象 wms_production_order */
-export interface ProductionOrderVo {
-  /** 创建者 */
-  createBy?: string
-  /** 创建时间 */
-  createTime?: string
-  /** 更新者 */
-  updateBy?: string
-  /** 更新时间 */
-  updateTime?: string
-  id?: number
-  /** 生产单号 */
-  productionOrderNo?: string
-  /** 生产工单 */
-  workOrderNo?: string
-  /** 完工工单 */
-  finishOrderNo?: string
-  /** 生产类型 0 投料出库 1 加工过程 */
-  productionType?: number
-  /** 委托方 */
-  consignorId?: number
-  /** 物料id（产出成品） */
-  itemId?: number
-  /** 生产批次 */
-  batchNo?: string
-  /** 目标仓库（成品入库） */
-  targetWarehouseId?: number
-  /** 目标库区（成品入库） */
-  targetAreaId?: number
-  /** 存放位置(json字符串) */
-  areaItems?: string
-  /** 工序名称 */
-  processName?: string
-  /** 消耗干重(吨) */
-  dryWeight?: number
-  /** 产出干重(吨) */
-  productionWeight?: number
-  /** 开始时间 */
-  startTime?: string
-  /** 结束时间 */
-  endTime?: string
-  /** 状态 0 投料生产 1 混成品 2 已出库 */
-  productionOrderStatus?: number
-  /** 备注 */
-  remark?: string
-  consignor?: MerchantVo
-  item?: ItemVo
-  area?: AreaVo
-  /** 投料报关单/出库单 */
-  productionOrderDetails?: ProductionOrderDetailVo[]
-}
-
-export interface ItemCategoryVo {
-  /** 物料类型id */
-  id?: number
-  /** 父物料类型id */
-  parentId?: number
-  /** 祖级列表 */
-  ancestors?: string
-  /** 物料类型名称 */
-  categoryName?: string
-  /** 显示顺序 */
-  orderNum?: number
-  /** 物料类型状态（0正常 1停用） */
-  status?: string
-  /** 子物料类型 */
-  children?: ItemCategoryVo[]
+  /** 详情 */
+  recordOrderDetails?: RecordOrderDetailVo[]
 }
 
 /** 响应信息主体 */
@@ -1951,6 +1915,53 @@ export interface OcrLogAddBo {
   ocrLogType: number
   /** 关联单号 */
   orderNo?: string
+}
+
+/** 报关单详情 */
+export interface RecordOrderDetailVo {
+  /** 创建者 */
+  createBy?: string
+  /** 创建时间 */
+  createTime?: string
+  /** 更新者 */
+  updateBy?: string
+  /** 更新时间 */
+  updateTime?: string
+  id?: number
+  /** 报关单id */
+  recordOrderId?: number
+  /** 报关单号（冗余，方便查询） */
+  recordNo?: string
+  /** 项号/序号（如 1、2、3） */
+  itemNo?: number
+  /** 商品编号（如 2603000010） */
+  itemCode?: string
+  /** 商品名称及规格型号 */
+  itemName?: string
+  /** 规格型号（如 0|3|浮选，未烧结...） */
+  itemDesc?: string
+  /** 数量 */
+  quantity?: number
+  /** 计量单位（千克/吨） */
+  unit?: string
+  /** 法定数量 */
+  legalQuantity?: number
+  /** 法定单位 */
+  legalUnit?: string
+  /** 单价（如 168331.3602） */
+  unitPrice?: number
+  /** 总价（如 7117049.91） */
+  totalPrice?: number
+  /** 币制（美元/USD） */
+  currency?: string
+  /** 原产国(地区) */
+  originCountry?: string
+  /** 原产国代码（SRB、PER） */
+  originCountryCode?: string
+  /** 最终目的国(地区) */
+  destCountry?: string
+  /** 最终目的国代码（CHN） */
+  destCountryCode?: string
 }
 
 export interface OcrLogVo {
@@ -2038,6 +2049,38 @@ export interface ROcrLogVo {
   data?: OcrLogVo
 }
 
+/** 投料/产出记录 */
+export interface ProductionOrderDetailVo {
+  id?: number
+  /** 生产单id */
+  productionOrderId?: number
+  /** 委托方 */
+  consignorId?: number
+  /** 库存id */
+  inventoryId?: number
+  /** 方向 0 领料(原料) 1 产出(成品) */
+  direction?: number
+  /** 入库报关单id */
+  orderId?: number
+  /** 物料id */
+  itemId?: number
+  /** 源/目标仓库 */
+  warehouseId?: number
+  /** 源/目标堆位 */
+  areaId?: number
+  /** 湿重(吨) */
+  wetWeight?: number
+  /** 干重(吨) */
+  dryWeight?: number
+  /** 批次号 */
+  batchNo?: string
+  /** 备注 */
+  remark?: string
+  receiptOrder?: ReceiptOrderVo
+  item?: ItemVo
+  area?: AreaVo
+}
+
 /** 库存盘点单据业务对象 wms_check_order */
 export interface CheckOrderBo {
   /** 创建者 */
@@ -2119,6 +2162,28 @@ export interface ShipmentOrderDetailVo {
   key?: string
 }
 
+export interface ProductionOrderItemVo {
+  /** 创建者 */
+  createBy?: string
+  /** 创建时间 */
+  createTime?: string
+  /** 更新者 */
+  updateBy?: string
+  /** 更新时间 */
+  updateTime?: string
+  id?: number
+  /** 生产单id */
+  productionOrderId?: number
+  /** 加工单号 */
+  productionOrderItemNo?: string
+  /** 工序名称 */
+  processName?: string
+  /** 开始时间 */
+  startTime?: string
+  /** 结束时间 */
+  endTime?: string
+}
+
 /** 移库单业务对象 wms_movement_order */
 export interface MovementOrderBo {
   /** 创建者 */
@@ -2180,6 +2245,61 @@ export interface TableDataInfoShipmentOrderDetailVo {
   code?: number
   /** 消息内容 */
   msg?: string
+}
+
+/** 生产加工单视图对象 wms_production_order */
+export interface ProductionOrderVo {
+  /** 创建者 */
+  createBy?: string
+  /** 创建时间 */
+  createTime?: string
+  /** 更新者 */
+  updateBy?: string
+  /** 更新时间 */
+  updateTime?: string
+  id?: number
+  /** 生产单号 */
+  productionOrderNo?: string
+  /** 生产工单 */
+  workOrderNo?: string
+  /** 完工工单 */
+  finishOrderNo?: string
+  /** 生产类型 0 投料出库 1 加工过程 */
+  productionType?: number
+  /** 委托方 */
+  consignorId?: number
+  /** 物料id（产出成品） */
+  itemId?: number
+  /** 生产批次 */
+  batchNo?: string
+  /** 目标仓库（成品入库） */
+  targetWarehouseId?: number
+  /** 目标库区（成品入库） */
+  targetAreaId?: number
+  /** 存放位置(json字符串) */
+  areaItems?: string
+  /** 工序名称 */
+  processName?: string
+  /** 消耗干重(吨) */
+  dryWeight?: number
+  /** 产出干重(吨) */
+  productionWeight?: number
+  /** 开始时间 */
+  startTime?: string
+  /** 结束时间 */
+  endTime?: string
+  /** 状态 0 投料生产 1 混成品 2 已出库 */
+  productionOrderStatus?: number
+  /** 备注 */
+  remark?: string
+  consignor?: MerchantVo
+  item?: ItemVo
+  area?: AreaVo
+  /** 投料单 */
+  productionOrderDetails?: ProductionOrderDetailVo[]
+  /** 出库单 */
+  shipmentOrders?: ShipmentOrderVo[]
+  productionOrderItems?: ProductionOrderItemVo[]
 }
 
 /** 响应信息主体 */
@@ -2257,6 +2377,30 @@ export interface MovementOrderBatchBo {
   /** 结束时间 */
   endHour?: string
   list?: MovementOrderBo[]
+}
+
+export interface ProductionOrderItemBo {
+  /** 创建者 */
+  createBy?: string
+  /** 创建时间 */
+  createTime?: string
+  /** 更新者 */
+  updateBy?: string
+  /** 更新时间 */
+  updateTime?: string
+  /** 请求参数 */
+  params?: Record<string, unknown>
+  id?: number
+  /** 生产单id */
+  productionOrderId?: number
+  /** 加工单号 */
+  productionOrderItemNo?: string
+  /** 工序名称 */
+  processName?: string
+  /** 开始时间 */
+  startTime?: string
+  /** 结束时间 */
+  endTime?: string
 }
 
 /** 库存业务对象 wms_inventory */

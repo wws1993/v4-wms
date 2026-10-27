@@ -78,7 +78,9 @@ const rules = computed<FormRules>(() => {
 
 function resetFilters() {
   Object.keys(filters).forEach((key) => delete filters[key])
-  for (const field of schema.value?.filters || []) filters[field.key] = ''
+  const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  for (const field of schema.value?.filters || []) filters[field.key] = field.type === 'month' ? currentMonth : ''
   const query = route.query
   Object.keys(filters).forEach((key) => {
     const value = query[key]
@@ -522,10 +524,12 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
           <el-option v-for="opt in fieldOptions(field)" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
         <el-date-picker v-else-if="field.type === 'date'" v-model="filters[field.key]" type="date" value-format="YYYY-MM-DD" :placeholder="field.label" />
+        <el-date-picker v-else-if="field.type === 'month'" v-model="filters[field.key]" type="month" format="YYYY年MM月" value-format="YYYY-MM" :placeholder="field.label" />
         <el-input v-else v-model="filters[field.key]" clearable :placeholder="field.placeholder || field.label" style="width: 180px" />
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="search">查询</el-button>
+        <el-button v-if="schema.exportRows" @click="exportAll">{{ schema.exportLabel || '导出' }}</el-button>
       </el-form-item>
     </el-form>
 
@@ -533,7 +537,6 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
       <el-button v-if="schema.create && schema.form" type="primary" @click="openCreate">{{ schema.createLabel || '新建' }}</el-button>
       <el-button v-if="schema.importRows" @click="pickImport">导入</el-button>
       <input ref="importInput" type="file" accept=".csv,text/csv" hidden @change="onImport" />
-      <el-button v-if="schema.exportRows" @click="exportAll">{{ schema.exportLabel || '导出' }}</el-button>
       <el-button v-if="schema.monthExport" @click="monthDialog = true">按月导出在库</el-button>
       <el-button v-for="tool in schema.toolbar || []" :key="tool.label" @click="runToolbar(tool.run)">{{ tool.label }}</el-button>
     </div>
@@ -555,7 +558,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
       <el-table-column v-if="schema.form || schema.showDetail || schema.actions?.length" label="操作" fixed="right" min-width="240">
         <template #default="{ row }">
           <el-button v-if="showEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="canShowDetail(row) && !schema.detailColumn" link type="primary" @click="openDetail(row)">详情</el-button>
+          <el-button v-if="canShowDetail(row) && !schema.detailColumn" link type="primary" @click="schema.key === 'ledgerMonthly' ? openLot(row) : openDetail(row)">详情</el-button>
           <template v-for="action in visibleActions(row)" :key="action.label">
             <ImageViewer v-if="action.image" variant="link" :label="action.label" :src="action.image(row)" title="附件" />
             <el-button v-else link :type="action.danger ? 'danger' : 'primary'" @click="runAction(action, row)">{{ action.label }}</el-button>

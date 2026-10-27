@@ -1,24 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { dictApi, inventoryApi, ocrApi, outboundApi, partnerApi, warehouseApi } from '@/api'
-import { dash, money } from './ops/samples'
-
-type AmountLine = {
-  productCode: string
-  productName: string
-  qty: string | number
-  unitPrice: string | number
-  totalPrice: string | number
-  originCountry: string
-  destination: string
-  domesticDest: string
-}
+import ImageViewer from '@/components/ImageViewer.vue'
+import { MONEY_ROW, MOCK_DATA } from '@/controller/shared/constants'
+import { dash } from './ops/samples'
 
 const route = useRoute()
 const filters = reactive({ consignor: '', status: '', from: '', to: '', keyword: '' })
-const consignors = ref<string[]>([])
+const consignors = ref<{ id: string; name: string }[]>([])
 const stacks = ref<Record<string, unknown>[]>([])
 const sourceLots = ref<Record<string, unknown>[]>([])
 const lotsLoading = ref(false)
@@ -26,6 +17,7 @@ const lotPage = ref(1)
 const lotPageSize = ref(10)
 const lotTotal = ref(0)
 const statuses = ref<string[]>(['未出库', '已出库', '作废'])
+const currencies = ref<{ label: string; value: string }[]>([{ label: '人民币 ¥', value: 'CNY' }, { label: '美元 $', value: 'USD' }])
 const rows = ref<Record<string, unknown>[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -34,27 +26,23 @@ const open = ref(false)
 const detailOpen = ref(false)
 const current = ref<Record<string, unknown> | null>(null)
 const ocrStatus = ref('上传出库报关单影像，自动识别并回填')
-const recognized = ref(false)
 const outboundFile = ref<HTMLInputElement>()
-const form = reactive<Record<string, any>>({})
-const amountLines = ref<AmountLine[]>([])
+const ocrBusy = ref(false)
+const ocrProgress = ref(0)
+const ocrPreviewOpen = ref(false)
+const ocrPreviewUrl = ref('')
+const ocrPreviewName = ref('')
+const ocrPreviewImage = ref(false)
+const form = reactive<Record<string, any>>(blankForm())
 const saving = ref(false)
+let ocrProgressTimer = 0
+
+onBeforeUnmount(() => {
+  window.clearInterval(ocrProgressTimer)
+  if (ocrPreviewUrl.value) URL.revokeObjectURL(ocrPreviewUrl.value)
+})
 
 const selected = computed(() => sourceLots.value.find((row) => lotKey(row) === form.lotId))
-const amountSum = computed(() => amountLines.value.reduce((sum, row) => sum + (Number(row.totalPrice) || 0), 0))
-
-function emptyAmountLine(): AmountLine {
-  return {
-    productCode: '',
-    productName: '',
-    qty: '',
-    unitPrice: '',
-    totalPrice: '',
-    originCountry: '',
-    destination: '',
-    domesticDest: '',
-  }
-}
 
 function lotKey(row: Record<string, unknown>) {
   return String(row.id || row.inventoryId || row.batchNo)
@@ -114,34 +102,53 @@ async function loadStacks() {
 }
 
 onMounted(async () => {
-  const [who, statusRes] = await Promise.all([
-    partnerApi.consignors(),
+  const [partnersRes, statusRes] = await Promise.all([
+    partnerApi.list({ role: '委托方', page: 1, pageSize: 500 }),
     dictApi.labels('wms_shipment_status'),
     loadStacks(),
   ])
-  if (who.success && who.data) consignors.value = who.data
+  if (partnersRes.success && partnersRes.data) {
+    consignors.value = partnersRes.data.list.map((row) => ({
+      id: String(row.id || ''),
+      name: String(row.name || ''),
+    })).filter((row) => row.id && row.name)
+    setConsignorId(form.consignor)
+  } else {
+    ElMessage.error(partnersRes.message || '委托方列表加载失败')
+  }
   if (statusRes.success && statusRes.data?.length) statuses.value = statusRes.data
+  const currencyRes = await dictApi.data({ type: 'wms_currency_type', page: 1, pageSize: 20 })
+  if (currencyRes.success && currencyRes.data?.list.length) {
+    currencies.value = currencyRes.data.list
+      .filter((row) => String(row.status || '正常') !== '停用')
+      .map((row) => ({ label: String(row.label), value: String(row.value) }))
+  }
   applyKeyword()
   load()
 })
 
 function blankForm() {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
   return {
-    consignor: consignors.value[0] || '',
-    consignee: '',
-    customsNo: '',
-    shipDate: '',
-    wet: '',
-    grossWeight: '',
-    netWeight: '',
-    checklistNo: '',
-    stackId: '',
-    customsKeyword: '',
-    lotId: '',
-    batchNo: '',
-    inventoryId: '',
-    orcId: '',
+    ...MOCK_DATA.outbound,
+    consignor: MOCK_DATA.outbound.consignor || consignors.value[0]?.name || '',
+    consignorId: consignors.value.find((row) => row.name === MOCK_DATA.outbound.consignor)?.id || '',
+    consumer: MOCK_DATA.outbound.receivingCompany,
+    shipmentOrderDetails: MOCK_DATA.outbound.shipmentOrderDetails.map((row) => ({ ...row })),
+    planShipmentTime: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
   }
+}
+
+function setConsignorId(name: unknown) {
+  const consignor = consignors.value.find((row) => row.name === String(name ?? ''))
+  if (consignor) form.consignorId = consignor.id
+}
+
+function onConsignorChange(id: string) {
+  const consignor = consignors.value.find((row) => row.id === id)
+  form.consignorId = id
+  form.consignor = consignor?.name || ''
 }
 
 let lotSilent = false
@@ -151,13 +158,16 @@ let keywordTimer = 0
 async function reset() {
   lotSilent = true
   window.clearTimeout(keywordTimer)
+  if (ocrPreviewUrl.value) URL.revokeObjectURL(ocrPreviewUrl.value)
+  ocrPreviewUrl.value = ''
+  ocrPreviewName.value = ''
+  ocrPreviewImage.value = false
+  ocrPreviewOpen.value = false
   Object.keys(form).forEach((key) => delete form[key])
   Object.assign(form, blankForm())
-  amountLines.value = [emptyAmountLine()]
   lotPage.value = 1
   lotTotal.value = 0
   sourceLots.value = []
-  recognized.value = false
   ocrStatus.value = '请先上传出库报关单'
   open.value = true
   // 等分页组件挂载完，避免 current-change / 关键字 watch 再打一次
@@ -229,44 +239,24 @@ watch(() => form.customsKeyword, () => {
 function pickLot(row: Record<string, unknown>) {
   form.lotId = lotKey(row)
   form.batchNo = String(row.batchNo || '')
-  form.inventoryId = String(row.id || row.inventoryId || '')
-  if (!form.consignor && row.consignor) form.consignor = String(row.consignor)
-  const remain = Number(row.remain ?? row.dry ?? row.wet)
-  if (!(Number(form.wet) > 0) && remain > 0) form.wet = remain
-}
-
-function addAmountLine() {
-  amountLines.value.push(emptyAmountLine())
-}
-
-function removeAmountLine(index: number) {
-  if (amountLines.value.length <= 1) {
-    amountLines.value = [emptyAmountLine()]
-    return
+  form.inventoryId = String(row.id ?? '')
+  if (row.consignor) {
+    form.consignor = String(row.consignor)
+    setConsignorId(form.consignor)
   }
-  amountLines.value.splice(index, 1)
+  const remain = Number(row.remain ?? row.dry ?? row.wet)
+  if (!(Number(form.shipmentWeight) > 0) && remain > 0) form.shipmentWeight = remain
 }
 
-function fillAmountFromOcr(raw: unknown) {
-  if (!Array.isArray(raw) || !raw.length) return false
-  const lines = raw.map((item) => {
-    const row = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
-    return {
-      productCode: String(row.productCode || row.goodsCode || row.code || ''),
-      productName: String(row.productName || row.goodsName || row.name || ''),
-      qty: row.qty ?? row.quantity ?? '',
-      unitPrice: row.unitPrice ?? row.price ?? '',
-      totalPrice: row.totalPrice ?? row.amount ?? row.total ?? '',
-      originCountry: String(row.originCountry || row.origin || ''),
-      destination: String(row.destination || row.destCountry || ''),
-      domesticDest: String(row.domesticDest || row.domesticDestination || ''),
-    } as AmountLine
-  })
-  amountLines.value = lines.length ? lines : [emptyAmountLine()]
-  return true
+function addShipmentOrderDetail() {
+  form.shipmentOrderDetails.push(Object.assign({}, MONEY_ROW))
 }
 
-/** 出库 OCR 回填：海关编号、消费使用单位（委托方+流向企业）、毛重、净重、核注清单号、金额 list */
+function removeShipmentOrderDetail(index: number) {
+  if (index > 0) form.shipmentOrderDetails.splice(index, 1)
+}
+
+/** 出库 OCR 回填：只回填出库单接口支持的字段。 */
 function pickOcr(data: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = data[key]
@@ -276,24 +266,55 @@ function pickOcr(data: Record<string, unknown>, keys: string[]) {
 }
 
 function applyOcrFields(data: Record<string, unknown>) {
-  const customsNo = pickOcr(data, ['customsNo', 'recordNo', 'customsCode', 'haiguanNo'])
-  if (customsNo != null) form.customsNo = customsNo
-
-  // 委托人、流向企业均取消费使用单位
-  const consumer = pickOcr(data, ['consumer', '消费使用单位', 'consignee', 'merchantName', 'flowTo'])
-  if (consumer != null) {
-    form.consignor = consumer
-    form.consignee = consumer
+  const fields: [string, string[]][] = [
+    ['recordNo', ['recordNo', 'customsNo', 'customsCode']],
+    ['consignor', ['consignorName', 'consignor', '委托方']],
+    ['verificationCode', ['verificationCode', 'checklistNo', '核注清单号']],
+  ]
+  for (const [formKey, ocrKeys] of fields) {
+    const value = pickOcr(data, ocrKeys)
+    if (value !== undefined) {
+      form[formKey] = value
+      if (formKey === 'consignor') setConsignorId(value)
+    }
   }
 
-  const gross = pickOcr(data, ['grossWeight', 'gross', '毛重'])
-  if (gross != null) form.grossWeight = gross
-  const net = pickOcr(data, ['netWeight', 'net', '净重'])
-  if (net != null) form.netWeight = net
-  const checklist = pickOcr(data, ['checklistNo', 'verificationCode', '核注清单号'])
-  if (checklist != null) form.checklistNo = checklist
+  const company = pickOcr(data, ['consignorName'])
+  if (company !== undefined) {
+    form.receivingCompany = company
+    form.consumer = company
+  }
 
-  fillAmountFromOcr(data.amountLines || data.items || data.goods || data.details)
+  const weight = pickOcr(data, ['netWeight', 'netWeight ', 'net', 'grossWeight', 'grossWeight ', 'gross'])
+  if (weight !== undefined) form.shipmentWeight = weight
+
+  const rawItems = pickOcr(data, ['amountLines', 'items', 'goods', 'details'])
+  if (Array.isArray(rawItems)) {
+    const detailRows = rawItems
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+      .map((item) => {
+        const values = {
+          itemCode: pickOcr(item, ['itemCode', 'goodsCode', 'commodityCode', '商品编号', '商品编码']),
+          itemName: pickOcr(item, ['itemName', 'goodsName', 'commodityName', '商品名称']),
+          quantity: pickOcr(item, ['quantity', 'qty', '数量']),
+          unit: pickOcr(item, ['unit', 'quantityUnit', '单位']),
+          unitPrice: pickOcr(item, ['unitPrice', 'price', '单价']),
+          totalPrice: pickOcr(item, ['totalPrice', 'amount', '总价', '金额']),
+          currency: pickOcr(item, ['currency', 'currencyCode', '币制']),
+          originCountry: pickOcr(item, ['originCountry', 'origin', '原产国']),
+          destCountry: pickOcr(item, ['destCountry', 'destinationCountry', 'destination', '目的地']),
+        }
+        const hasContent = Object.values(values).some((value) => String(value ?? '').trim() !== '')
+        const row: Record<string, unknown> = Object.assign({}, MONEY_ROW)
+        for (const [key, value] of Object.entries(values)) {
+          if (value !== undefined) row[key] = value
+        }
+        return [row, hasContent] as const
+      })
+      .filter(([, hasContent]) => hasContent)
+      .map(([row]) => row)
+    if (detailRows.length) form.shipmentOrderDetails = detailRows
+  }
 }
 
 async function runOcr(file?: File) {
@@ -301,16 +322,39 @@ async function runOcr(file?: File) {
     ElMessage.warning('请选择出库报关单文件')
     return
   }
-  const res = await ocrApi.recognize({ docType: '出库报关单', fileName: file.name, __file: file, customsNo: form.customsNo })
-  if (res.success && res.data) {
-    const data = res.data as Record<string, unknown>
-    applyOcrFields(data)
-    if (data.id != null && data.id !== '') form.orcId = data.id
-    recognized.value = true
-    ocrStatus.value = '已识别，字段可手工修正'
-  } else {
-    recognized.value = false
-    ocrStatus.value = res.message
+  if (ocrBusy.value) return
+  if (ocrPreviewUrl.value) URL.revokeObjectURL(ocrPreviewUrl.value)
+  ocrPreviewUrl.value = URL.createObjectURL(file)
+  ocrPreviewName.value = file.name
+  ocrPreviewImage.value = file.type.startsWith('image/')
+  ocrBusy.value = true
+  ocrProgress.value = 4
+  ocrStatus.value = '正在识别出库报关单…'
+  ocrProgressTimer = window.setInterval(() => {
+    ocrProgress.value = Math.min(92, ocrProgress.value + Math.max(1, Math.ceil((92 - ocrProgress.value) / 14)))
+  }, 220)
+  try {
+    const [res] = await Promise.all([
+      ocrApi.recognize({ docType: '出库报关单', fileName: file.name, __file: file }),
+      new Promise((resolve) => window.setTimeout(resolve, 900)),
+    ])
+    if (res.success && res.data) {
+      applyOcrFields(res.data as Record<string, unknown>)
+      ocrProgress.value = 100
+      ocrStatus.value = '已识别，字段可手工修正'
+      ElMessage.success('出库报关单已识别并回填')
+    } else {
+      ocrStatus.value = res.message || '识别失败，请重试'
+      ElMessage.error(ocrStatus.value)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '识别失败，请重试'
+    ocrStatus.value = message
+    ElMessage.error(message)
+  } finally {
+    window.clearInterval(ocrProgressTimer)
+    await new Promise((resolve) => window.setTimeout(resolve, 350))
+    ocrBusy.value = false
   }
 }
 
@@ -321,45 +365,10 @@ function onOutboundFile(event: Event) {
   if (file) runOcr(file)
 }
 
-function filledAmountLines() {
-  return amountLines.value.filter((row) => (
-    String(row.productCode || row.productName || row.qty || row.unitPrice || row.totalPrice).trim()
-  ))
-}
-
 async function save() {
-  if (!recognized.value) {
-    ElMessage.warning('请先上传出库报关单')
-    return
-  }
-  if (!selected.value) {
-    ElMessage.warning('请选择票货')
-    return
-  }
-  if (!form.consignor || !form.consignee || !form.shipDate || !form.wet || !form.checklistNo) {
-    ElMessage.warning('请补全委托方、流向企业、出库日期、出库重量和核注清单号')
-    return
-  }
-  const lines = filledAmountLines()
-  if (!lines.length) {
-    ElMessage.warning('请至少填写一行金额明细')
-    return
-  }
-  const remain = Number(selected.value.remain ?? selected.value.dry ?? 0)
-  const wet = Number(form.wet)
-  if (remain > 0 && wet > remain) {
-    ElMessage.warning(`出库重量不能超过在库 ${remain} 吨`)
-    return
-  }
-  // 出库新字段接口未就绪：只做前端校验与组包，不造 mock 成功。
-  const payload = {
-    ...form,
-    amount: amountSum.value || undefined,
-    amountLines: lines,
-  }
   saving.value = true
   try {
-    const res = await outboundApi.create(payload)
+    const res = await outboundApi.create(form)
     if (!res.success) {
       ElMessage.error(res.message || '出库接口尚未就绪')
       return
@@ -402,12 +411,12 @@ function canShip(row: Record<string, unknown>) {
     <el-table v-loading="loading" :data="rows" border stripe>
       <el-table-column label="出库单号" min-width="150"><template #default="{ row }">{{ dash(row.orderNo || row.id) }}</template></el-table-column>
       <el-table-column prop="consignor" label="委托方" width="120" />
-      <el-table-column prop="consignee" label="流向企业" min-width="140" />
+      <el-table-column prop="receivingCompany" label="流向企业" min-width="140" />
+      <el-table-column prop="consumer" label="消费使用单位" min-width="140" />
       <el-table-column prop="checklistNo" label="核注清单" min-width="140" />
-      <el-table-column label="出库重量" width="100"><template #default="{ row }">{{ dash(row.wet) }}</template></el-table-column>
-      <el-table-column label="金额" width="120"><template #default="{ row }">{{ money(row.amount, row.currency) }}</template></el-table-column>
-      <el-table-column label="出库/完成时间" min-width="180"><template #default="{ row }">{{ dash(row.time) }} / {{ dash(row.finishedAt) }}</template></el-table-column>
-      <el-table-column prop="status" label="状态" width="90" />
+      <el-table-column label="出库重量" width="100"><template #default="{ row }">{{ dash(row.shipmentWeight) }}</template></el-table-column>
+      <el-table-column prop="amount" label="总金额" width="120" />
+      <el-table-column label="出库时间" min-width="180"><template #default="{ row }">{{ dash(row.time) }}</template></el-table-column>
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canShip(row)" link type="primary" @click="complete(row)">出库完成</el-button>
@@ -420,13 +429,17 @@ function canShip(row: Record<string, unknown>) {
     <el-dialog v-model="open" title="新建出库订单" width="1100px" align-center destroy-on-close>
       <div class="ocr">
         <el-tag>出库报关单</el-tag>
-        <el-tag type="warning">必传</el-tag>
-        <el-button size="small" @click="outboundFile?.click()">上传报关单</el-button>
+        {{form}}
+        <el-tag type="info">可选识别</el-tag>
+        <el-button size="small" type="primary" plain :disabled="ocrBusy" @click="outboundFile?.click()">
+          {{ ocrPreviewName ? '重新上传' : '上传报关单' }}
+        </el-button>
+        <el-button v-if="ocrPreviewUrl" size="small" text type="primary" @click="ocrPreviewOpen = true">查看影像</el-button>
         <input ref="outboundFile" class="file" type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onOutboundFile" />
         <span>{{ ocrStatus }}</span>
       </div>
       <el-form label-width="120px">
-        <el-form-item label="票货" required>
+        <el-form-item label="票货">
           <div class="lot-box">
             <div class="stack-query">
               <el-select
@@ -491,87 +504,153 @@ function canShip(row: Record<string, unknown>) {
 
         <el-row :gutter="12">
           <el-col :span="12">
-            <el-form-item label="委托方" required>
-              <el-select v-model="form.consignor" clearable filterable style="width: 100%">
-                <el-option v-for="name in consignors" :key="name" :label="name" :value="name" />
+            <el-form-item label="委托方">
+              <el-select :model-value="form.consignorId" clearable filterable style="width: 100%" @change="onConsignorChange">
+                <el-option
+                  v-if="form.consignorId && !consignors.some((row) => row.id === String(form.consignorId))"
+                  :label="String(form.consignor)"
+                  :value="String(form.consignorId)"
+                />
+                <el-option v-for="item in consignors" :key="item.id" :label="item.name" :value="item.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12"><el-form-item label="流向企业" required><el-input v-model="form.consignee" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="海关编号"><el-input v-model="form.customsNo" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="核注清单号" required><el-input v-model="form.checklistNo" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="出库日期" required><el-date-picker v-model="form.shipDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="出库重量" required><el-input v-model="form.wet" type="number" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="毛重"><el-input v-model="form.grossWeight" type="number" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="净重"><el-input v-model="form.netWeight" type="number" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="流向企业"><el-input v-model="form.receivingCompany" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="消费使用单位"><el-input v-model="form.consumer" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="出库报关单号"><el-input v-model="form.recordNo" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="核注清单号"><el-input v-model="form.verificationCode" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="生产批次"><el-input :model-value="selected?.batchNo || ''" readonly /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="计划出库时间"><el-date-picker v-model="form.planShipmentTime" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" style="width: 100%" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="出库重量(吨)"><el-input v-model="form.shipmentWeight" type="number" min="0.001" step="0.001" /></el-form-item></el-col>
         </el-row>
-
-        <el-form-item label="金额" required>
-          <div class="amount-box">
-            <div class="amount-toolbar">
-              <span class="hint">合计 {{ amountSum ? amountSum.toLocaleString() : '—' }}</span>
-              <el-button size="small" @click="addAmountLine">加一行</el-button>
+        <el-form-item label="报关单金额">
+          <div class="money-editor">
+            <div class="money-heading">
+              <div>
+                <strong>商品金额明细</strong>
+                <span>填写报关商品、数量与金额信息</span>
+              </div>
+              <el-button size="small" type="primary" plain @click="addShipmentOrderDetail">
+                <el-icon><Plus /></el-icon>
+                添加明细
+              </el-button>
             </div>
-            <el-table :data="amountLines" border size="small" max-height="280" empty-text="暂无金额明细">
-              <el-table-column label="商品编号" min-width="120">
-                <template #default="{ row }"><el-input v-model="row.productCode" size="small" /></template>
-              </el-table-column>
-              <el-table-column label="商品名称" min-width="160">
-                <template #default="{ row }"><el-input v-model="row.productName" size="small" /></template>
-              </el-table-column>
-              <el-table-column label="数量" width="110">
-                <template #default="{ row }"><el-input v-model="row.qty" size="small" type="number" /></template>
-              </el-table-column>
-              <el-table-column label="单价" width="120">
-                <template #default="{ row }"><el-input v-model="row.unitPrice" size="small" type="number" /></template>
-              </el-table-column>
-              <el-table-column label="总价" width="120">
-                <template #default="{ row }"><el-input v-model="row.totalPrice" size="small" type="number" /></template>
-              </el-table-column>
-              <el-table-column label="原产国" width="100">
-                <template #default="{ row }"><el-input v-model="row.originCountry" size="small" /></template>
-              </el-table-column>
-              <el-table-column label="目的地" width="100">
-                <template #default="{ row }"><el-input v-model="row.destination" size="small" /></template>
-              </el-table-column>
-              <el-table-column label="境内目的地" min-width="120">
-                <template #default="{ row }"><el-input v-model="row.domesticDest" size="small" /></template>
-              </el-table-column>
-              <el-table-column label="" width="70" fixed="right">
-                <template #default="{ $index }">
-                  <el-button link type="danger" @click="removeAmountLine($index)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+            <div class="money-list">
+              <section v-for="(item, index) in form.shipmentOrderDetails" :key="index" class="money-card">
+                <div class="money-card-heading">
+                  <span class="money-index">{{ String(index + 1).padStart(2, '0') }}</span>
+                  <strong>商品明细</strong>
+                  <span v-if="index === 0" class="money-required">至少保留一行</span>
+                  <el-button v-else size="small" link type="danger" @click="removeShipmentOrderDetail(index)">
+                    <el-icon><Delete /></el-icon>
+                    删除
+                  </el-button>
+                </div>
+                <div class="money-fields">
+                  <label class="money-field"><span>商品编号</span><el-input v-model="item.itemCode" size="small" placeholder="请输入编号" /></label>
+                  <label class="money-field"><span>商品名称</span><el-input v-model="item.itemName" size="small" placeholder="请输入名称" /></label>
+                  <label class="money-field"><span>数量</span><el-input v-model="item.quantity" size="small" placeholder="请输入数量" /></label>
+                  <label class="money-field"><span>单位</span><el-input v-model="item.unit" size="small" placeholder="如：千克" /></label>
+                  <label class="money-field"><span>单价</span><el-input v-model="item.unitPrice" size="small" placeholder="请输入单价" /></label>
+                  <label class="money-field"><span>总价</span><el-input v-model="item.totalPrice" size="small" placeholder="请输入总价" /></label>
+                  <label class="money-field"><span>币制</span><el-select v-model="item.currency" size="small" placeholder="请选择币制">
+                    <el-option v-for="currency in currencies" :key="currency.value" :label="currency.label" :value="currency.value" />
+                  </el-select></label>
+                  <label class="money-field"><span>原产国</span><el-input v-model="item.originCountry" size="small" placeholder="请输入原产国" /></label>
+                  <label class="money-field"><span>目的地</span><el-input v-model="item.destCountry" size="small" placeholder="请输入目的地" /></label>
+                </div>
+              </section>
+            </div>
           </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="open = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">提交</el-button>
+        <el-button type="primary" :loading="saving" :disabled="ocrBusy" @click="save">提交</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="ocrPreviewOpen" title="出库报关单影像" width="900px" align-center append-to-body destroy-on-close>
+      <ImageViewer
+        v-if="ocrPreviewImage && ocrPreviewUrl"
+        :src="ocrPreviewUrl"
+        :name="ocrPreviewName"
+        title="出库报关单"
+      />
+      <iframe
+        v-else-if="ocrPreviewUrl"
+        class="ocr-document"
+        :src="ocrPreviewUrl"
+        :title="ocrPreviewName"
+      />
     </el-dialog>
 
     <el-dialog v-model="detailOpen" title="出库详情" width="640px" align-center>
       <p>单号 {{ dash(current?.orderNo || current?.id) }} · 状态 {{ dash(current?.status) }}</p>
-      <p>海关编号 {{ dash(current?.customsNo) }} · 委托方 {{ dash(current?.consignor) }} · 流向企业 {{ dash(current?.consignee) }}</p>
-      <p>核注 {{ dash(current?.checklistNo) }} · 毛重 {{ dash(current?.grossWeight) }} · 净重 {{ dash(current?.netWeight) }}</p>
-      <p>批次 {{ dash(current?.batchNo) }} · 出库重量 {{ dash(current?.wet) }}</p>
-      <p>金额 {{ money(current?.amount, current?.currency) }} · 备注 {{ dash(current?.remark) }}</p>
+      <p>报关单号 {{ dash(current?.recordNo) }} · 委托方 {{ dash(current?.consignor) }} · 流向企业 {{ dash(current?.receivingCompany) }}</p>
+      <p>消费使用单位 {{ dash(current?.consumer) }} · 核注清单 {{ dash(current?.checklistNo) }}</p>
+      <p>批次 {{ dash(current?.batchNo) }} · 出库重量 {{ dash(current?.shipmentWeight) }} 吨</p>
+      <p>计划出库时间 {{ dash(current?.planShipmentTime) }} · 报关单金额 {{ dash(current?.amount) }} · 备注 {{ dash(current?.remark) }}</p>
     </el-dialog>
+
+    <Teleport to="body">
+      <div v-if="ocrBusy" class="ocr-mask" role="status" aria-live="polite">
+        <div class="ocr-progress-card">
+          <div class="ocr-spinner" />
+          <strong>正在识别出库报关单</strong>
+          <span>正在提取单据字段，请稍候…</span>
+          <div class="ocr-progress-track"><i :style="{ width: `${ocrProgress}%` }" /></div>
+          <small>{{ ocrProgress }}%</small>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .toolbar { margin-bottom: 12px; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
-.ocr { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 10px; background: #f4f7fb; }
+.ocr { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 10px; background: var(--el-color-primary-light-9); border: 1px solid var(--el-color-primary-light-8); border-radius: 6px; }
 .file { display: none; }
-.lot-box, .amount-box { width: 100%; }
+.ocr-document { display: block; width: 100%; height: min(68vh, 700px); border: 0; border-radius: 6px; background: var(--wms-bg); }
+.ocr-mask { position: fixed; z-index: 5000; inset: 0; display: grid; place-items: center; background: rgb(18 22 28 / 52%); backdrop-filter: blur(3px); }
+.ocr-progress-card { display: flex; width: min(360px, calc(100vw - 40px)); flex-direction: column; align-items: center; gap: 12px; padding: 28px 30px 22px; border: 1px solid var(--el-color-primary-light-7); border-radius: 12px; background: var(--el-bg-color); box-shadow: 0 20px 60px rgb(0 0 0 / 20%); color: var(--el-text-color-primary); }
+.ocr-progress-card strong { font-size: 16px; font-weight: 600; }
+.ocr-progress-card > span { color: var(--el-text-color-secondary); font-size: 13px; }
+.ocr-spinner { width: 38px; height: 38px; border: 3px solid var(--el-color-primary-light-8); border-top-color: var(--el-color-primary); border-radius: 50%; animation: ocr-spin 0.8s linear infinite; }
+.ocr-progress-track { width: 100%; height: 6px; overflow: hidden; border-radius: 99px; background: var(--el-color-primary-light-9); }
+.ocr-progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--el-color-primary); transition: width 220ms ease; }
+.ocr-progress-card small { color: var(--el-color-primary-dark-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+@keyframes ocr-spin { to { transform: rotate(360deg); } }
+.lot-box { width: 100%; }
+.money-editor { width: 100%; padding: 9px; border: 1px solid var(--el-color-primary-light-7); border-radius: 8px; background: linear-gradient(180deg, var(--el-color-primary-light-9) 0%, #fff 100%); }
+.money-heading, .money-card-heading { display: flex; align-items: center; }
+.money-heading { justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.money-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.money-heading strong { color: var(--el-text-color-primary); font-size: 13px; }
+.money-heading span { color: var(--el-text-color-secondary); font-size: 11px; }
+.money-list { display: flex; flex-direction: column; gap: 7px; }
+.money-card { padding: 8px 9px; border: 1px solid var(--el-border-color); border-radius: 6px; background: #fff; }
+.money-card-heading { gap: 7px; margin-bottom: 7px; padding-bottom: 6px; border-bottom: 1px solid var(--el-color-primary-light-9); }
+.money-card-heading strong { color: var(--el-text-color-primary); font-size: 12px; }
+.money-index { display: inline-flex; width: 21px; height: 21px; align-items: center; justify-content: center; border-radius: 5px; background: var(--el-color-primary-light-9); color: var(--el-color-primary-dark-2); font-size: 10px; font-weight: 700; }
+.money-required { margin-left: auto; color: var(--el-text-color-secondary); font-size: 11px; }
+.money-card-heading .el-button { margin-left: auto; }
+.money-fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px 9px; }
+.money-field { display: flex; min-width: 0; flex-direction: column; gap: 3px; color: var(--el-text-color-secondary); font-size: 11px; }
+.money-field :deep(.el-input), .money-field :deep(.el-select) { width: 100%; }
+.money-field :deep(.el-input__wrapper), .money-field :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-border-color) inset; }
+.money-field :deep(.el-input__wrapper:hover), .money-field :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px var(--el-color-primary-light-5) inset; }
 .stack-query { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .hint { margin: 0 0 8px; color: #6b7280; font-size: 12px; }
 .lot-line { margin: 8px 0 0; color: #374151; font-size: 13px; }
 .lot-pager { display: flex; justify-content: flex-end; margin-top: 8px; }
-.amount-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 :deep(.is-picked) > td { background: #f7f1e6 !important; }
+@media (max-width: 900px) {
+  .money-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .money-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .money-heading { align-items: flex-start; }
+}
 </style>

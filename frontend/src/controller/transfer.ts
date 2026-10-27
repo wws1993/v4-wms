@@ -2,15 +2,31 @@ import type { Route } from '@/api-map/types'
 import { fail, ok } from '@/api/result'
 import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
-import { brief, cellsBody, hourText, idOf, nested, num, text } from '@/controller/shared/coerce'
+import { areaPoints, brief, cellsBody, hourText, idOf, nested, num, text } from '@/controller/shared/coerce'
 import { pageParams, range } from '@/controller/shared/page'
 import { dictOf, labelOf } from '@/controller/shared/dict'
 import { areaRows, findArea, findMerchant } from '@/controller/shared/catalog'
 import { locateInventory } from '@/controller/inventory'
-import type { MovementOrderBo, MovementOrderVo } from '@/typings/openapi'
+import type { AreaVo, MovementOrderBo, MovementOrderVo } from '@/typings/openapi'
 
 /** 移库单 Vo + 运行时扩展 */
 type MovementRow = MovementOrderVo & Row
+type LongId = number | string
+type MovementOrderAreaRequest = {
+  areaId: LongId
+  warehouseId: LongId
+  dryWeight: number
+  areas: Row[]
+}
+type MovementOrderRequest = Omit<Partial<MovementOrderBo>,
+  'id' | 'inventoryId' | 'sourceWarehouseId' | 'sourceAreaId' | 'targetWarehouseId' | 'targetAreaId' | 'movementOrderAreas'> & {
+  inventoryId: LongId
+  sourceWarehouseId: LongId
+  sourceAreaId?: LongId
+  targetWarehouseId: LongId
+  targetAreaId?: LongId
+  movementOrderAreas: MovementOrderAreaRequest[]
+} & Row
 
 /** 生成移库单号。 */
 function movementOrderNo(seq = 0) {
@@ -38,41 +54,77 @@ function movementTypeOf(scene: string) {
 }
 
 /** 组装移库 Bo 请求体。 */
-async function buildMovementBo(body: Row, seq = 0): Promise<{ ok: true; data: Partial<MovementOrderBo> & Row; orderNo: string } | { ok: false; message: string; batchNo: string }> {
+async function buildMovementBo(body: Row, seq = 0): Promise<{ ok: true; data: MovementOrderRequest; orderNo: string } | { ok: false; message: string; batchNo: string }> {
   const batchNo = text(body.batchNo)
   const source = await locateInventory(text(body.inventoryId) || batchNo)
   if (!source) return { ok: false, message: '未找到在库批次', batchNo }
-  const target = await findArea(body.areaId) || await findArea(body.toStack)
-  if (!target) return { ok: false, message: '目标堆位不存在', batchNo }
   const sourceWarehouseId = idOf(source.warehouseId)
-  const targetWarehouseId = idOf(target.warehouseId)
   if (sourceWarehouseId == null) return { ok: false, message: '源仓库不能为空', batchNo }
-  if (targetWarehouseId == null) return { ok: false, message: '目标堆位没有所属仓库', batchNo }
+  const inventoryId = idOf(source.id)
+  if (inventoryId == null) return { ok: false, message: '库存 ID 无效', batchNo }
+  const sourceAreaId = idOf(source.areaId)
   const scene = text(body.scene) || '整票移位'
   const partial = scene === '拆票移位'
   const qty = partial
     ? num(body.weight)
     : (num(body.weight) ?? num(source.dryWeight) ?? num(source.quantity) ?? num(source.remainQuantity))
   if (!(qty && qty > 0)) return { ok: false, message: partial ? '请填写移库重量' : '该票没有可移重量', batchNo }
+  const requestedTargets: Row[] = Array.isArray(body.movementOrderAreas) ? body.movementOrderAreas as Row[] : []
+  if (!requestedTargets.length) {
+    requestedTargets.push({
+      areaId: body.areaId,
+      stackCode: body.toStack,
+      dryWeight: qty,
+      areas: Array.isArray(body.areas) ? body.areas : cellsBody(body.cells),
+    })
+  }
+  const movementOrderAreas: MovementOrderAreaRequest[] = []
+  const seenTargets = new Set<string>()
+  for (const requested of requestedTargets) {
+    const target = await findArea(requested.areaId) || await findArea(requested.stackCode)
+    if (!target) return { ok: false, message: `目标堆位 ${text(requested.stackCode || requested.areaId)} 不存在`, batchNo }
+    const areaId = idOf(target.id)
+    const warehouseId = idOf(target.warehouseId)
+    if (areaId == null) return { ok: false, message: `目标堆位 ${text(requested.stackCode)} 缺少有效堆位 ID`, batchNo }
+    if (warehouseId == null) return { ok: false, message: `目标堆位 ${text(requested.stackCode)} 没有所属仓库`, batchNo }
+    const key = String(areaId)
+    if (seenTargets.has(key)) return { ok: false, message: `目标堆位 ${text(requested.stackCode)} 重复`, batchNo }
+    seenTargets.add(key)
+    const dryWeight = num(requested.dryWeight)
+    if (!(dryWeight && dryWeight > 0)) return { ok: false, message: `请填写目标堆位 ${text(requested.stackCode)} 的移入干重`, batchNo }
+    const points = Array.isArray(requested.areas) ? areaPoints(requested.areas) : cellsBody(requested.cells)
+    const areas = points.map((point) => ({ row: num(point.row), column: num(point.column) }))
+    if (!areas.length) return { ok: false, message: `请为目标堆位 ${text(requested.stackCode)} 选择网格`, batchNo }
+    movementOrderAreas.push({ areaId, warehouseId, dryWeight, areas })
+  }
+  const allocatedWeight = movementOrderAreas.reduce((sum, item) => sum + Number(item.dryWeight), 0)
+  if (Math.abs(allocatedWeight - qty) > 0.000001) {
+    return { ok: false, message: '各目标堆位干重合计必须等于本次移库重量', batchNo }
+  }
+  const firstTarget = movementOrderAreas[0]
+  const targetWarehouseId = idOf(firstTarget.warehouseId)
+  const targetAreaId = idOf(firstTarget.areaId)
+  if (targetWarehouseId == null || targetAreaId == null) return { ok: false, message: '目标堆位没有有效的仓库和堆位 ID', batchNo }
   const orderNo = movementOrderNo(seq)
   const from = clockParts(body.timeFrom)
   const to = clockParts(body.timeTo)
-  const areas = cellsBody(body.cells)
+  const sourceAreas = Array.isArray(body.sourceAreas) ? areaPoints(body.sourceAreas) : cellsBody(body.sourceCells)
   return {
     ok: true,
     orderNo,
     data: {
       movementOrderNo: orderNo,
       movementType: movementTypeOf(scene),
-      inventoryId: idOf(source.id),
+      inventoryId,
       sourceWarehouseId,
-      sourceAreaId: idOf(source.areaId),
+      sourceAreaId,
       targetWarehouseId,
-      targetAreaId: idOf(target.id),
+      targetAreaId,
       quantity: qty,
       totalQuantity: qty,
       remark: scene,
-      ...(areas.length ? { areas } : {}),
+      movementOrderAreas,
+      ...(partial && sourceAreas.length ? { sourceAreas } : {}),
       ...(from.date ? { startDate: from.date, startHour: from.hour } : {}),
       ...(to.date ? { endDate: to.date, endHour: to.hour } : {}),
     },
@@ -150,7 +202,7 @@ async function listMovements(query: Query) {
 /** 将移库单 Vo 映射为列表行。 */
 function movementView(
   row: MovementRow | Row,
-  areas: Row[],
+  areas: (AreaVo | Row)[],
   statuses: { label: string; value: string }[],
   categories: { label: string; value: string }[],
 ): Row {

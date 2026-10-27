@@ -44,7 +44,11 @@ async function saveRole(id: string | undefined, body: Row) {
   if (key.length > 100) return fail('权限字符不能超过 100 个字符')
   const sort = num(body.sort)
   if (sort == null) return fail('请填写显示顺序')
-  const payload: Partial<SysRoleBo> & Row = {
+  const payload: Omit<Partial<SysRoleBo>, 'roleId' | 'menuIds' | 'deptIds'> & {
+    roleId?: number | string
+    menuIds?: (number | string)[]
+    deptIds?: (number | string)[]
+  } & Row = {
     roleName: name,
     roleKey: key,
     roleSort: Math.trunc(sort),
@@ -56,11 +60,11 @@ async function saveRole(id: string | undefined, body: Row) {
   }
   const givenMenus = Array.isArray(body.menuIds) ? body.menuIds as unknown[] : []
   if (givenMenus.length) {
-    payload.menuIds = givenMenus.map((item) => idOf(item)).filter((item) => item !== undefined)
+    payload.menuIds = givenMenus.map((item) => idOf(item)).filter((item): item is number | string => item !== undefined)
   } else if (!id) {
     const settings = await settingsMenuIds()
     if ('message' in settings) return fail(settings.message || '菜单读取失败')
-    payload.menuIds = settings.ids.map((item) => idOf(item)).filter((item) => item !== undefined)
+    payload.menuIds = settings.ids.map((item) => idOf(item)).filter((item): item is number | string => item !== undefined)
   }
   if (!id) payload.deptIds = []
   if (id) payload.roleId = idOf(id)

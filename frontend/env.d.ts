@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_PROXY_TARGET?: string
   readonly VITE_TOKEN_PREFIX?: string
   readonly VITE_SYSTEM_PARAM_ID?: string
+  readonly VITE_OCR_MOCK?: string
 }
 
 interface ImportMeta {

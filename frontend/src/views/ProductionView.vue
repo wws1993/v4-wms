@@ -6,6 +6,7 @@ import { dictApi, inventoryApi, partnerApi, productionApi, warehouseApi } from '
 import ImageUpload from '@/components/ImageUpload.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
 import StackGridPicker from '@/components/StackGridPicker.vue'
+import type { StackPick } from '@/components/YardPlanMap.vue'
 import { usePageTab } from '@/hooks/pageTab'
 import { dash } from './ops/samples'
 
@@ -57,7 +58,18 @@ const detailBatch = ref('')
 const feed = reactive({ prodBatch: '', keyword: '', cargoType: '', country: '', stack: '' })
 const feedPicked = ref<Record<string, string>>({})
 const process = reactive({ id: '', orderNo: '', locked: false, consignor: '', prodBatch: '', process: '混矿筛分', from: '', to: '', remark: '' })
-const finish = reactive({ id: '', orderNo: '', locked: false, consignor: '', prodBatch: '', outputDry: '', stackCode: '', areaId: '', warehouseId: '', cells: '' })
+const finish = reactive({
+  id: '',
+  orderNo: '',
+  locked: false,
+  consignor: '',
+  prodBatch: '',
+  outputDry: '',
+  stackCode: '',
+  areaId: '',
+  cells: '',
+  picks: [] as StackPick[],
+})
 const inspectRows = ref<Doc[]>([])
 const inspectTotal = ref(0)
 const inspectPage = ref(1)
@@ -166,60 +178,50 @@ function finishOf(batch: string) {
 const feedOrders = computed(() => docs.value.filter((row) => row.docType === '投料出库' && !row.finished))
 const openOrders = computed(() => docs.value.filter((row) => (row.docType === '投料出库' || row.docType === '加工过程') && !row.finished))
 
-const flatOps = computed(() => {
-  const list: Doc[] = []
-  for (const row of docs.value) {
+const flatOps = computed<Doc[]>(() => {
+  return docs.value.map((row) => {
+    const lines = linesOf(row).length ? linesOf(row) : batchLines(String(row.prodBatch))
+    const feedDry = row.inputDry ?? lines.reduce((sum, line) => sum + amountOf(line), 0)
+    const kinds = [...new Set(lines.map((line) => line.cargoType).filter(Boolean))]
+    const base = {
+      ...row,
+      lead: true,
+      customs: customsText(lines),
+      outCustoms: row.outCustomsNo || '—',
+    }
+
     if (row.docType === '加工过程') {
-      const lines = linesOf(row).length ? linesOf(row) : batchLines(String(row.prodBatch))
-      list.push({
-        ...row,
+      return {
+        ...base,
         type: '加工过程',
-        lead: true,
         canProcess: false,
         canFinish: !row.finished,
-        customs: customsText(lines),
-        outCustoms: row.outCustomsNo || '—',
         kind: row.process,
         qty: `加工时间：${clock(row.time)}–${clock(row.timeTo)}`,
         stack: stackText(lines),
-      })
+      }
     }
     if (row.docType === '投料出库') {
-      const lines = linesOf(row)
-      const source = lines.length ? lines : [{ customsNo: '—', cargoType: '', wet: 0, feedDry: 0, stack: '', outCustomsNo: '' } as Line]
-      source.forEach((line, index) => {
-        list.push({
-          ...row,
-          type: '投料出库',
-          lead: index === 0,
-          canProcess: index === 0 && !row.finished,
-          canFinish: false,
-          consignor: line.consignor || row.consignor,
-          customs: line.customsNo,
-          outCustoms: line.outCustomsNo || row.outCustomsNo || '—',
-          kind: line.cargoType,
-          qty: lines.length ? `投入 ${num(line.wet)} / ${num(line.feedDry)} 干吨` : '—',
-          stack: line.stack,
-        })
-      })
-    }
-    if (row.docType === '完工入库') {
-      const lines = linesOf(row).length ? linesOf(row) : batchLines(String(row.prodBatch))
-      list.push({
-        ...row,
-        type: '完工入库',
-        lead: true,
-        canProcess: false,
+      return {
+        ...base,
+        type: '投料出库',
+        canProcess: !row.finished,
         canFinish: false,
-        customs: customsText(lines),
-        outCustoms: row.outCustomsNo || '—',
-        kind: row.product || row.process || '成品',
-        qty: row.outputDry != null && row.outputDry !== '' ? `产出 ${num(row.outputDry)} 干吨` : '—',
-        stack: row.stackCode || stackText(lines),
-      })
+        kind: kinds.join('、') || '—',
+        qty: lines.length ? `投入 ${num(feedDry)} 干吨` : '—',
+        stack: stackText(lines),
+      }
     }
-  }
-  return list
+    return {
+      ...base,
+      type: '完工入库',
+      canProcess: false,
+      canFinish: false,
+      kind: row.product || row.process || '成品',
+      qty: row.outputDry != null && row.outputDry !== '' ? `产出 ${num(row.outputDry)} 干吨` : '—',
+      stack: row.stackCode || stackText(lines),
+    }
+  })
 })
 
 const opsRows = computed(() => flatOps.value.filter((row) => {
@@ -250,6 +252,10 @@ const detailFinish = computed(() => finishOf(detailBatch.value))
 const processLines = computed(() => linesOfOrder(process.id))
 const finishLines = computed(() => linesOfOrder(finish.id))
 const finishCustoms = computed(() => customsText(finishLines.value))
+const finishAllocatedDry = computed(() => finish.picks.reduce((sum, pick) => {
+  const weight = Number(pick.dryWeight)
+  return sum + (Number.isFinite(weight) ? weight : 0)
+}, 0))
 
 const ledgerRows = computed(() => {
   const map = new Map<string, { date: string; consume: number; output: number; orders: Set<string> }>()
@@ -847,12 +853,6 @@ async function saveProcess() {
   load()
 }
 
-watch(() => finish.stackCode, (code) => {
-  const stack = stacks.value.find((item) => String(item.code) === code)
-  finish.warehouseId = stack ? String(stack.warehouseId || '') : ''
-  if (stack) finish.areaId = String(stack.id || finish.areaId)
-})
-
 function consignorFromFeed(doc: Doc | undefined) {
   const lines = linesOf(doc || {})
   const names = [...new Set(lines.map((line) => line.consignor).filter(Boolean))]
@@ -871,8 +871,8 @@ function fillFinish(id: string) {
   finish.outputDry = ''
   finish.stackCode = ''
   finish.areaId = ''
-  finish.warehouseId = ''
   finish.cells = ''
+  finish.picks = []
 }
 
 function openFinish(row?: Doc) {
@@ -887,27 +887,39 @@ function openFinish(row?: Doc) {
 }
 
 async function saveFinish() {
-  if (!finish.id || !finish.stackCode || !(Number(finish.outputDry) > 0)) {
-    ElMessage.warning('请选择生产单、产量和待检区堆位')
+  const outputDry = Number(finish.outputDry)
+  if (!finish.id || !(outputDry > 0)) {
+    ElMessage.warning('请选择生产单并填写产量')
     return
   }
-  if (!String(finish.cells || '').trim()) {
-    ElMessage.warning('请在待检区堆位上框选存放格子（同一待检区可放不同批次）')
+  const picks = finish.picks.filter((pick) => pick.areaId || pick.stackCode)
+  if (!picks.length) {
+    ElMessage.warning('请在待检区地图选择一个或多个堆位')
     return
   }
-  const stack = stacks.value.find((item) => String(item.code) === finish.stackCode || String(item.id) === finish.areaId)
-  const area = String(stack?.areaLabel || '')
-  if (area && area !== '待检区' && !area.includes('待检')) {
-    ElMessage.warning('成品完工入库只能存入待检区')
+  const missingCells = picks.find((pick) => !String(pick.cells || '').trim())
+  if (missingCells) {
+    ElMessage.warning(`请为堆位 ${missingCells.stackCode || missingCells.areaId} 框选存放格子`)
+    return
+  }
+  const invalidWeight = picks.find((pick) => !(Number(pick.dryWeight) > 0))
+  if (invalidWeight) {
+    ElMessage.warning(`请填写堆位 ${invalidWeight.stackCode || invalidWeight.areaId} 的入库干吨`)
+    return
+  }
+  if (Math.abs(finishAllocatedDry.value - outputDry) >= 0.011) {
+    ElMessage.warning(`各堆位干吨合计需等于产量 ${num(outputDry)} 吨`)
     return
   }
   const doc = docs.value.find((row) => String(row.id) === finish.id)
   const res = await productionApi.finish(finish.id, {
-    outputDry: Number(finish.outputDry),
-    stackCode: finish.stackCode,
-    areaId: finish.areaId,
-    warehouseId: finish.warehouseId,
-    cells: finish.cells,
+    outputDry,
+    productionOrderAreas: picks.map((pick) => ({
+      areaId: pick.areaId,
+      warehouseId: pick.warehouseId,
+      areas: pick.cells,
+      dryWeight: Number(pick.dryWeight),
+    })),
     prodBatch: finish.prodBatch || doc?.prodBatch,
     consignorId: doc?.consignorId,
     process: doc?.process,
@@ -921,20 +933,38 @@ async function saveFinish() {
   load()
 }
 
-async function openDetail(batch: unknown) {
-  const name = String(batch || '')
+function distributeFinishDry() {
+  const picks = finish.picks
+  const outputDry = Number(finish.outputDry)
+  if (!picks.length || !(outputDry > 0)) return
+  const share = Math.floor((outputDry / picks.length) * 100) / 100
+  picks.forEach((pick, index) => {
+    pick.dryWeight = index === picks.length - 1
+      ? Number((outputDry - share * (picks.length - 1)).toFixed(2))
+      : share
+  })
+}
+
+async function openDetail(row: Doc) {
+  const id = String(row.id || '')
+  const name = String(row.prodBatch || '')
   detailBatch.value = name
   detailOpen.value = true
-  if (!name) return
-  const res = await productionApi.detail(name)
+  if (!id) return
+  const res = await productionApi.detail(id)
   if (!res.success || !res.data || !Array.isArray(res.data.list) || !res.data.list.length) return
   const extra = (res.data.list as Doc[]).map((row) => {
     if (linesOf(row).length) return row
-    const local = docs.value.find((item) => String(item.id) === String(row.id))
+    const local = docs.value.find((item) => String(item.id) === id)
     if (!local || !linesOf(local).length) return row
     return { ...row, feedLines: local.feedLines, customsNos: local.customsNos, sourceStacks: local.sourceStacks, outCustomsNo: local.outCustomsNo }
   })
-  docs.value = [...docs.value.filter((row) => row.prodBatch !== name), ...extra]
+  const detailed = extra[0]
+  if (!detailed) return
+  const existing = docs.value.some((item) => String(item.id) === id)
+  docs.value = existing
+    ? docs.value.map((item) => String(item.id) === id ? { ...item, ...detailed } : item)
+    : [...docs.value, detailed]
 }
 
 function openLedger(date: string) {
@@ -989,7 +1019,7 @@ function openLedger(date: string) {
             <template #default="{ row }">
               <el-button v-if="row.canProcess" link type="primary" @click="openProcess(row)">登记加工</el-button>
               <el-button v-if="row.canFinish" link type="primary" @click="openFinish(row)">完工入库</el-button>
-              <el-button link type="primary" @click="openDetail(row.prodBatch)">详情</el-button>
+              <el-button link type="primary" @click="openDetail(row)">详情</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -1181,9 +1211,40 @@ function openLedger(date: string) {
         <el-col :span="12"><el-form-item label="产量(干吨)" required><el-input v-model="finish.outputDry" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="关联报关单号"><el-input :model-value="finishCustoms" readonly /></el-form-item></el-col>
       </el-row>
-      <el-form-item label="目标堆位" required>
-        <StackGridPicker v-model:stack-code="finish.stackCode" v-model:area-id="finish.areaId" v-model:cells="finish.cells" class="grid-pick" :stacks="stacks" area-label="待检区" />
-      </el-form-item>
+      <div class="finish-split">
+        <div class="map-pane">
+          <div class="map-label">成品待检区堆位 <span>* 可多选</span></div>
+          <StackGridPicker
+            multi
+            v-model:stack-code="finish.stackCode"
+            v-model:area-id="finish.areaId"
+            v-model:cells="finish.cells"
+            v-model:picks="finish.picks"
+            class="grid-pick"
+            :stacks="stacks"
+            area-label="待检区"
+          />
+        </div>
+        <div class="alloc-pane">
+          <div class="alloc-heading">
+            <div class="map-label">堆位干吨分配 <span>*</span></div>
+            <el-button size="small" :disabled="!finish.picks.length || !(Number(finish.outputDry) > 0)" @click="distributeFinishDry">平均分配</el-button>
+          </div>
+          <el-table :data="finish.picks" border size="small" empty-text="请在左侧地图选择待检区堆位">
+            <el-table-column prop="stackCode" label="堆位" min-width="90" />
+            <el-table-column label="格数" width="60" align="center">
+              <template #default="{ row }">{{ String(row.cells || '').split(',').filter(Boolean).length || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="干吨" min-width="100">
+              <template #default="{ row }"><el-input v-model="row.dryWeight" type="number" min="0" step="0.01" placeholder="必填" /></template>
+            </el-table-column>
+            <el-table-column label="" width="60" align="center">
+              <template #default="{ $index }"><el-button link type="danger" @click="finish.picks.splice($index, 1)">移除</el-button></template>
+            </el-table-column>
+          </el-table>
+          <p class="alloc-sum">已分配 {{ num(finishAllocatedDry) }} / {{ num(finish.outputDry) }} 干吨</p>
+        </div>
+      </div>
       <div class="panel-title">关联报关单矿物</div>
       <el-table :data="finishLines" border empty-text="未匹配到投料报关单">
         <el-table-column label="报关单号" min-width="160"><template #default="{ row }">{{ dash(row.customsNo) }}</template></el-table-column>
@@ -1308,7 +1369,12 @@ function openLedger(date: string) {
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .hint { color: #5a6a7e; margin: 0 0 12px; }
-.grid-pick { height: 420px; }
+.grid-pick { height: 360px; }
+.finish-split { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); gap: 16px; align-items: stretch; }
+.alloc-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.alloc-heading .map-label { margin: 0; }
+.alloc-pane { min-width: 0; }
+.alloc-sum { margin: 10px 0 0; color: #5a6a7e; font-size: 13px; }
 .sep { margin: 0 8px; color: #5a6a7e; }
 .panel-title { margin: 16px 0 8px; font-weight: 600; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
@@ -1317,4 +1383,5 @@ function openLedger(date: string) {
 .over :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px var(--el-color-danger) inset; }
 :deep(.el-form-item) { margin-bottom: 12px; }
 :deep(.el-dialog .el-select), :deep(.el-dialog .el-input), :deep(.el-dialog .el-date-editor.el-input) { width: 100%; }
+@media (max-width: 900px) { .finish-split { grid-template-columns: 1fr; } }
 </style>

@@ -74,20 +74,21 @@ async function roleIdFor(key: string) {
 
 /** 将用户 Vo 映射为账号列表行。 */
 function userRow(row: SysUserVo | Row) {
-  const roleBlob = `${text(row.roleKey)} ${(Array.isArray(row.roles) ? row.roles as Row[] : []).map((item) => `${item.roleKey || ''} ${item.roleName || ''}`).join(' ')}`
+  const user = row as Row
+  const roleBlob = `${text(user.roleKey)} ${(Array.isArray(user.roles) ? user.roles as Row[] : []).map((item) => `${item.roleKey || ''} ${item.roleName || ''}`).join(' ')}`
   const roleKey = roleOf(roleBlob) || 'warehouse'
-  const roleRows = Array.isArray(row.roles) ? row.roles as Row[] : []
+  const roleRows = Array.isArray(user.roles) ? user.roles as Row[] : []
   const named = roleRows.map((item) => text(item.roleName)).find(Boolean)
-  const roleId = text(row.roleId || roleRows[0]?.roleId || (Array.isArray(row.roleIds) ? row.roleIds[0] : ''))
+  const roleId = text(user.roleId || roleRows[0]?.roleId || (Array.isArray(user.roleIds) ? user.roleIds[0] : ''))
   return {
-    id: text(row.userId ?? row.id),
-    username: text(row.userName),
-    name: text(row.nickName),
+    id: text(user.userId ?? user.id),
+    username: text(user.userName),
+    name: text(user.nickName),
     roleKey,
     roleId,
     roleName: named || ROLE_LABEL[roleKey],
-    phone: text(row.phonenumber),
-    status: userStatusLabel(row.status),
+    phone: text(user.phonenumber),
+    status: userStatusLabel(user.status),
   }
 }
 

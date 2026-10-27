@@ -97,7 +97,7 @@ export function policyFromParams(row: Partial<SecurityPolicy> & Record<string, u
   const flag = (key: keyof SecurityPolicy, fallback: boolean) => {
     const value = row[key]
     if (value == null) return fallback
-    return value !== false && value !== '0' && value !== 0
+    return value !== false && String(value) !== '0'
   }
   return normalizePolicy({
     minLength: row.minLength ?? row.passwordLength as number | undefined,

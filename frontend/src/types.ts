@@ -25,7 +25,7 @@ export interface AuthUser {
 export interface FieldSchema {
   key: string
   label: string
-  type?: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea' | 'multi' | 'file' | 'image' | 'cells' | 'password'
+  type?: 'text' | 'number' | 'select' | 'date' | 'month' | 'datetime' | 'textarea' | 'multi' | 'file' | 'image' | 'cells' | 'password'
   optionsFrom?: 'stacks' | 'materials' | 'shipping' | 'consignors' | 'warehouses' | 'roles'
   /** 选项来自字典类型，值为字典标签。 */
   dict?: string

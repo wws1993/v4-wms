@@ -74,7 +74,7 @@ async function loadOrders(ids: string[]) {
   await Promise.all(unique.map(async (id) => {
     const detail = await ruoyiGet<ProductionOrderVo, ProductionOrderVo>(`/wms/productionOrder/${encodeURIComponent(id)}`)
     if (!detail.ok) return
-    const row = (detail.data && typeof detail.data === 'object' ? detail.data as Row : detail.rows[0])
+    const row = (detail.data && typeof detail.data === 'object' ? detail.data as Row : detail.rows[0] as Row | undefined)
     if (row) map.set(id, row)
   }))
   return map
@@ -92,7 +92,7 @@ async function listInspections(query: Query) {
   if (!result.ok) return fail(brief(result.message))
   const orderIds = result.rows.map((row) => text(row.productionOrderId || nested(row, 'productionOrder')?.id))
   const orders = await loadOrders(orderIds)
-  const list = result.rows.map((row) => inspectView(row, orders, areaNames))
+  const list = result.rows.map((row) => inspectView(row as InspectionRow, orders, areaNames))
   return pageOf(result, list, query)
 }
 
@@ -101,7 +101,7 @@ async function getInspection(id: string) {
   const areaNames = await dictOf('wms_area_identification')
   const result = await ruoyiGet<ProductionOrderInspectionVo, ProductionOrderInspectionVo>(`/wms/productionOrderInspection/${encodeURIComponent(id)}`)
   if (!result.ok) return fail(brief(result.message))
-  const row = (result.data && typeof result.data === 'object' ? result.data as Row : result.rows[0])
+  const row = (result.data && typeof result.data === 'object' ? result.data as Row : result.rows[0] as Row | undefined)
   if (!row) return fail('送检记录不存在')
   const orders = await loadOrders([text(row.productionOrderId)])
   return ok(inspectView(row, orders, areaNames))
@@ -162,27 +162,28 @@ async function listInspectLots(query: Query) {
   }))
   if (!result.ok) return fail(brief(result.message))
   const list = result.rows.map((row) => {
-    const area = orderArea(row)
-    const areaId = text(row.targetAreaId || area?.id)
+    const order = row as Row
+    const area = orderArea(order)
+    const areaId = text(order.targetAreaId || area?.id)
     const stack = areas.find((item) => text(item.id) === areaId)
       || areas.find((item) => areaCodeValue(item) === text(area?.areaCode) || areaNameValue(item) === text(area?.areaName))
     const areaRaw = text(stack?.areaIdentification || area?.areaIdentification)
     const areaLabel = labelOf(areaNames, areaRaw) || areaRaw
-    const details = Array.isArray(row.productionOrderDetails) ? row.productionOrderDetails as Row[] : []
+    const details = Array.isArray(order.productionOrderDetails) ? order.productionOrderDetails as Row[] : []
     const customs = [...new Set(details.map((detail) => {
       const receipt = nested(detail, 'receiptOrder')
       return text(receipt?.recordNo || detail.recordNo)
     }).filter(Boolean))]
-    const consignor = nested(row, 'consignor')
+    const consignor = nested(order, 'consignor')
     return {
-      id: text(row.id),
-      productionOrderId: text(row.id),
-      orderNo: text(row.productionOrderNo || row.finishOrderNo || row.workOrderNo || row.id),
-      prodBatch: text(row.batchNo),
-      consignor: text(consignor?.merchantName || row.consignorName),
+      id: text(order.id),
+      productionOrderId: text(order.id),
+      orderNo: text(order.productionOrderNo || order.finishOrderNo || order.workOrderNo || order.id),
+      prodBatch: text(order.batchNo),
+      consignor: text(consignor?.merchantName || order.consignorName),
       stackCode: text(stack ? (areaCodeValue(stack) || areaNameValue(stack)) : (area?.areaCode || area?.areaName)),
       areaLabel,
-      outputDry: row.productionWeight ?? '',
+      outputDry: order.productionWeight ?? '',
       customsNos: customs.join('、'),
       time: stamp(row.updateTime || row.createTime, 16),
     }

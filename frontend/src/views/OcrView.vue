@@ -24,6 +24,7 @@ const open = ref(false)
 const current = ref<Record<string, unknown> | null>(null)
 const form = reactive<Record<string, string>>({})
 const types = ['入库报关单', '出库报关单', '品质单', '重量单']
+const mockOcrEnabled = import.meta.env.VITE_OCR_MOCK !== 'false'
 const statuses = ['待修正', '已回填', '已归档']
 const labels: Record<string, string> = {
   customsNo: '报关单号', checklistNo: '核注清单号', shipName: '船名', blNo: '提单号', blWeight: '提货重量', amount: '金额',
@@ -208,7 +209,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="扫描件" required>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onFile" />
-          <p class="hint">支持 PDF / JPG / PNG。当前按写死样例回填。</p>
+          <p class="hint">支持 PDF / JPG / PNG。{{ mockOcrEnabled ? '当前使用模拟识别结果。' : '当前调用后端 OCR 服务。' }}</p>
           <p v-if="fileName" class="file-name">{{ fileName }}</p>
         </el-form-item>
       </el-form>

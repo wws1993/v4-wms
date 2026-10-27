@@ -56,11 +56,15 @@ type DocPreview = { name: string; url: string; image: boolean; file?: File }
 const previews = reactive<Record<string, DocPreview>>({})
 const ocrOpen = ref(false)
 const ocrBusy = ref(false)
+const ocrProgress = ref(0)
+const ocrProgressKind = ref<'bl' | 'customs' | 'weight' | 'quality'>('customs')
 const ocrTarget = ref<'inbound' | 'weight' | 'quality' | 'receive'>('inbound')
 const qualityKeys = ref<QualityKey[]>(DEFAULT_QUALITY.map((item) => ({ ...item })))
 const qualityFieldKeys = computed(() => qualityKeys.value.map((item) => item.key))
+let ocrProgressTimer = 0
 
-const form = reactive<Record<string, any>>({
+const mockData = { "id": "", "consignor": "广西南国铜业有限责任公司", "shipName": "TTM HARVEST", "blNo": "G20TTMTGN2601", "blWeight": "11713480", "time": "2026/08/04", "customsNo": "L7227B25A001", "checklistNo": "QD722726I000000151", "amount": "", "currency": "1", "material": "Chuquicamata", "oreType": "报备铜精矿", "shipMode": "散货", "containerCount": "", "filingNo": "1(1吨), 123(86576吨)", "stackCode": "4#B2", "areaId": "2111064108889866242", "cells": "", "stackPicks": [ { "stackCode": "4#B1", "areaId": "2111064108428492802", "cells": "1-2,1-3,1-4,1-5,1-6,2-2,2-3,2-4,2-5,2-6,3-2,3-3,3-4,3-5,3-6,4-2,4-3,4-4,4-5,4-6", "warehouseId": "2111008426543087617" }, { "stackCode": "4#A2", "areaId": "2111064107992285185", "cells": "1-1,1-2,1-3,1-4,1-5,2-1,2-2,2-3,2-4,2-5,3-1,3-2,3-3,3-4,3-5", "warehouseId": "2111008426543087617" } ], "receiptOrderDetails": [ { "itemCode": "2603000010", "itemName": "铜精矿（黄金价值部分）", "quantity": "42.48", "unit": "千克", "unitPrice": "168331.3602", "totalPrice": "7117049.91", "currency": "2", "originCountry": "塞尔维亚", "destCountry": "中国" }, { "itemCode": "2603000090", "itemName": "铜精矿（非黄金价值部分）", "quantity": "11713437.52", "unit": "千克", "unitPrice": "3.2139", "totalPrice": "36527630.90", "currency": "2", "originCountry": "塞尔维亚", "destCountry": "中国" } ], "orcId": "2114234856675368961", "wet": "", "dry": "", "moisture": "", "weightOrcId": "", "elementsOrcId": "", "qualityNo": "", "remark": "", "category": "原料", "cargoType": "报备矿", "orderNo": "", "cu": "", "ag": "", "au": "", "as": "", "pb": "", "cd": "", "f": "", "hg": "" };
+const defaultData = {
   id: '',
   consignor: props.consignors[0] || '',
   shipName: '',
@@ -92,7 +96,8 @@ const form = reactive<Record<string, any>>({
   category: '原料',
   cargoType: '',
   orderNo: '',
-})
+};
+const form = reactive<Record<string, any>>(defaultData)
 const draft = reactive<Record<string, any>>({})
 
 for (const item of qualityKeys.value) form[item.key] = form[item.key] ?? ''
@@ -365,6 +370,7 @@ function syncDraftFromForm(kind: 'bl' | 'customs' | 'weight' | 'quality') {
 }
 
 async function recognizeFile(kind: 'bl' | 'customs' | 'weight' | 'quality', file: File, replacePreview = true) {
+  if (ocrBusy.value) return false
   if (replacePreview) {
     const previous = previews[kind]
     if (previous?.url) URL.revokeObjectURL(previous.url)
@@ -374,9 +380,17 @@ async function recognizeFile(kind: 'bl' | 'customs' | 'weight' | 'quality', file
     previews[kind] = { ...previews[kind], name: file.name, file }
   }
   lastDoc.value = kind
+  ocrProgressKind.value = kind
   ocrBusy.value = true
+  ocrProgress.value = 4
+  ocrProgressTimer = window.setInterval(() => {
+    ocrProgress.value = Math.min(92, ocrProgress.value + Math.max(1, Math.ceil((92 - ocrProgress.value) / 14)))
+  }, 220)
   try {
-    const res = await ocrApi.recognize({ docType: DOC_TYPE[kind], fileName: file.name, __file: file })
+    const [res] = await Promise.all([
+      ocrApi.recognize({ docType: DOC_TYPE[kind], fileName: file.name, __file: file }),
+      new Promise((resolve) => window.setTimeout(resolve, 900)),
+    ])
     if (!res.success || !res.data) {
       ElMessage.error(res.message || '识别失败')
       return false
@@ -403,8 +417,15 @@ async function recognizeFile(kind: 'bl' | 'customs' | 'weight' | 'quality', file
       ElMessage.success('品质证书已识别并回填')
     }
     syncDraftFromForm(kind)
+    ocrProgress.value = 100
     return true
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '识别失败，请重试'
+    ElMessage.error(message)
+    return false
   } finally {
+    window.clearInterval(ocrProgressTimer)
+    await new Promise((resolve) => window.setTimeout(resolve, 350))
     ocrBusy.value = false
   }
 }
@@ -489,8 +510,27 @@ async function submitReserve() {
     ElMessage.warning('请选择矿种')
     return
   }
-  if (form.amount === '' || form.amount == null) {
-    ElMessage.warning('请填写订单金额')
+  const details = (Array.isArray(form.receiptOrderDetails) ? form.receiptOrderDetails : [])
+    .filter((detail: Record<string, unknown>) => [
+      detail.itemCode,
+      detail.itemName,
+      detail.quantity,
+      detail.unitPrice,
+      detail.totalPrice,
+      detail.originCountry,
+      detail.unit !== '千克' ? detail.unit : '',
+      detail.currency !== '1' ? detail.currency : '',
+      detail.destCountry !== '中国' ? detail.destCountry : '',
+    ].some((value) => String(value ?? '').trim() !== ''))
+  if (!details.length) {
+    ElMessage.warning('请至少填写一条报关金额明细')
+    return
+  }
+  if (details.some((detail: Record<string, unknown>) => {
+    const total = String(detail.totalPrice ?? '').trim()
+    return !total || !Number.isFinite(Number(total))
+  })) {
+    ElMessage.warning('请填写每条报关金额明细的总价')
     return
   }
   const picks = (Array.isArray(form.stackPicks) ? form.stackPicks as StackPick[] : [])
@@ -620,6 +660,7 @@ function deleteReceiptOrderDetails(idx: number) {
 }
 
 onBeforeUnmount(() => {
+  window.clearInterval(ocrProgressTimer)
   for (const item of Object.values(previews)) {
     if (item.url) URL.revokeObjectURL(item.url)
   }
@@ -663,28 +704,45 @@ onBeforeUnmount(() => {
             <el-form-item label="船名" required><el-input v-model="form.shipName" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="核注清单号"><el-input v-model="form.checklistNo" placeholder="OCR 回填" /></el-form-item>
             <el-form-item label="提运单号" required><el-input v-model="form.blNo" placeholder="OCR 回填" /></el-form-item>
-            <el-form-item label="金额" required>
-              <div class="money" v-for="(item, idx) in form.receiptOrderDetails" :key="item.id" style="margin-bottom:8px">
-                <el-input v-model="item.itemCode" type="string" placeholder="编号" />
-                <el-input v-model="item.itemName" type="string" placeholder="名称" />
-                <el-input v-model="item.quantity" type="string" placeholder="数量" />
-                <el-input v-model="item.unit" type="string" placeholder="单位" />
-                <el-input v-model="item.unitPrice" type="string" placeholder="单价" />
-                <el-input v-model="item.totalPrice" type="string" placeholder="总价" />
-                <el-select v-model="item.currency" style="width: 120px" placeholder="币制">
-                  <el-option v-for="item in currencies" :key="item.value" :label="item.label" :value="item.value" />
-                </el-select>
-                <el-input v-model="item.originCountry" type="string" placeholder="原产国" />
-                <el-input v-model="item.destCountry" type="string" placeholder="目的地" />
-
-                <el-icon style="transform:translateY(10px); cursor:pointer;" @click="deleteReceiptOrderDetails(idx)" v-if="!!idx"><Delete /></el-icon>
-                <div v-else style="width:14px;"></div>
+            <el-form-item label="报关金额明细" required>
+              <div class="money-editor">
+                <div class="money-heading">
+                  <div>
+                    <strong>商品金额明细</strong>
+                    <span>填写报关商品、数量与金额信息</span>
+                  </div>
+                  <el-button size="small" type="primary" plain @click="addReceiptOrderDetails">
+                    <el-icon><Plus /></el-icon>
+                    添加明细
+                  </el-button>
+                </div>
+                <div class="money-list">
+                  <section v-for="(item, idx) in form.receiptOrderDetails" :key="idx" class="money-card">
+                    <div class="money-card-heading">
+                      <span class="money-index">{{ String(idx + 1).padStart(2, '0') }}</span>
+                      <strong>商品明细</strong>
+                      <span v-if="idx === 0" class="money-required">至少保留一行</span>
+                      <el-button v-else link type="danger" @click="deleteReceiptOrderDetails(idx)">
+                        <el-icon><Delete /></el-icon>
+                        删除
+                      </el-button>
+                    </div>
+                    <div class="money-fields">
+                      <label class="money-field"><span>商品编号</span><el-input v-model="item.itemCode" size="small" placeholder="请输入编号" /></label>
+                      <label class="money-field"><span>商品名称</span><el-input v-model="item.itemName" size="small" placeholder="请输入名称" /></label>
+                      <label class="money-field"><span>数量</span><el-input v-model="item.quantity" size="small" placeholder="请输入数量" /></label>
+                      <label class="money-field"><span>单位</span><el-input v-model="item.unit" size="small" placeholder="如：千克" /></label>
+                      <label class="money-field"><span>单价</span><el-input v-model="item.unitPrice" size="small" placeholder="请输入单价" /></label>
+                      <label class="money-field"><span>总价</span><el-input v-model="item.totalPrice" size="small" placeholder="请输入总价" /></label>
+                      <label class="money-field"><span>币制</span><el-select v-model="item.currency" size="small" placeholder="请选择币制">
+                        <el-option v-for="currency in currencies" :key="currency.value" :label="currency.label" :value="currency.value" />
+                      </el-select></label>
+                      <label class="money-field"><span>原产国</span><el-input v-model="item.originCountry" size="small" placeholder="请输入原产国" /></label>
+                      <label class="money-field"><span>目的地</span><el-input v-model="item.destCountry" size="small" placeholder="请输入目的地" /></label>
+                    </div>
+                  </section>
+                </div>
               </div>
-
-              <el-button type="button" @click="addReceiptOrderDetails">
-                <el-icon><Plus /></el-icon>
-                再加一行
-              </el-button>
             </el-form-item>
             <el-form-item label="矿区" required>
               <el-select v-model="form.material" @change="onMaterial">
@@ -728,7 +786,7 @@ onBeforeUnmount(() => {
             <el-col :span="12"><el-form-item label="货运方式"><el-input :model-value="dash(form.shipMode)" readonly disabled /></el-form-item></el-col>
             <el-col v-if="containerMode" :span="12"><el-form-item label="集装箱柜数"><el-input :model-value="dash(form.containerCount)" readonly disabled /></el-form-item></el-col>
             <el-col :span="24">
-              <div class="ocr-dual" v-loading="ocrBusy">
+              <div class="ocr-dual">
                 <div>
                   <button v-if="!previews.weight" type="button" class="slot" @click="pick('weight')">
                     <strong>上传重量单</strong><span>识别湿重 / 干重 / 水分</span>
@@ -877,12 +935,33 @@ onBeforeUnmount(() => {
         <el-button type="primary" @click="applyOcr">回填并归档</el-button>
       </template>
     </el-dialog>
+
+    <Teleport to="body">
+      <div v-if="ocrBusy" class="ocr-mask" role="status" aria-live="polite">
+        <div class="ocr-progress-card">
+          <div class="ocr-spinner" />
+          <strong>正在识别{{ DOC_TYPE[ocrProgressKind] }}</strong>
+          <span>正在提取单据字段，请稍候…</span>
+          <div class="ocr-progress-track"><i :style="{ width: `${ocrProgress}%` }" /></div>
+          <small>{{ ocrProgress }}%</small>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .dlg-title { margin: 0; font-size: 16px; font-weight: 600; }
 .file { display: none; }
+.ocr-mask { position: fixed; z-index: 5000; inset: 0; display: grid; place-items: center; background: rgb(18 22 28 / 52%); backdrop-filter: blur(3px); }
+.ocr-progress-card { display: flex; width: min(360px, calc(100vw - 40px)); flex-direction: column; align-items: center; gap: 12px; padding: 28px 30px 22px; border: 1px solid var(--el-color-primary-light-7); border-radius: 12px; background: var(--el-bg-color); box-shadow: 0 20px 60px rgb(0 0 0 / 20%); color: var(--el-text-color-primary); }
+.ocr-progress-card strong { font-size: 16px; font-weight: 600; }
+.ocr-progress-card > span { color: var(--el-text-color-secondary); font-size: 13px; }
+.ocr-spinner { width: 38px; height: 38px; border: 3px solid var(--el-color-primary-light-8); border-top-color: var(--el-color-primary); border-radius: 50%; animation: ocr-spin 0.8s linear infinite; }
+.ocr-progress-track { width: 100%; height: 6px; overflow: hidden; border-radius: 99px; background: var(--el-color-primary-light-9); }
+.ocr-progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--el-color-primary); transition: width 220ms ease; }
+.ocr-progress-card small { color: var(--el-color-primary-dark-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+@keyframes ocr-spin { to { transform: rotate(360deg); } }
 .reserve { min-height: 0; height: 100%; display: flex; flex-direction: column}
 .ocr-bar, .ocr-dual { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; background: #fff; border: 1px solid #ececec; border-radius: 8px; }
 .ocr-bar { margin-bottom: 12px; }
@@ -900,8 +979,24 @@ onBeforeUnmount(() => {
 .map-label { font-weight: 600; }
 .map-label span { color: var(--el-color-danger); }
 .map-pane :deep(.pick) { flex: 1; min-height: 0; }
-.money { display: flex; gap: 8px; width: 100%; }
-.money :deep(.el-input) { flex: 1; }
+.money-editor { width: 100%; padding: 9px; border: 1px solid var(--el-color-primary-light-7); border-radius: 8px; background: linear-gradient(180deg, var(--el-color-primary-light-9) 0%, #fff 100%); }
+.money-heading, .money-card-heading { display: flex; align-items: center; }
+.money-heading { justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.money-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.money-heading strong { color: var(--el-text-color-primary); font-size: 13px; }
+.money-heading span { color: var(--el-text-color-secondary); font-size: 11px; }
+.money-list { display: flex; flex-direction: column; gap: 7px; }
+.money-card { padding: 8px 9px; border: 1px solid var(--el-border-color); border-radius: 6px; background: #fff; }
+.money-card-heading { gap: 7px; margin-bottom: 7px; padding-bottom: 6px; border-bottom: 1px solid var(--el-color-primary-light-9); }
+.money-card-heading strong { color: var(--el-text-color-primary); font-size: 12px; }
+.money-index { display: inline-flex; width: 21px; height: 21px; align-items: center; justify-content: center; border-radius: 5px; background: var(--el-color-primary-light-9); color: var(--el-color-primary-dark-2); font-size: 10px; font-weight: 700; }
+.money-required { margin-left: auto; color: var(--el-text-color-secondary); font-size: 11px; }
+.money-card-heading .el-button { margin-left: auto; }
+.money-fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px 9px; }
+.money-field { display: flex; min-width: 0; flex-direction: column; gap: 3px; color: var(--el-text-color-secondary); font-size: 11px; }
+.money-field :deep(.el-input), .money-field :deep(.el-select) { width: 100%; }
+.money-field :deep(.el-input__wrapper), .money-field :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-border-color) inset; }
+.money-field :deep(.el-input__wrapper:hover), .money-field :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px var(--el-color-primary-light-5) inset; }
 .ocr-dual { margin-bottom: 16px; align-items: stretch; }
 .receive { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .receive-split {
@@ -974,6 +1069,13 @@ onBeforeUnmount(() => {
 .ocr-shot :deep(.shot img) { height: 220px; }
 .preview { min-height: 180px; margin-bottom: 12px; border: 1px dashed #dcdfe6; border-radius: 6px; background: #f7f7f7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #8a8a8a; overflow: hidden; }
 .hint { margin: 0 0 8px; color: #5c5c5c; }
+@media (max-width: 1100px) {
+  .money-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .money-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .money-heading { align-items: flex-start; }
+}
 </style>
 
 <style>

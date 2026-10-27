@@ -10,6 +10,7 @@ import { materialRoutes } from '@/controller/material'
 import { shippingRoutes } from '@/controller/shipping'
 import { partnerRoutes } from '@/controller/partner'
 import { bondedRoutes } from '@/controller/bonded'
+import { ledgerRoutes } from '@/controller/ledger'
 import { inboundRoutes } from '@/controller/inbound'
 import { dashboardRoutes } from '@/controller/dashboard'
 import { inventoryRoutes } from '@/controller/inventory'
@@ -35,6 +36,7 @@ export const routes: Route[] = [
   ...shippingRoutes,
   ...partnerRoutes,
   ...bondedRoutes,
+  ...ledgerRoutes,
   ...inboundRoutes,
   ...dashboardRoutes,
   ...inventoryRoutes,

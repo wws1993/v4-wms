@@ -717,6 +717,16 @@ paths:
             description: 堆位信息
             items:
               $ref: '#/components/schemas/ReceiptOrderAreaBo'
+        - name: receiptOrderDetails
+          in: query
+          description: 明细
+          required: false
+          example: ''
+          schema:
+            type: array
+            description: 明细
+            items:
+              $ref: '#/components/schemas/RecordOrderDetailBo'
         - name: receiptOrderStatus
           in: query
           description: 入库状态
@@ -993,6 +1003,16 @@ paths:
             description: 堆位信息
             items:
               $ref: '#/components/schemas/ReceiptOrderAreaBo'
+        - name: receiptOrderDetails
+          in: query
+          description: 明细
+          required: false
+          example: ''
+          schema:
+            type: array
+            description: 明细
+            items:
+              $ref: '#/components/schemas/RecordOrderDetailBo'
         - name: receiptOrderStatus
           in: query
           description: 入库状态
@@ -1262,6 +1282,16 @@ paths:
             description: 堆位信息
             items:
               $ref: '#/components/schemas/ReceiptOrderAreaBo'
+        - name: receiptOrderDetails
+          in: query
+          description: 明细
+          required: false
+          example: ''
+          schema:
+            type: array
+            description: 明细
+            items:
+              $ref: '#/components/schemas/RecordOrderDetailBo'
         - name: receiptOrderStatus
           in: query
           description: 入库状态
@@ -14347,6 +14377,105 @@ paths:
           headers: {}
       security:
         - apiKey: []
+  /wms/monthAccount/list:
+    get:
+      summary: 月度账单查询列表
+      deprecated: false
+      description: 查询物料列表
+      operationId: list_14
+      tags:
+        - 物料档案
+      parameters:
+        - name: month
+          in: query
+          description: 月份，例如2026-09
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 物料编码
+        - name: clearanceStatus
+          in: query
+          description: 是否出清（已出清/未出清）
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 物料名称
+        - name: searchValue
+          in: query
+          description: 报关单号
+          required: false
+          example: ''
+          schema:
+            type: string
+            description: 货物类型
+        - name: pageSize
+          in: query
+          description: 分页大小
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 分页大小
+            format: int32
+        - name: pageNum
+          in: query
+          description: 当前页数
+          required: false
+          example: ''
+          schema:
+            type: integer
+            description: 当前页数
+            format: int32
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    description: 总记录数
+                    format: int64
+                  rows:
+                    type: array
+                    description: 列表数据
+                    items:
+                      type: object
+                      properties:
+                        orderId:
+                          type: integer
+                          format: int64
+                          description: 入库单ID
+                        receiptDate:
+                          type: string
+                          description: 入库账期
+                        recordNo:
+                          type: string
+                          description: 报关单号
+                        dryWeight:
+                          type: number
+                          description: 入库吨
+                        consumeDryWeight:
+                          type: string
+                          description: 耗用吨
+                        clearanceStatus:
+                          type: integer
+                          description: 是否出清（已出清/未出清）
+                          format: int64
+                  code:
+                    type: integer
+                    description: 消息状态码
+                    format: int32
+                  msg:
+                    type: string
+                    description: 消息内容
+          headers: {}
+      security:
+        - apiKey: []
 webhooks: {}
 components:
   schemas:
@@ -14858,6 +14987,8 @@ components:
           description: 堆位信息
           items:
             $ref: '#/components/schemas/ReceiptOrderAreaBo'
+        areaNames:
+          type: string
       description: 入库单-收货
     OcrLogBo:
       required:
@@ -15991,11 +16122,11 @@ components:
         parentMenuName:
           type: string
           description: 上级菜单名称字段
-        crud:
-          type: boolean
         tree:
           type: boolean
         sub:
+          type: boolean
+        crud:
           type: boolean
       description: 业务表 gen_table
     SysUserBo:
@@ -16190,22 +16321,22 @@ components:
           type: boolean
         list:
           type: boolean
-        insert:
-          type: boolean
-        edit:
-          type: boolean
         pk:
           type: boolean
-        usableColumn:
+        insert:
           type: boolean
         superColumn:
           type: boolean
+        usableColumn:
+          type: boolean
+        edit:
+          type: boolean
+        capJavaField:
+          type: string
         query:
           type: boolean
         increment:
           type: boolean
-        capJavaField:
-          type: string
       description: 代码生成业务字段表 gen_table_column
     SysUserProfileBo:
       type: object
@@ -16961,6 +17092,43 @@ components:
         data:
           $ref: '#/components/schemas/ShippingMethodVo'
       description: 响应信息主体
+    AreaVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        areaCode:
+          type: string
+          description: 编号
+        areaName:
+          type: string
+          description: 名称
+        warehouseId:
+          type: integer
+          description: 所属仓库ID
+          format: int64
+        inventoryCapacity:
+          type: number
+          description: 库容（吨）
+        currentCapacity:
+          type: number
+          description: 当前库容（吨）
+        areaIdentification:
+          type: string
+          description: 片区标识
+        status:
+          type: string
+          description: 状态
+        orderNum:
+          type: integer
+          description: 排序
+          format: int64
+        remark:
+          type: string
+          description: 备注
+        warehouse:
+          $ref: '#/components/schemas/WarehouseVo'
     ReceiptOrderBo:
       required:
         - consignorId
@@ -17057,48 +17225,16 @@ components:
           description: 堆位信息
           items:
             $ref: '#/components/schemas/ReceiptOrderAreaBo'
+        receiptOrderDetails:
+          type: array
+          description: 明细
+          items:
+            $ref: '#/components/schemas/RecordOrderDetailBo'
         receiptOrderStatus:
           type: integer
           description: 入库状态
           format: int32
       description: 入库单业务对象 wms_receipt_order
-    AreaVo:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        areaCode:
-          type: string
-          description: 编号
-        areaName:
-          type: string
-          description: 名称
-        warehouseId:
-          type: integer
-          description: 所属仓库ID
-          format: int64
-        inventoryCapacity:
-          type: number
-          description: 库容（吨）
-        currentCapacity:
-          type: number
-          description: 当前库容（吨）
-        areaIdentification:
-          type: string
-          description: 片区标识
-        status:
-          type: string
-          description: 状态
-        orderNum:
-          type: integer
-          description: 排序
-          format: int64
-        remark:
-          type: string
-          description: 备注
-        warehouse:
-          $ref: '#/components/schemas/WarehouseVo'
     SysLogininforBo:
       type: object
       properties:
@@ -17197,6 +17333,76 @@ components:
           type: string
           description: 唯一标识
       description: 用户登录对象
+    RecordOrderDetailBo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        itemNo:
+          type: integer
+          description: 项号/序号（如 1、2、3）
+          format: int32
+        itemCode:
+          type: string
+          description: 商品编号（如 2603000010）
+        itemName:
+          type: string
+          description: 商品名称及规格型号
+        itemDesc:
+          type: string
+          description: 规格型号（如 0|3|浮选，未烧结...）
+        quantity:
+          type: number
+          description: 数量
+        unit:
+          type: string
+          description: 计量单位（千克/吨）
+        legalQuantity:
+          type: number
+          description: 法定数量
+        legalUnit:
+          type: string
+          description: 法定单位
+        unitPrice:
+          type: number
+          description: 单价
+        totalPrice:
+          type: number
+          description: 总价
+        currency:
+          type: string
+          description: 币制（美元/USD）
+        originCountry:
+          type: string
+          description: 原产国(地区)
+        originCountryCode:
+          type: string
+          description: 原产国代码（SRB、PER）
+        destCountry:
+          type: string
+          description: 最终目的国(地区)
+        destCountryCode:
+          type: string
+          description: 最终目的国代码（CHN）
+      description: ReceiptOrderItemBo
     EmailLoginBody:
       required:
         - email
@@ -17474,6 +17680,85 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    RListWarehouseVo:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WarehouseVo'
+      description: 响应信息主体
+    ShippingMethod:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        id:
+          type: integer
+          format: int64
+        shippingMethodCode:
+          type: string
+          description: 编码
+        shippingMethodName:
+          type: string
+          description: 名称
+        areaNumber:
+          type: integer
+          description: 柜数
+          format: int32
+      description: 装运方式
+    ItemCategoryVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: 物料类型id
+          format: int64
+        parentId:
+          type: integer
+          description: 父物料类型id
+          format: int64
+        ancestors:
+          type: string
+          description: 祖级列表
+        categoryName:
+          type: string
+          description: 物料类型名称
+        orderNum:
+          type: integer
+          description: 显示顺序
+          format: int64
+        status:
+          type: string
+          description: 物料类型状态（0正常 1停用）
+        children:
+          type: array
+          description: 子物料类型
+          items:
+            $ref: '#/components/schemas/ItemCategoryVo'
     ReceiptOrderVo:
       type: object
       properties:
@@ -17597,236 +17882,12 @@ components:
           description: 堆位信息
           items:
             $ref: '#/components/schemas/ReceiptOrderAreaVo'
+        recordOrderDetails:
+          type: array
+          description: 详情
+          items:
+            $ref: '#/components/schemas/RecordOrderDetailVo'
       description: 入库单视图对象 wms_receipt_order
-    ProductionOrderDetailVo:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        productionOrderId:
-          type: integer
-          description: 生产单id
-          format: int64
-        consignorId:
-          type: integer
-          description: 委托方
-          format: int64
-        inventoryId:
-          type: integer
-          description: 库存id
-          format: int64
-        direction:
-          type: integer
-          description: 方向 0 领料(原料) 1 产出(成品)
-          format: int32
-        orderId:
-          type: integer
-          description: 入库报关单id
-          format: int64
-        itemId:
-          type: integer
-          description: 物料id
-          format: int64
-        warehouseId:
-          type: integer
-          description: 源/目标仓库
-          format: int64
-        areaId:
-          type: integer
-          description: 源/目标堆位
-          format: int64
-        wetWeight:
-          type: number
-          description: 湿重(吨)
-        dryWeight:
-          type: number
-          description: 干重(吨)
-        batchNo:
-          type: string
-          description: 批次号
-        remark:
-          type: string
-          description: 备注
-        receiptOrder:
-          $ref: '#/components/schemas/ReceiptOrderVo'
-        shipmentOrder:
-          $ref: '#/components/schemas/ShipmentOrderVo'
-        item:
-          $ref: '#/components/schemas/ItemVo'
-        area:
-          $ref: '#/components/schemas/AreaVo'
-      description: 投料/产出记录
-    RListWarehouseVo:
-      type: object
-      properties:
-        code:
-          type: integer
-          format: int32
-        msg:
-          type: string
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/WarehouseVo'
-      description: 响应信息主体
-    ShippingMethod:
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        params:
-          type: object
-          additionalProperties:
-            type: object
-          description: 请求参数
-          properties: {}
-        id:
-          type: integer
-          format: int64
-        shippingMethodCode:
-          type: string
-          description: 编码
-        shippingMethodName:
-          type: string
-          description: 名称
-        areaNumber:
-          type: integer
-          description: 柜数
-          format: int32
-      description: 装运方式
-    ProductionOrderVo:
-      type: object
-      properties:
-        createBy:
-          type: string
-          description: 创建者
-        createTime:
-          type: string
-          description: 创建时间
-          format: date-time
-        updateBy:
-          type: string
-          description: 更新者
-        updateTime:
-          type: string
-          description: 更新时间
-          format: date-time
-        id:
-          type: integer
-          format: int64
-        productionOrderNo:
-          type: string
-          description: 生产单号
-        workOrderNo:
-          type: string
-          description: 生产工单
-        finishOrderNo:
-          type: string
-          description: 完工工单
-        productionType:
-          type: integer
-          description: 生产类型 0 投料出库 1 加工过程
-          format: int32
-        consignorId:
-          type: integer
-          description: 委托方
-          format: int64
-        itemId:
-          type: integer
-          description: 物料id（产出成品）
-          format: int64
-        batchNo:
-          type: string
-          description: 生产批次
-        targetWarehouseId:
-          type: integer
-          description: 目标仓库（成品入库）
-          format: int64
-        targetAreaId:
-          type: integer
-          description: 目标库区（成品入库）
-          format: int64
-        areaItems:
-          type: string
-          description: 存放位置(json字符串)
-        processName:
-          type: string
-          description: 工序名称
-        dryWeight:
-          type: number
-          description: 消耗干重(吨)
-        productionWeight:
-          type: number
-          description: 产出干重(吨)
-        startTime:
-          type: string
-          description: 开始时间
-          format: date-time
-        endTime:
-          type: string
-          description: 结束时间
-          format: date-time
-        productionOrderStatus:
-          type: integer
-          description: 状态 0 投料生产 1 混成品 2 已出库
-          format: int32
-        remark:
-          type: string
-          description: 备注
-        consignor:
-          $ref: '#/components/schemas/MerchantVo'
-        item:
-          $ref: '#/components/schemas/ItemVo'
-        area:
-          $ref: '#/components/schemas/AreaVo'
-        productionOrderDetails:
-          type: array
-          description: 投料报关单/出库单
-          items:
-            $ref: '#/components/schemas/ProductionOrderDetailVo'
-      description: 生产加工单视图对象 wms_production_order
-    ItemCategoryVo:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: 物料类型id
-          format: int64
-        parentId:
-          type: integer
-          description: 父物料类型id
-          format: int64
-        ancestors:
-          type: string
-          description: 祖级列表
-        categoryName:
-          type: string
-          description: 物料类型名称
-        orderNum:
-          type: integer
-          description: 显示顺序
-          format: int64
-        status:
-          type: string
-          description: 物料类型状态（0正常 1停用）
-        children:
-          type: array
-          description: 子物料类型
-          items:
-            $ref: '#/components/schemas/ItemCategoryVo'
     RProductionOrderVo:
       type: object
       properties:
@@ -17948,6 +18009,80 @@ components:
           type: string
           description: 关联单号
       description: OCR 上传对象
+    RecordOrderDetailVo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        recordOrderId:
+          type: integer
+          description: 报关单id
+          format: int64
+        recordNo:
+          type: string
+          description: 报关单号（冗余，方便查询）
+        itemNo:
+          type: integer
+          description: 项号/序号（如 1、2、3）
+          format: int32
+        itemCode:
+          type: string
+          description: 商品编号（如 2603000010）
+        itemName:
+          type: string
+          description: 商品名称及规格型号
+        itemDesc:
+          type: string
+          description: 规格型号（如 0|3|浮选，未烧结...）
+        quantity:
+          type: number
+          description: 数量
+        unit:
+          type: string
+          description: 计量单位（千克/吨）
+        legalQuantity:
+          type: number
+          description: 法定数量
+        legalUnit:
+          type: string
+          description: 法定单位
+        unitPrice:
+          type: number
+          description: 单价（如 168331.3602）
+        totalPrice:
+          type: number
+          description: 总价（如 7117049.91）
+        currency:
+          type: string
+          description: 币制（美元/USD）
+        originCountry:
+          type: string
+          description: 原产国(地区)
+        originCountryCode:
+          type: string
+          description: 原产国代码（SRB、PER）
+        destCountry:
+          type: string
+          description: 最终目的国(地区)
+        destCountryCode:
+          type: string
+          description: 最终目的国代码（CHN）
+      description: 报关单详情
     OcrLogVo:
       type: object
       properties:
@@ -18094,6 +18229,63 @@ components:
         data:
           $ref: '#/components/schemas/OcrLogVo'
       description: 响应信息主体
+    ProductionOrderDetailVo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        productionOrderId:
+          type: integer
+          description: 生产单id
+          format: int64
+        consignorId:
+          type: integer
+          description: 委托方
+          format: int64
+        inventoryId:
+          type: integer
+          description: 库存id
+          format: int64
+        direction:
+          type: integer
+          description: 方向 0 领料(原料) 1 产出(成品)
+          format: int32
+        orderId:
+          type: integer
+          description: 入库报关单id
+          format: int64
+        itemId:
+          type: integer
+          description: 物料id
+          format: int64
+        warehouseId:
+          type: integer
+          description: 源/目标仓库
+          format: int64
+        areaId:
+          type: integer
+          description: 源/目标堆位
+          format: int64
+        wetWeight:
+          type: number
+          description: 湿重(吨)
+        dryWeight:
+          type: number
+          description: 干重(吨)
+        batchNo:
+          type: string
+          description: 批次号
+        remark:
+          type: string
+          description: 备注
+        receiptOrder:
+          $ref: '#/components/schemas/ReceiptOrderVo'
+        item:
+          $ref: '#/components/schemas/ItemVo'
+        area:
+          $ref: '#/components/schemas/AreaVo'
+      description: 投料/产出记录
     CheckOrderBo:
       required:
         - id
@@ -18246,6 +18438,44 @@ components:
         key:
           type: string
       description: 出库单详情视图对象 wms_shipment_order_detail
+    ProductionOrderItemVo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        productionOrderId:
+          type: integer
+          description: 生产单id
+          format: int64
+        productionOrderItemNo:
+          type: string
+          description: 加工单号
+        processName:
+          type: string
+          description: 工序名称
+        startTime:
+          type: string
+          description: 开始时间
+          format: date-time
+        endTime:
+          type: string
+          description: 结束时间
+          format: date-time
     MovementOrderBo:
       required:
         - id
@@ -18364,6 +18594,106 @@ components:
           type: string
           description: 消息内容
       description: 表格分页数据对象
+    ProductionOrderVo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        productionOrderNo:
+          type: string
+          description: 生产单号
+        workOrderNo:
+          type: string
+          description: 生产工单
+        finishOrderNo:
+          type: string
+          description: 完工工单
+        productionType:
+          type: integer
+          description: 生产类型 0 投料出库 1 加工过程
+          format: int32
+        consignorId:
+          type: integer
+          description: 委托方
+          format: int64
+        itemId:
+          type: integer
+          description: 物料id（产出成品）
+          format: int64
+        batchNo:
+          type: string
+          description: 生产批次
+        targetWarehouseId:
+          type: integer
+          description: 目标仓库（成品入库）
+          format: int64
+        targetAreaId:
+          type: integer
+          description: 目标库区（成品入库）
+          format: int64
+        areaItems:
+          type: string
+          description: 存放位置(json字符串)
+        processName:
+          type: string
+          description: 工序名称
+        dryWeight:
+          type: number
+          description: 消耗干重(吨)
+        productionWeight:
+          type: number
+          description: 产出干重(吨)
+        startTime:
+          type: string
+          description: 开始时间
+          format: date-time
+        endTime:
+          type: string
+          description: 结束时间
+          format: date-time
+        productionOrderStatus:
+          type: integer
+          description: 状态 0 投料生产 1 混成品 2 已出库
+          format: int32
+        remark:
+          type: string
+          description: 备注
+        consignor:
+          $ref: '#/components/schemas/MerchantVo'
+        item:
+          $ref: '#/components/schemas/ItemVo'
+        area:
+          $ref: '#/components/schemas/AreaVo'
+        productionOrderDetails:
+          type: array
+          description: 投料单
+          items:
+            $ref: '#/components/schemas/ProductionOrderDetailVo'
+        shipmentOrders:
+          type: array
+          description: 出库单
+          items:
+            $ref: '#/components/schemas/ShipmentOrderVo'
+        productionOrderItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductionOrderItemVo'
+      description: 生产加工单视图对象 wms_production_order
     RListShipmentOrderDetailVo:
       type: object
       properties:
@@ -18493,6 +18823,50 @@ components:
           items:
             $ref: '#/components/schemas/MovementOrderBo'
       description: MovementOrderBatchBo
+    ProductionOrderItemBo:
+      type: object
+      properties:
+        createBy:
+          type: string
+          description: 创建者
+        createTime:
+          type: string
+          description: 创建时间
+          format: date-time
+        updateBy:
+          type: string
+          description: 更新者
+        updateTime:
+          type: string
+          description: 更新时间
+          format: date-time
+        params:
+          type: object
+          additionalProperties:
+            type: object
+          description: 请求参数
+          properties: {}
+        id:
+          type: integer
+          format: int64
+        productionOrderId:
+          type: integer
+          description: 生产单id
+          format: int64
+        productionOrderItemNo:
+          type: string
+          description: 加工单号
+        processName:
+          type: string
+          description: 工序名称
+        startTime:
+          type: string
+          description: 开始时间
+          format: date-time
+        endTime:
+          type: string
+          description: 结束时间
+          format: date-time
     InventoryBo:
       type: object
       properties:

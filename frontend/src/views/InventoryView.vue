@@ -171,9 +171,16 @@ async function openDetail(row: Record<string, unknown>) {
   current.value = { ...row }
   detailOpen.value = true
   detailLoading.value = true
-  const res = await inventoryApi.detail(lotKey(row))
+  const inventoryId = String(row.inventoryId || row.id || '')
+  const res = inventoryId
+    ? await inventoryApi.itemDetail(inventoryId)
+    : await inventoryApi.detail(lotKey(row))
   detailLoading.value = false
-  if (!detailOpen.value || !res.success || !res.data) return
+  if (!detailOpen.value) return
+  if (!res.success || !res.data) {
+    ElMessage.error(res.message || '加载详情失败')
+    return
+  }
   current.value = res.data
 }
 

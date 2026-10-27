@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import LotDetailDialog from '@/components/LotDetailDialog.vue'
 import StackGridPicker from '@/components/StackGridPicker.vue'
+import type { StackPick } from '@/components/YardPlanMap.vue'
 import { inventoryApi, partnerApi, transferApi, warehouseApi } from '@/api'
 import { dash, HOURS } from './ops/samples'
 
@@ -28,9 +29,11 @@ const focus = ref('basic')
 const current = ref<Record<string, unknown> | null>(null)
 const form = reactive({
   stackId: '', customsKeyword: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
-  toStack: '', toAreaId: '', cells: '', weight: '',
+  toStack: '', toAreaId: '', cells: '', sourceStack: '', sourceMapAreaId: '', sourceCells: '', weight: '',
   fromDate: '', fromHour: '08', toDate: '', toHour: '12',
 })
+const targetPicks = ref<StackPick[]>([])
+const gridMode = ref<'areas' | 'sourceAreas'>('areas')
 const batchQuery = reactive({ warehouse: '', stack: '', consignor: '', keyword: '' })
 const batchTime = reactive({ fromDate: '', fromHour: '08', toDate: '', toHour: '12' })
 type BatchPick = { toStack: string; toAreaId: string; cells: string; scene: string; weight: string }
@@ -41,6 +44,9 @@ const batchFocus = ref('')
 const houses = computed(() => [...new Set(stacks.value.map((row) => String(row.warehouse)))])
 const selected = computed(() => sourceLots.value.find((row) => lotKey(row) === form.lotId))
 const wholeLot = computed(() => form.scene === '整票移位')
+const sourceAreasValue = computed(() => JSON.stringify(gridAreas(form.sourceCells)))
+const targetWeightTotal = computed(() => targetPicks.value.reduce((sum, pick) => sum + (Number(pick.dryWeight) || 0), 0))
+const movementWeight = computed(() => wholeLot.value ? Number(selected.value?.dry) : Number(form.weight))
 const weightHint = computed(() => {
   const dry = Number(selected.value?.dry)
   return dry > 0 ? `不超过 ${dry} 吨` : '吨'
@@ -64,6 +70,28 @@ function lotText(row: Record<string, unknown> | undefined, key: 'customs' | 'pro
   if (!row) return '—'
   if (key === 'customs') return dash(row.recordNo || row.customsNo)
   return dash(row.batchNo)
+}
+
+function gridAreas(cells: string) {
+  return cells.split(',').filter(Boolean).map((cell) => {
+    const [row, column] = cell.split('-').map(Number)
+    return { row, column }
+  }).filter((cell) => Number.isFinite(cell.row) && Number.isFinite(cell.column))
+}
+
+function clearTargetPicks() {
+  targetPicks.value = []
+}
+
+function removeTargetPick(index: number) {
+  targetPicks.value.splice(index, 1)
+}
+
+function sourceStackCode(row: Record<string, unknown>) {
+  const areaId = String(row.areaId || '')
+  const code = String(row.stackText || '')
+  const stack = stacks.value.find((item) => String(item.id) === areaId || String(item.code) === code)
+  return String(stack?.code || code)
 }
 
 async function load() {
@@ -95,6 +123,10 @@ function applyKeyword() {
 
 watch(() => route.query.keyword, () => {
   if (applyKeyword()) load()
+})
+
+watch(wholeLot, (isWholeLot) => {
+  if (isWholeLot) gridMode.value = 'areas'
 })
 
 onActivated(() => {
@@ -134,9 +166,11 @@ async function openDetail(row: Record<string, unknown>) {
 function openSingle() {
   Object.assign(form, {
     stackId: '', customsKeyword: '', lotId: '', batchNo: '', inventoryId: '', scene: '整票移位',
-    toStack: '', toAreaId: '', cells: '', weight: '',
+    toStack: '', toAreaId: '', cells: '', sourceStack: '', sourceMapAreaId: '', sourceCells: '', weight: '',
     fromDate: '', fromHour: '08', toDate: '', toHour: '12',
   })
+  clearTargetPicks()
+  gridMode.value = 'areas'
   sourceLots.value = []
   single.value = true
 }
@@ -147,6 +181,10 @@ async function loadSourceLots(stackId = form.stackId) {
   form.batchNo = ''
   form.inventoryId = ''
   form.weight = ''
+  form.sourceStack = ''
+  form.sourceMapAreaId = ''
+  form.sourceCells = ''
+  clearTargetPicks()
   sourceLots.value = []
   const keyword = form.customsKeyword.trim()
   if (!stackId && !keyword) return
@@ -182,9 +220,14 @@ function querySourceLots() {
 }
 
 function pickLot(row: Record<string, unknown>) {
+  // console.log('pickLot', row)
+  clearTargetPicks()
   form.lotId = lotKey(row)
   form.batchNo = String(row.batchNo || '')
   form.inventoryId = String(row.id || row.inventoryId || '')
+  form.sourceStack = sourceStackCode(row)
+  form.sourceMapAreaId = String(row.areaId || '')
+  form.sourceCells = ''
 }
 
 async function submitSingle() {
@@ -196,11 +239,38 @@ async function submitSingle() {
     ElMessage.warning('请选择要移动的票货')
     return
   }
-  if ((!form.toAreaId && !form.toStack) || !form.cells) {
-    ElMessage.warning('请在平面图上框选目标堆位格子')
+  if (!(movementWeight.value > 0)) {
+    ElMessage.warning('移库重量必须大于零')
     return
   }
+  if (!targetPicks.value.length) {
+    ElMessage.warning('请在平面图上选择至少一个目标堆位及网格')
+    return
+  }
+  for (const target of targetPicks.value) {
+    if (!target.areaId || !target.warehouseId || !target.cells) {
+      ElMessage.warning(`请完整选择 ${target.stackCode || '目标堆位'} 的网格`)
+      return
+    }
+    if (!(Number(target.dryWeight) > 0)) {
+      ElMessage.warning(`请填写 ${target.stackCode} 的移入干重`)
+      return
+    }
+  }
   if (!wholeLot.value) {
+    if (!form.sourceCells) {
+      ElMessage.warning('请切换到原堆位网格并框选要移出的格子')
+      return
+    }
+    const sourceCode = sourceStackCode(selected.value)
+    const sourceAreaId = String(selected.value.areaId || '')
+    const sourceMatches = sourceAreaId && form.sourceMapAreaId
+      ? sourceAreaId === form.sourceMapAreaId
+      : Boolean(sourceCode && sourceCode === form.sourceStack)
+    if (!sourceMatches) {
+      ElMessage.warning('sourceAreas 必须选择当前票货所在的原堆位')
+      return
+    }
     const weight = Number(form.weight)
     const dry = Number(selected.value.dry)
     if (!(weight > 0)) {
@@ -211,6 +281,10 @@ async function submitSingle() {
       ElMessage.warning('移库重量不能超过在库干重')
       return
     }
+  }
+  if (Math.abs(targetWeightTotal.value - movementWeight.value) > 0.000001) {
+    ElMessage.warning(`各目标堆位干重合计须等于本次移库重量（${movementWeight.value} 吨）`)
+    return
   }
   if (!form.fromDate || !form.toDate) {
     ElMessage.warning('请选择移库时间')
@@ -227,9 +301,13 @@ async function submitSingle() {
     const res = await transferApi.create({
       batchNo: form.batchNo,
       inventoryId: form.inventoryId,
-      toStack: form.toStack,
-      areaId: form.toAreaId,
-      cells: form.cells,
+      movementOrderAreas: targetPicks.value.map((target) => ({
+        areaId: target.areaId,
+        warehouseId: target.warehouseId,
+        dryWeight: Number(target.dryWeight),
+        areas: gridAreas(target.cells),
+      })),
+      sourceAreas: wholeLot.value ? undefined : gridAreas(form.sourceCells),
       scene: form.scene,
       weight: wholeLot.value ? undefined : Number(form.weight),
       shipName: selected.value.shipName || '—',
@@ -462,6 +540,7 @@ async function submitBatch() {
     <el-dialog v-model="single" class="transfer-create" width="94vw" align-center destroy-on-close :close-on-click-modal="false">
       <template #header><h3 class="dlg-title">新建移库单</h3></template>
       <div class="split">
+        <!-- {{form}} -->
         <el-form class="fields" label-width="96px">
           <el-form-item label="原堆位" required>
             <div class="stack-query">
@@ -518,6 +597,32 @@ async function submitBatch() {
           <el-form-item v-else label="移库重量">
             <p class="hint">整票移库按在库干重移动，无需填写重量。</p>
           </el-form-item>
+          <el-form-item label="目标分配" required>
+            <div class="target-allocation">
+              <el-table :data="targetPicks" border size="small" max-height="180" empty-text="请在右侧绘制一个或多个目标堆位">
+                <el-table-column prop="stackCode" label="目标堆位" min-width="90" />
+                <el-table-column label="网格" width="70">
+                  <template #default="{ row }">{{ row.cells.split(',').filter(Boolean).length }} 格</template>
+                </el-table-column>
+                <el-table-column label="干重" width="150">
+                  <template #default="{ row }">
+                    <el-input v-model="row.dryWeight" type="number" min="0" :max="movementWeight" placeholder="吨">
+                      <template #append>吨</template>
+                    </el-input>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="58">
+                  <template #default="{ $index }">
+                    <el-button link type="danger" @click="removeTargetPick($index)">移除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="allocation-total">已分配 {{ targetWeightTotal }} 吨 / 本次移库 {{ movementWeight || 0 }} 吨</div>
+            </div>
+          </el-form-item>
+          <el-form-item v-if="!wholeLot" label="原堆位网格">
+            <el-input :model-value="sourceAreasValue" readonly placeholder="在右侧原堆位网格选择" />
+          </el-form-item>
           <el-form-item label="移库时间" required>
             <div class="hours">
               <el-date-picker v-model="form.fromDate" type="date" value-format="YYYY-MM-DD" />
@@ -529,8 +634,25 @@ async function submitBatch() {
           </el-form-item>
         </el-form>
         <div class="map-pane">
-          <div class="map-label">目标堆位 <span>*</span></div>
-          <StackGridPicker v-model:stack-code="form.toStack" v-model:area-id="form.toAreaId" v-model:cells="form.cells" :stacks="stacks" />
+          <div class="map-toolbar">
+            <el-button-group>
+              <el-button :type="gridMode === 'areas' ? 'primary' : 'default'" @click="gridMode = 'areas'"><i class="grid-key target" />绘制目标格</el-button>
+              <el-button v-if="!wholeLot" :type="gridMode === 'sourceAreas' ? 'primary' : 'default'" @click="gridMode = 'sourceAreas'"><i class="grid-key source" />绘制原堆位格</el-button>
+            </el-button-group>
+            <div class="map-label">同图绘制 <span>*</span></div>
+          </div>
+          <StackGridPicker
+            v-model:stack-code="form.toStack"
+            v-model:area-id="form.toAreaId"
+            v-model:cells="form.cells"
+            v-model:source-stack-code="form.sourceStack"
+            v-model:source-area-id="form.sourceMapAreaId"
+            v-model:source-cells="form.sourceCells"
+            v-model:picks="targetPicks"
+            :selection-layer="gridMode === 'sourceAreas' ? 'source' : 'target'"
+            :multi="true"
+            :stacks="stacks"
+          />
         </div>
       </div>
       <template #footer>
@@ -657,10 +779,16 @@ async function submitBatch() {
 .split { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(640px, 720px) minmax(420px, 1fr); gap: 16px; }
 .fields { min-height: 0; overflow: auto; padding-right: 4px; }
 .stack-query { display: flex; gap: 8px; align-items: center; width: 100%; }
+.target-allocation { width: 100%; }
+.allocation-total { margin-top: 6px; color: #5a6a7e; font-size: 12px; text-align: right; }
 .lot-line { margin: 0; line-height: 1.5; }
 .hours { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
 .hours :deep(.el-date-editor) { width: 136px; }
 .map-pane { min-height: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ececec; border-radius: 8px; padding: 12px; }
+.map-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.grid-key { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 2px; vertical-align: middle; }
+.grid-key.target { background: #d1c040; }
+.grid-key.source { background: #38a9d2; }
 .map-label { display: flex; align-items: baseline; gap: 10px; font-weight: 600; }
 .map-label span { color: var(--el-color-danger); }
 .map-label em { color: #6b5424; font-style: normal; font-weight: 500; font-size: 13px; }

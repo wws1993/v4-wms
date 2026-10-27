@@ -45,8 +45,8 @@ async function saveParams(body: Row) {
     isTaxDeclared: '0',
   }))
   const policy = policyFromParams({ ...loadPolicy(), ...merged })
-  const payload: Partial<SystemParamBo> & { elements?: unknown } = {
-    id: idOf(import.meta.env.VITE_SYSTEM_PARAM_ID || '1') as SystemParamBo['id'],
+  const payload: Partial<SystemParamBo> & { id?: number | string; elements?: unknown } & Row = {
+    id: idOf(import.meta.env.VITE_SYSTEM_PARAM_ID || '1'),
     thresholdAlter: num(merged.capacityWarn),
     agingAlert: num(merged.ageWarn),
     dockAlert: num(merged.dockDays),

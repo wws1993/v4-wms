@@ -2,10 +2,10 @@ import type { Route } from '@/api-map/types'
 import { fail, ok } from '@/api/result'
 import { ruoyiGet, ruoyiSend } from '@/api/ruoyi'
 import type { Query, Row } from '@/controller/shared/types'
-import { brief, cellsBody, clockBound, idOf, nested, num, stamp, text } from '@/controller/shared/coerce'
+import { areaPoints, brief, clockBound, idOf, nested, num, stamp, text } from '@/controller/shared/coerce'
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { dictOf, labelOf } from '@/controller/shared/dict'
-import { areaCodeValue, areaNameValue, areaRows, findMerchant, merchantRows } from '@/controller/shared/catalog'
+import { areaCodeValue, areaNameValue, areaRows, findArea, findMerchant, merchantRows } from '@/controller/shared/catalog'
 import type { ProductionOrderBo, ProductionOrderVo } from '@/typings/openapi'
 
 /** 生产单 Vo + 运行时扩展 */
@@ -64,7 +64,7 @@ function feedEntry(
   const receipt = nested(detail, 'receiptOrder')
   const inventory = nested(detail, 'inventory')
   const item = nested(detail, 'item')
-  const area = nested(detail, 'area') || nested(inventory, 'area')
+  const area = nested(detail, 'area') || (inventory ? nested(inventory, 'area') : undefined)
   const ship = text(receipt?.shipName)
   const voyage = text(receipt?.voyage || receipt?.voyageNo)
   return {
@@ -132,6 +132,11 @@ function productionDoc(
   const customs = [...new Set(lines.map((line) => line.customsNo).filter(Boolean))]
   const stacks = [...new Set(lines.map((line) => line.stack).filter(Boolean))]
   const outNos = [...new Set(lines.map((line) => line.outCustomsNo).filter(Boolean))]
+  const targetAreas = Array.isArray(row.productionOrderAreas) ? row.productionOrderAreas as Row[] : []
+  const targetStackCodes = targetAreas.map((entry) => {
+    const target = nested(entry, 'area')
+    return text(target?.areaCode || target?.areaName || entry.areaCode || entry.areaName || entry.stackCode)
+  }).filter(Boolean)
   return {
     id: text(row.id),
     orderNo: text(row.productionOrderNo || row.workOrderNo || row.id),
@@ -153,7 +158,7 @@ function productionDoc(
     inputDry: inputDry ?? lines.reduce((sum, line) => sum + (num(line.feedDry) ?? 0), 0),
     outputDry: weighed ?? '',
     product: text(item?.itemName),
-    stackCode: text(area?.areaCode || area?.areaName),
+    stackCode: [...new Set(targetStackCodes)].join(' / ') || text(area?.areaCode || area?.areaName || nested(row, 'targetArea')?.areaCode || nested(row, 'targetArea')?.areaName),
     areaLabel: labelOf(areaNames, area?.areaIdentification),
     warehouseId: text(row.targetWarehouseId || area?.warehouseId),
     areaId: text(row.targetAreaId || area?.id),
@@ -191,16 +196,34 @@ async function listProduction(query: Query) {
   const kind = productionKind(query)
   const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/list', pageParams(query, { ...filters }))
   if (!result.ok) return fail(brief(result.message))
-  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, kind === 2))
+  const list = result.rows.map((row) => productionDoc(row as Row, categories, areaNames, merchants, kind === 2))
   return pageOf(result, list, query)
 }
 
-async function productionBatch(batchNo: string) {
+async function productionDetail(id: string) {
+  if (!id) return fail('缺少生产单号')
   const [{ categories, areaNames }, merchants] = await Promise.all([productionDicts(), merchantNameMap()])
-  const result = await ruoyiGet<ProductionOrderVo>('/wms/productionOrder/listNoPage', { batchNo })
-  if (!result.ok) return fail(result.message)
-  const list = result.rows.map((row) => productionDoc(row, categories, areaNames, merchants, num(row.productionOrderStatus) === 1))
-  return ok({ list, prodBatch: batchNo })
+  const [result, areas] = await Promise.all([
+    ruoyiGet<ProductionOrderVo, ProductionOrderVo>(`/wms/productionOrder/${encodeURIComponent(id)}`),
+    areaRows(),
+  ])
+  if (!result.ok) return fail(brief(result.message))
+  const row = result.data && typeof result.data === 'object' ? result.data as ProductionRow : result.rows[0] as ProductionRow | undefined
+  if (!row) return fail('生产单不存在')
+  const areaId = text(row.targetAreaId)
+  if (!nested(row, 'area') && areaId) {
+    const area = areas.find((item) => text(item.id) === areaId)
+    if (area) row.area = area
+  }
+  if (Array.isArray(row.productionOrderAreas)) {
+    row.productionOrderAreas = row.productionOrderAreas.map((entry) => {
+      if (nested(entry, 'area')) return entry
+      const area = areas.find((item) => text(item.id) === text(entry.areaId))
+      return area ? { ...entry, area } : entry
+    })
+  }
+  const doc = productionDoc(row as Row, categories, areaNames, merchants, num(row.productionOrderStatus) === 1)
+  return ok({ list: [doc], prodBatch: text(row.batchNo) })
 }
 
 async function joinedConsignorId(lines: Row[], fallback: unknown) {
@@ -237,7 +260,7 @@ async function batchConsignorClash(batchNo: string, consignorId: string, lines: 
   const known = new Set<string>()
   for (const row of rows) {
     const id = text(row.consignorId || nested(row, 'consignor')?.id)
-    const name = text(nested(row, 'consignor')?.merchantName || row.consignorName)
+    const name = text(nested(row, 'consignor')?.merchantName || (row as Row).consignorName)
     const token = consignorToken(id, name)
     if (token) known.add(token)
   }
@@ -265,7 +288,7 @@ async function createProductionFeed(body: Row) {
   if (tokens.size > 1) return fail('同一生产批次不能添加不同委托方的原料')
   const clash = await batchConsignorClash(batchNo, ids[0], lines)
   if (clash) return fail(clash)
-  const payload: Partial<ProductionOrderBo> & Row = { batchNo, consignorId: ids[0], productionOrderDetails: details }
+  const payload: Row = { batchNo, consignorId: ids[0], productionOrderDetails: details }
   const result = await ruoyiSend('POST', '/wms/productionOrder', payload)
   return result.ok ? ok(result.data, '投料已登记') : fail(brief(result.message))
 }
@@ -289,22 +312,13 @@ async function finishProduction(id: string, body: Row) {
   const weight = num(body.outputDry ?? body.productionWeight)
   if (!(weight != null && weight > 0)) return fail('请填写产量')
   if (!id) return fail('请选择生产单')
-  let areaId = text(body.areaId)
-  let warehouseId = text(body.warehouseId)
+  const picks = Array.isArray(body.productionOrderAreas) ? body.productionOrderAreas as Row[] : []
+  if (!picks.length) return fail('请选择一个或多个待检区堆位')
   const [detail, areaNames, stacks] = await Promise.all([
     ruoyiGet<ProductionOrderVo, ProductionOrderVo>(`/wms/productionOrder/${encodeURIComponent(id)}`),
     dictOf('wms_area_identification'),
     areaRows(),
   ])
-  if (!areaId || !warehouseId) {
-    const code = text(body.stackCode)
-    const area = stacks.find((row) => text(row.id) === areaId || areaCodeValue(row) === code || areaNameValue(row) === code)
-    if (area) {
-      areaId = areaId || text(area.id)
-      warehouseId = warehouseId || text(area.warehouseId || nested(area, 'warehouse')?.id)
-    }
-  }
-  if (!areaId) return fail('请选择待检区堆位')
 
   const order = (detail.ok && detail.data && typeof detail.data === 'object' ? detail.data as Row : null)
     || (detail.ok ? detail.rows[0] : undefined)
@@ -312,26 +326,54 @@ async function finishProduction(id: string, body: Row) {
   const batchNo = text(body.prodBatch || body.batchNo || order?.batchNo).trim()
   if (!batchNo) return fail('缺少生产批次')
 
-  const target = stacks.find((row) => text(row.id) === areaId)
-  if (target) {
-    const label = labelOf(areaNames, target.areaIdentification) || text(target.areaIdentification)
-    if (label && label !== '待检区' && !label.includes('待检')) {
-      return fail('成品完工入库只能存入待检区')
+  const productionOrderAreas: Row[] = []
+  let allocatedWeight = 0
+  for (const pick of picks) {
+    const stackCode = text(pick.stackCode)
+    const area = stacks.find((row) => (
+      (text(pick.areaId) && text(row.id) === text(pick.areaId))
+      || (stackCode && (areaCodeValue(row) === stackCode || areaNameValue(row) === stackCode))
+    )) || await findArea(pick.areaId || stackCode)
+    if (!area) return fail(`待检区堆位 ${stackCode || text(pick.areaId)} 不存在`)
+
+    const areaLabel = labelOf(areaNames, area.areaIdentification) || text(area.areaIdentification)
+    if (areaLabel && areaLabel !== '待检区' && !areaLabel.includes('待检')) {
+      return fail(`堆位 ${stackCode || areaCodeValue(area)} 不属于待检区`)
     }
+    const warehouseId = idOf(pick.warehouseId)
+      ?? idOf(area.warehouseId)
+      ?? idOf(nested(area, 'warehouse')?.id)
+    if (warehouseId == null) {
+      return fail(`堆位 ${stackCode || areaCodeValue(area)} 缺少所属仓库`)
+    }
+    const dryWeight = num(pick.dryWeight)
+    if (dryWeight == null || dryWeight <= 0) {
+      return fail(`请填写堆位 ${stackCode || areaCodeValue(area)} 的入库干吨`)
+    }
+    const cells = areaPoints(pick.areas ?? pick.cells)
+    if (!cells.length) {
+      return fail(`请为堆位 ${stackCode || areaCodeValue(area)} 框选存放格子`)
+    }
+    allocatedWeight += dryWeight
+    productionOrderAreas.push({
+      areaId: idOf(area.id),
+      warehouseId,
+      dryWeight,
+      areas: cells,
+    })
+  }
+  if (Math.abs(allocatedWeight - weight) >= 0.011) {
+    return fail(`各堆位干吨合计需等于产量 ${weight} 吨`)
   }
 
-  const cells = cellsBody(body.cells)
-  if (!cells.length) return fail('请在待检区堆位上框选存放格子')
   // 同一待检区允许不同生产批次并存，不校验堆位上是否已有其它批次
   const payload: Row = {
     id: idOf(id),
     batchNo,
     type: 2,
     productionWeight: weight,
-    targetAreaId: idOf(areaId),
-    areas: cells,
+    productionOrderAreas,
   }
-  if (warehouseId) payload.targetWarehouseId = idOf(warehouseId)
 
   const consignorId = idOf(body.consignorId || order?.consignorId)
   if (consignorId != null) payload.consignorId = consignorId
@@ -367,5 +409,5 @@ export const productionRoutes: Route[] = [
   { method: 'POST', match: '/production', handle: ({ body }) => createProductionFeed(body) },
   { method: 'POST', match: /^\/production\/([^/]+)\/process$/, handle: ({ params, body }) => pushProduction(params[0], body) },
   { method: 'POST', match: /^\/production\/([^/]+)\/finish$/, handle: ({ params, body }) => finishProduction(params[0], body) },
-  { method: 'GET', match: /^\/production\/([^/]+)$/, handle: ({ params }) => productionBatch(params[0]) },
+  { method: 'GET', match: /^\/production\/([^/]+)$/, handle: ({ params }) => productionDetail(params[0]) },
 ]

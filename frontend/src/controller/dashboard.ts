@@ -58,7 +58,7 @@ async function cockpitAreas() {
     dictOf('wms_item_category'),
   ])
   if (!result.ok) return fail(brief(result.message))
-  const lots = homeSource(result).map((row) => homeLot(row, areas, houses, categories)).filter((lot): lot is CargoLot => Boolean(lot))
+  const lots = homeSource(result).map((row) => homeLot(row, objectRows(areas), objectRows(houses), categories)).filter((lot): lot is CargoLot => Boolean(lot))
   return ok(lots)
 }
 

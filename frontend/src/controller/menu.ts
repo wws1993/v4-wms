@@ -14,6 +14,13 @@ function menuStatusLabel(value: unknown) {
   return raw || '正常'
 }
 
+function roleStatusLabel(value: unknown) {
+  const raw = text(value)
+  if (raw === '1' || raw === '正常' || raw === '启用') return '启用'
+  if (raw === '0' || raw === '停用') return '停用'
+  return raw || '启用'
+}
+
 function menuStatusCode(value: unknown) {
   return text(value) === '停用' || text(value) === '1' ? '1' : '0'
 }
@@ -119,7 +126,7 @@ function roleRecord(row: Row) {
 async function loadMenuRows() {
   const result = await ruoyiGet<SysMenuVo>('/system/menu/list')
   if (!result.ok) return { ok: false as const, message: result.message, rows: [] as Row[] }
-  const rows = result.rows.length ? result.rows : (Array.isArray(result.data) ? result.data as Row[] : [])
+  const rows = result.rows.length ? result.rows.map((row) => row as Row) : (Array.isArray(result.data) ? result.data as Row[] : [])
   return { ok: true as const, message: result.message, rows: flattenMenuRows(rows) }
 }
 
@@ -137,7 +144,7 @@ function menuPayload(body: Row, id?: string): { payload: Row } | { message: stri
   if (path.length > 200) return { message: '路由地址不能超过 200 个字符' }
   const component = text(body.component).trim() || (menuType === 'C' && path ? `${path}/index` : '')
   if (component.length > 200) return { message: '组件路径不能超过 200 个字符' }
-  const payload: Partial<SysMenuBo> & Row = {
+  const payload: Omit<Partial<SysMenuBo>, 'menuId' | 'parentId'> & { menuId?: number | string; parentId: number | string } & Row = {
     parentId: idOf(body.parentId) ?? 0,
     menuName: name,
     orderNum: Math.trunc(sort),

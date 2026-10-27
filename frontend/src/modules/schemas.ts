@@ -4,39 +4,6 @@ import {
 } from '@/api'
 import type { ApiResult, DetailBlock, ModuleSchema } from '@/types'
 
-function ledgerDetail(row: Record<string, unknown>): DetailBlock[] {
-  const records = Array.isArray(row.records) ? row.records as Record<string, unknown>[] : []
-  const block = (kind: string, title: string): DetailBlock => ({
-    title,
-    table: {
-      columns: [
-        { prop: 'action', label: '事项', width: 140 },
-        { prop: 'tons', label: '吨数', width: 100 },
-        { prop: 'time', label: '时间', minWidth: 160 },
-        { prop: 'refNo', label: '单号', minWidth: 160 },
-      ],
-      rows: records.filter((item) => item.kind === kind),
-    },
-  })
-  const consume = Number(row.consumeTons || 0)
-  return [
-    {
-      title: `${row.seq || ''} ${row.customsNo || ''}`.trim() || '票货',
-      fields: [
-        { label: '账期', value: text(row.month) },
-        { label: '入库(吨)', value: text(row.inboundTons) },
-        { label: '投产(吨)', value: text(row.consumeTons) },
-        { label: '保税归属', value: text(row.place) },
-        { label: '月度出清', value: text(row.monthlyStatus || (consume > 0 ? '已出清' : '未出清')) },
-        { label: '次月库存', value: text(row.nextStock || (consume > 0 ? '不再纳入' : '纳入库存')) },
-      ],
-    },
-    block('存储', '原料存储'),
-    block('加工', '加工'),
-    block('出库', '出库'),
-  ]
-}
-
 function text(value: unknown) {
   if (value == null || value === '') return '—'
   return String(value)
@@ -317,21 +284,21 @@ export const schemas: Record<string, ModuleSchema> = {
   ledgerMonthly: {
     key: 'ledgerMonthly',
     filters: [
-      { key: 'month', label: '月份', placeholder: '如 2026-08' },
+      { key: 'month', label: '月份', type: 'month' },
+      { key: 'clearanceStatus', label: '出清状态', type: 'select', options: ['已出清', '未出清'] },
+      { key: 'searchValue', label: '报关单号', placeholder: '报关单号' },
     ],
     columns: [
       { prop: 'month', label: '入库账期', width: 110 },
-      { prop: 'seq', label: '票次', width: 100 },
+      { prop: 'orderId', label: '入库单ID', width: 150 },
       { prop: 'customsNo', label: '报关单号', minWidth: 170 },
       { prop: 'inboundTons', label: '入库(吨)', width: 110 },
       { prop: 'monthConsume', label: '当月耗用(吨)', width: 130 },
       { prop: 'monthlyStatus', label: '出清', width: 100, tag: true },
-      { prop: 'nextStock', label: '次月库存', width: 110, tag: true },
     ],
     list: ledgerApi.monthly,
     exportRows: ledgerApi.exportMonthly,
     showDetail: true,
-    detail: ledgerDetail,
   },
   users: {
     key: 'users',

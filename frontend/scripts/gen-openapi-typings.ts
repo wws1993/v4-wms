@@ -12,12 +12,12 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 /** frontend 根目录 */
 const frontendRoot = path.resolve(scriptDir, '..')
 /** 仓库根目录 */
-const repoRoot = path.resolve(frontendRoot, '..')
+const repoRoot = path.resolve(frontendRoot)
 /** OpenAPI YAML 源文件路径 */
 const openapiPath = path.join(
   repoRoot,
-  'docs',
-  '对接文档',
+  // 'docs',
+  // '对接文档',
   '广西丰联仓储系统_接口文档.openapi.yaml',
 )
 /** typings 输出目录 */

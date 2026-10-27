@@ -46,6 +46,8 @@ function inventoryLot(
     || text(row.cargoType)
     || text(item?.itemCategory ?? row.itemCategory)
   const finished = cargoType === '混成品' || cargoType === '成品'
+    || Number(row.type) === 2
+    || Boolean(batchNo)
   const mineArea = text(item?.mineralSource ?? item?.mineArea ?? row.mineralSource ?? row.mineArea)
   const quality = elementFields(receipt || row)
   return {
@@ -53,7 +55,7 @@ function inventoryLot(
     inventoryId: text(row.id),
     orderId: text(row.orderId || receipt?.id),
     batchNo,
-    batchKind: finished || (batchNo && /^FL-/.test(batchNo)) ? '生产批次号' : '报关单号',
+    batchKind: finished ? '生产批次号' : '报关单号',
     consignor: text(consignor?.merchantName || row.consignorName),
     consignorId: text(row.consignorId || consignor?.id),
     itemId: text(row.itemId || item?.id),
@@ -90,20 +92,6 @@ function inventoryLot(
   }
 }
 
-function hourText(value: unknown) {
-  const raw = stamp(value, 13)
-  return raw.length >= 13 ? `${raw}时` : raw
-}
-
-function clockBound(value: unknown, end: boolean) {
-  const raw = text(value).replace('T', ' ').trim()
-  if (!raw) return ''
-  if (raw.length >= 19) return raw.slice(0, 19)
-  if (raw.length >= 13) return `${raw.slice(0, 13)}:${end ? '59:59' : '00:00'}`
-  const day = raw.slice(0, 10)
-  return day ? `${day} ${end ? '23:59:59' : '00:00:00'}` : ''
-}
-
 function monthBounds() {
   const now = new Date()
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -120,8 +108,8 @@ function inventoryPage(query: Query, list: Row[], total: number, message = 'ok')
   }, message)
 }
 
-function homeSource(result: RuoyiResult) {
-  if (result.rows.length) return result.rows
+function homeSource<TRow>(result: RuoyiResult<TRow>) {
+  if (result.rows.length) return objectRows(result.rows)
   const data = result.data
   if (Array.isArray(data)) return objectRows(data)
   if (!data || typeof data !== 'object') return []
@@ -175,7 +163,7 @@ async function inventoryHome() {
     dictOf('wms_item_category'),
   ])
   if (!result.ok) return fail(brief(result.message))
-  const lots = homeSource(result).map((row) => homeLot(row, areas, houses, categories)).filter((lot): lot is CargoLot => Boolean(lot))
+  const lots = homeSource(result).map((row) => homeLot(row, objectRows(areas), objectRows(houses), categories)).filter((lot): lot is CargoLot => Boolean(lot))
   return ok(lots)
 }
 async function listInventory(query: Query) {
@@ -411,7 +399,7 @@ async function attachLotDocs(row: Row): Promise<Row> {
   }
 }
 
-function wantsDocs(value: unknown) {
+function wantsFlag(value: unknown) {
   const flag = text(value).trim().toLowerCase()
   return flag === '1' || flag === 'true' || flag === 'yes'
 }
@@ -484,8 +472,8 @@ async function inventoryLedger(raw: Row) {
     areaRows(),
   ])
   if (!result.ok) return [] as Row[]
-  const rows = Array.isArray(result.data) ? result.data as Row[] : result.rows
-  return rows.map((row) => mapLedgerRow(row, areas))
+  const rows = Array.isArray(result.data) ? objectRows(result.data) : objectRows(result.rows)
+  return rows.map((row) => mapLedgerRow(row, objectRows(areas)))
 }
 
 /** 库存台账导出：/wms/inventoryDetail/export */
@@ -528,11 +516,26 @@ async function inventoryBatch(batchNo: string, query: Query = {}) {
   const [categories, houses, ledger] = await Promise.all([
     dictOf('wms_item_category'),
     loadHouses(),
-    inventoryLedger(raw),
+    wantsFlag(query.ledger) ? inventoryLedger(raw) : Promise.resolve([] as Row[]),
   ])
   const mapped = inventoryLot(raw, categories, houses)
-  const row = wantsDocs(query.docs) ? await attachLotDocs(mapped) : mapped
-  return ok({ ...row, ledger, products: [] })
+  const row = wantsFlag(query.docs) ? await attachLotDocs(mapped) : mapped
+  return ok({ ...row, ...(wantsFlag(query.ledger) ? { ledger } : {}), products: [] })
+}
+
+async function inventoryItem(id: string, query: Query = {}) {
+  const result = await ruoyiGet<InventoryVo, InventoryVo>(`/wms/inventory/${encodeURIComponent(id)}`)
+  if (!result.ok) return fail(brief(result.message))
+  if (!result.data || typeof result.data !== 'object') return fail('库存不存在')
+  const raw = result.data as InventoryRow
+  const [categories, houses, ledger] = await Promise.all([
+    dictOf('wms_item_category'),
+    loadHouses(),
+    wantsFlag(query.ledger) ? inventoryLedger(raw) : Promise.resolve([] as Row[]),
+  ])
+  const mapped = inventoryLot(raw, categories, houses)
+  const row = wantsFlag(query.docs) ? await attachLotDocs(mapped) : mapped
+  return ok({ ...row, ...(wantsFlag(query.ledger) ? { ledger } : {}), products: [] })
 }
 
 export { inventoryLot, locateInventory, inventoryHome, homeLot, homeSource }
@@ -541,5 +544,6 @@ export const inventoryRoutes: Route[] = [
   { method: 'GET', match: '/inventory/home', handle: () => inventoryHome() },
   { method: 'GET', match: '/inventory', handle: ({ query }) => listInventory(query) },
   { method: 'GET', match: '/inventory/ledger/export', handle: ({ query }) => exportInventoryLedger(query) },
+  { method: 'GET', match: /^\/inventory\/items\/([^/]+)$/, handle: ({ params, query }) => inventoryItem(params[0], query) },
   { method: 'GET', match: /^\/inventory\/batches\/([^/]+)$/, handle: ({ params, query }) => inventoryBatch(params[0], query) },
 ]

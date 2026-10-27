@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WMS 运输监控原型</title>
+<style>
+  :root{
+    --side-bg:#1f2329; --side-bg-2:#191d21; --side-text:#b7bdc6; --side-dim:#7d848e;
+    --active-bg:rgba(184,146,79,.18); --active-text:#e0bd76;
+    --bg:#f4f5f6; --card:#fff; --border:#e6e7e9; --border-2:#eceef0;
+    --text:#26292e; --text-2:#5f6670; --text-3:#9aa1a9;
+    --accent:#a8843f; --accent-hover:#937336; --accent-soft:#f3ead8;
+    --green:#2f9e63; --green-soft:#e6f3ec;
+    --orange:#c07a2e; --orange-soft:#f8eee1;
+    --gray:#8a9099; --gray-soft:#eef0f2;
+    --red:#d0605f;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+    background:var(--bg);color:var(--text);font-size:13.5px;line-height:1.6;
+    font-variant-numeric:tabular-nums;
+  }
+  a{color:inherit;text-decoration:none;}
+  .app{display:flex;min-width:1180px;min-height:100vh;}
+
+  /* ===== 侧边栏 ===== */
+  .sidebar{width:220px;flex:0 0 220px;background:var(--side-bg);color:var(--side-text);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;}
+  .logo{display:flex;align-items:center;gap:10px;padding:18px 18px;font-weight:700;font-size:16px;color:#fff;}
+  .logo .mark{width:26px;height:26px;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .nav-group{padding:6px 0;}
+  .nav-group-title{display:flex;align-items:center;gap:8px;padding:9px 18px;font-size:12px;color:var(--side-dim);cursor:pointer;user-select:none;}
+  .nav-group-title .caret{margin-left:auto;transition:transform .15s;}
+  .nav-group.collapsed .caret{transform:rotate(-90deg);}
+  .nav-group.collapsed .nav-items{display:none;}
+  .nav-items{list-style:none;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 18px 9px 30px;cursor:pointer;color:var(--side-text);font-size:13.5px;border-left:3px solid transparent;}
+  .nav-item svg{width:15px;height:15px;flex:0 0 15px;stroke:currentColor;}
+  .nav-item:hover{background:rgba(255,255,255,.05);}
+  .nav-item.active{background:var(--active-bg);color:var(--active-text);border-left-color:var(--accent);}
+  .nav-badge{margin-left:auto;font-size:11px;background:rgba(184,146,79,.25);color:var(--active-text);padding:1px 7px;border-radius:9px;}
+
+  /* ===== 主区 ===== */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;gap:12px;}
+  .crumb{font-size:12.5px;color:var(--text-3);}
+  .crumb b{color:var(--text-2);font-weight:600;}
+  .topbar .spacer{flex:1;}
+  .user{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:12.5px;}
+  .avatar{width:28px;height:28px;border-radius:50%;background:var(--gray-soft);display:flex;align-items:center;justify-content:center;color:var(--text-2);font-size:12px;}
+
+  .content{padding:20px 24px;}
+  .page-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  .page-head h1{font-size:18px;font-weight:600;}
+  .page-head .sub{font-size:12.5px;color:var(--text-3);}
+
+  /* ===== 卡片 / 筛选 ===== */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;}
+  .filter-bar{padding:16px 18px;display:flex;flex-wrap:wrap;gap:12px 18px;align-items:flex-end;border-bottom:1px solid var(--border-2);}
+  .field{display:flex;flex-direction:column;gap:5px;}
+  .field label{font-size:12px;color:var(--text-3);}
+  .field input,.field select{height:34px;padding:0 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;color:var(--text);background:#fff;min-width:150px;outline:none;}
+  .field input:focus,.field select:focus{border-color:var(--accent);}
+  .btn{height:34px;padding:0 16px;border-radius:7px;border:1px solid var(--border);background:#fff;color:var(--text-2);font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .btn-primary:hover{background:var(--accent-hover);color:#fff;}
+  .btn-sm{height:28px;padding:0 10px;font-size:12.5px;border-radius:6px;}
+  .link{color:var(--accent);cursor:pointer;font-size:12.5px;}
+  .link:hover{text-decoration:underline;}
+  .link.danger{color:var(--red);}
+
+  /* ===== 表格 ===== */
+  .table-wrap{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{background:#f7f8f9;color:var(--text-2);font-weight:600;text-align:left;padding:11px 14px;white-space:nowrap;border-bottom:1px solid var(--border);}
+  tbody td{padding:12px 14px;border-bottom:1px solid var(--border-2);white-space:nowrap;color:var(--text);}
+  tbody tr:hover{background:#faf8f3;}
+  .cell-sub{font-size:12px;color:var(--text-3);}
+  .tag{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:20px;font-size:12px;}
+  .tag.online{background:var(--green-soft);color:var(--green);}
+  .tag.offline{background:var(--gray-soft);color:var(--gray);}
+  .tag.active{background:var(--orange-soft);color:var(--orange);}
+  .tag.idle{background:var(--gray-soft);color:var(--gray);}
+  .tag.mode{background:var(--accent-soft);color:var(--accent);}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+  .dot.on{background:var(--green);} .dot.off{background:var(--gray);}
+
+  /* ===== 分页 ===== */
+  .pager{display:flex;align-items:center;gap:8px;padding:14px 18px;justify-content:flex-end;font-size:12.5px;color:var(--text-2);}
+  .pager button{min-width:30px;height:30px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--text-2);}
+  .pager button.cur{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .pager button:disabled{opacity:.4;cursor:not-allowed;}
+
+  /* ===== 弹窗 ===== */
+  .mask{position:fixed;inset:0;background:rgba(20,22,25,.45);display:flex;align-items:center;justify-content:center;z-index:50;}
+  .modal{background:#fff;border-radius:12px;width:680px;max-width:94vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;}
+  .modal.wide{width:860px;}
+  .modal-head{padding:16px 20px;border-bottom:1px solid var(--border-2);display:flex;align-items:center;}
+  .modal-head h3{font-size:15.5px;font-weight:600;}
+  .modal-head .x{margin-left:auto;cursor:pointer;color:var(--text-3);font-size:20px;line-height:1;}
+  .modal-body{padding:20px;overflow-y:auto;}
+  .modal-foot{padding:14px 20px;border-top:1px solid var(--border-2);display:flex;justify-content:flex-end;gap:10px;}
+
+  .readonly-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 18px;margin-bottom:16px;}
+  .ro{font-size:12.5px;}
+  .ro .k{color:var(--text-3);margin-bottom:3px;}
+  .ro .v{color:var(--text);font-weight:500;}
+  .ro .v.readonly{color:var(--text-2);background:#f4f5f6;padding:6px 10px;border-radius:6px;}
+
+  .car-card{border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;}
+  .car-card .car-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-weight:600;}
+  .seal-row{display:flex;gap:10px;align-items:center;margin-bottom:8px;}
+  .seal-row input{flex:1;}
+  .mini-table{width:100%;font-size:12.5px;}
+  .mini-table th{background:#f7f8f9;padding:8px 10px;text-align:left;color:var(--text-2);font-weight:600;}
+  .mini-table td{padding:8px 10px;border-bottom:1px solid var(--border-2);}
+
+  /* 地图占位 */
+  .map-box{height:340px;border:1px dashed #c9cdd4;border-radius:10px;background:
+    linear-gradient(0deg,rgba(184,146,79,.04),rgba(184,146,79,.04)),#f7f8f9;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-3);text-align:center;padding:20px;}
+  .map-box svg{width:42px;height:42px;stroke:#c2a878;}
+  .replay-bar{margin-top:14px;display:flex;align-items:center;gap:14px;}
+  .replay-bar input[type=range]{flex:1;accent-color:var(--accent);}
+  .speed-group{display:flex;gap:4px;}
+  .speed-group button{height:28px;padding:0 10px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text-2);}
+  .speed-group button.cur{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .timeline-meta{display:flex;justify-content:space-between;font-size:12px;color:var(--text-3);margin-top:6px;}
+
+  .toast{position:fixed;top:24px;left:50%;transform:translateX(-50%);background:#26292e;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:99;opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;}
+  .empty{padding:40px;text-align:center;color:var(--text-3);font-size:13px;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== 侧边栏 ===== -->
+  <aside class="sidebar">
+    <div class="logo"><span class="mark">W</span> WMS系统</div>
+    <nav id="nav"></nav>
+  </aside>
+
+  <!-- ===== 主区 ===== -->
+  <div class="main">
+    <div class="topbar">
+      <div class="crumb" id="crumb"></div>
+      <div class="spacer"></div>
+      <div class="user"><span class="avatar">诚</span> 程序员诚哥</div>
+    </div>
+    <div class="content" id="view"></div>
+  </div>
+</div>
+
+<div class="mask" id="mask" style="display:none;"></div>
+<div id="modal-root"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+ * 原型 mock 数据（仅前端演示，对接后端后替换为接口返回）
+ * ============================================================ */
+const DB = {
+  // 入库管理（复刻现有 WMS 列表）
+  inbound: [
+    {bg:"BG2026102430118", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL2026102430118", hz:"HZ2026102430118", amount:"$218,000", weight:"6608.000", wet:"4477.000 / 4029.000", mode:"散货", box:"", location:"4#D1(4029吨)", status:"已入库", time:"2026-10-24 23:09:22"},
+    {bg:"BG20261024223330", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024223330", hz:"HZ20261024223330", amount:"$218,000", weight:"7078.000", wet:"— / —", mode:"散货", box:"", location:"", status:"待收货", time:"2026-10-24 22:33:39"},
+    {bg:"BG20261024223002", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024223002", hz:"HZ20261024223002", amount:"$218,000", weight:"7788.000", wet:"— / —", mode:"散货", box:"", location:"", status:"待收货", time:"2026-10-24 22:30:23"},
+    {bg:"BG20261024203554", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024203554", hz:"HZ20261024203554", amount:"$218,000", weight:"2008.000", wet:"— / —", mode:"散货", box:"", location:"", status:"待收货", time:"2026-10-24 20:36:03"},
+    {bg:"BG20261024203414", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024203414", hz:"HZ20261024203414", amount:"$218,000", weight:"2100.000", wet:"— / —", mode:"散货", box:"", location:"", status:"待收货", time:"2026-10-24 20:34:29"},
+    {bg:"BG20261024192956", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024192956", hz:"HZ20261024192956", amount:"$218,000", weight:"4717.000", wet:"— / —", mode:"散货", box:"", location:"", status:"待收货", time:"2026-10-24 19:30:12"},
+    {bg:"BG20261024153348", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024153348", hz:"HZ20261024153348", amount:"$218,000", weight:"3000.000", wet:"4500.000 / 4000.000", mode:"散货", box:"", location:"4#B1(4000吨)", status:"已入库", time:"2026-10-24 18:57:27"},
+    {bg:"BG20261024153349", consignor:"广西南国铜业有限责任公司", mine:"Chuquicamata", vessel:"海豚号", bl:"BL20261024153349", hz:"HZ20261024153349", amount:"$218,000", weight:"3000.000", wet:"— / —", mode:"集装箱", box:"2", location:"", status:"待收货", time:"2026-10-24 18:17:13"},
+    {bg:"BG20261023114322", consignor:"广西南国铜业有限责任公司", mine:"秘鲁-报备矿", vessel:"海豚号", bl:"BL20261023114322", hz:"HZ20261023114322", amount:"$218,000", weight:"2848.000", wet:"1818.000 / 1436.000", mode:"散货", box:"", location:"2#B1(1436吨)", status:"已入库", time:"2026-10-23 11:44:13"},
+    {bg:"BG20261022131431", consignor:"广西南国铜业有限责任公司", mine:"Antapaccay", vessel:"海豚号", bl:"BL20261022131431", hz:"HZ20261022131431", amount:"$218,000", weight:"9064.000", wet:"1464.000 / 1318.000", mode:"散货", box:"", location:"4#D2(1000吨)/4#D1(318吨)", status:"已入库", time:"2026-10-22 13:41:33"}
+  ],
+  // 铅封锁（定位设备池）
+  seals: [
+    {id:"SEAL-0101", loc:"天津市滨海新区港闸路卡口", last:"2026-10-26 14:58:10", online:true,  use:"active", plate:"津C·82136", bg:"BG20261024223330"},
+    {id:"SEAL-0102", loc:"河北省唐山市丰南区国道G205", last:"2026-10-26 14:56:42", online:true,  use:"active", plate:"冀B·D7702", bg:"BG20261024223002"},
+    {id:"SEAL-0103", loc:"河北省唐山市丰南区国道G205", last:"2026-10-26 14:55:03", online:true,  use:"active", plate:"冀B·D7702", bg:"BG20261024223002"},
+    {id:"SEAL-0104", loc:"北京市大兴区京沪高速出京方向", last:"2026-10-26 14:51:19", online:true,  use:"active", plate:"京A·F5520", bg:"BG20261024203554"},
+    {id:"SEAL-0105", loc:"山东省德州市齐河县服务区", last:"2026-10-26 13:40:55", online:false, use:"active", plate:"鲁N·39081", bg:"BG20261024203414"},
+    {id:"SEAL-0106", loc:"设备库（空闲）", last:"2026-10-25 09:12:00", online:true,  use:"idle", plate:"", bg:""},
+    {id:"SEAL-0107", loc:"设备库（空闲）", last:"2026-10-25 09:11:40", online:true,  use:"idle", plate:"", bg:""},
+    {id:"SEAL-0108", loc:"设备库（空闲）", last:"2026-10-24 18:30:12", online:false, use:"idle", plate:"", bg:""},
+    {id:"SEAL-0109", loc:"设备库（空闲）", last:"2026-10-25 09:10:08", online:true,  use:"idle", plate:"", bg:""},
+    {id:"SEAL-0110", loc:"设备库（空闲）", last:"2026-10-25 09:09:55", online:true,  use:"idle", plate:"", bg:""},
+    {id:"SEAL-0111", loc:"天津市滨海新区堆场", last:"2026-10-26 12:20:31", online:true,  use:"active", plate:"津C·82136", bg:"BG20261024223330"},
+    {id:"SEAL-0112", loc:"设备库（空闲）", last:"2026-10-24 16:02:44", online:false, use:"idle", plate:"", bg:""}
+  ],
+  // 车辆（档案来自北斗，位置由绑定锁关联）
+  vehicles: [
+    {plate:"津C·82136", online:true,  seals:["SEAL-0101","SEAL-0111"], loc:"天津市滨海新区港闸路卡口", last:"2026-10-26 14:58:10", bg:"BG20261024223330", mode:"散货"},
+    {plate:"冀B·D7702", online:true,  seals:["SEAL-0102","SEAL-0103"], loc:"河北省唐山市丰南区国道G205", last:"2026-10-26 14:55:03", bg:"BG20261024223002", mode:"集装箱"},
+    {plate:"京A·F5520", online:true,  seals:["SEAL-0104"], loc:"北京市大兴区京沪高速出京方向", last:"2026-10-26 14:51:19", bg:"BG20261024203554", mode:"散货"},
+    {plate:"鲁N·39081", online:false, seals:["SEAL-0105"], loc:"山东省德州市齐河县服务区", last:"2026-10-26 13:40:55", bg:"BG20261024203414", mode:"散货"},
+    {plate:"冀B·66890", online:true,  seals:[], loc:"—（当前无在途任务）", last:"—", bg:"", mode:""},
+    {plate:"津A·T2275", online:false, seals:[], loc:"—（当前无在途任务）", last:"—", bg:"", mode:""}
+  ],
+  // 运输方案（一单多车；保存后写入此结构）
+  plans: [
+    {bg:"BG20261024223330", bl:"BL20261024223330", vessel:"海豚号", consignor:"广西南国铜业有限责任公司", mode:"散货", box:0,
+     appoint:"2026-10-25 08:00", sign:"2026-10-26 12:30",
+     cars:[{plate:"津C·82136", seals:["SEAL-0101"]}]},
+    {bg:"BG20261024223002", bl:"BL20261024223002", vessel:"海豚号", consignor:"广西南国铜业有限责任公司", mode:"集装箱", box:2,
+     appoint:"2026-10-25 09:30", sign:"",
+     cars:[{plate:"冀B·D7702", seals:["SEAL-0102","SEAL-0103"]}]},
+    {bg:"BG20261024203554", bl:"BL20261024203554", vessel:"海豚号", consignor:"广西南国铜业有限责任公司", mode:"散货", box:0,
+     appoint:"2026-10-25 14:00", sign:"",
+     cars:[{plate:"京A·F5520", seals:["SEAL-0104"]},{plate:"鲁N·39081", seals:["SEAL-0105"]}]}
+  ],
+  // 电子围栏预警日志（只读）
+  alerts: [
+    {time:"2026-10-26 14:32:07", type:"驶出围栏", fence:"滨海港闸区电子围栏", plate:"冀B·D7702", seal:"SEAL-0102", loc:"G205 丰南出口", dir:"离开"},
+    {time:"2026-10-26 11:18:44", type:"驶入围栏", fence:"滨海港闸区电子围栏", plate:"津C·82136", seal:"SEAL-0101", loc:"港闸路卡口", dir:"进入"},
+    {time:"2026-10-26 09:05:12", type:"超时停留", fence:"堆场缓冲区", plate:"鲁N·39081", seal:"SEAL-0105", loc:"齐河县服务区", dir:"停留"},
+    {time:"2026-10-25 22:41:30", type:"驶入围栏", fence:"滨海港闸区电子围栏", plate:"冀B·D7702", seal:"SEAL-0102", loc:"G205 丰南入口", dir:"进入"},
+    {time:"2026-10-25 18:02:56", type:"越界", fence:"指定运输路线", plate:"京A·F5520", seal:"SEAL-0104", loc:"大兴偏离主线 3.2km", dir:"偏离"},
+    {time:"2026-10-25 15:47:19", type:"驶入围栏", fence:"滨海港闸区电子围栏", plate:"京A·F5520", seal:"SEAL-0104", loc:"港闸路卡口", dir:"进入"},
+    {time:"2026-10-25 10:12:03", type:"驶出围栏", fence:"堆场缓冲区", plate:"津C·82136", seal:"SEAL-0111", loc:"堆场西门", dir:"离开"},
+    {time:"2026-10-24 19:33:51", type:"驶入围栏", fence:"滨海港闸区电子围栏", plate:"冀B·66890", seal:"—", loc:"港闸路卡口", dir:"进入"}
+  ]
+};
+
+/* ============================================================
+ * 全局状态
+ * ============================================================ */
+const state = {
+  route: location.hash.replace('#','') || '/inbound',
+  page: {inbound:1, devices:1, vehicles:1, records:1, alerts:1},
+  perPage: 8,
+  filters: {inbound:{kw:"",status:"",mode:""}, devices:{kw:"",use:"",online:""}, vehicles:{kw:"",online:""}, records:{kw:"",mode:""}, alerts:{kw:"",type:""}}
+};
+
+const ROUTES = {
+  "/inbound":   {title:"入库管理", crumb:"仓储作业 / 入库管理", group:"work"},
+  "/devices":   {title:"设备列表", crumb:"运输监控 / 设备列表", group:"monitor"},
+  "/vehicles":  {title:"车辆列表", crumb:"运输监控 / 车辆列表", group:"monitor"},
+  "/records":   {title:"运输记录", crumb:"运输监控 / 运输记录", group:"monitor"},
+  "/alerts":    {title:"电子围栏预警日志", crumb:"运输监控 / 电子围栏预警日志", group:"monitor"}
+};
+
+/* ============================================================
+ * 工具
+ * ============================================================ */
+function toast(msg){
+  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._timer); t._timer=setTimeout(()=>t.classList.remove('show'),1800);
+}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function dur(appoint, sign){
+  if(!sign) return '<span class="tag active">在途</span>';
+  const a=new Date(appoint.replace(/-/g,'/')), b=new Date(sign.replace(/-/g,'/'));
+  const h=Math.round((b-a)/3600000);
+  if(h<24) return h+' 小时';
+  return Math.floor(h/24)+' 天 '+(h%24)+' 小时';
+}
+
+/* ============================================================
+ * 侧边栏
+ * ============================================================ */
+const NAV = [
+  {group:"概览", items:[{r:"/overview",label:"概览",icon:"home"}]},
+  {group:"基础数据", items:[{r:"#",label:"仓位管理"},{r:"#",label:"堆位管理"},{r:"#",label:"矿种档案"},{r:"#",label:"往来主体"}],collapsed:true},
+  {group:"仓储作业", items:[
+    {r:"/inbound",label:"入库管理",icon:"inbox"},
+    {r:"#",label:"库内移库"},{r:"#",label:"库存查询"},{r:"#",label:"盘点管理"},{r:"#",label:"生产加工"},{r:"#",label:"出库管理"}
+  ]},
+  {group:"运输监控（新模块）", monitor:true, items:[
+    {r:"/devices",label:"设备列表",icon:"chip"},
+    {r:"/vehicles",label:"车辆列表",icon:"truck"},
+    {r:"/records",label:"运输记录",icon:"route"},
+    {r:"/alerts",label:"电子围栏预警日志",icon:"alert"}
+  ]},
+  {group:"账务", items:[{r:"#",label:"保税账册"},{r:"#",label:"月度账册"}],collapsed:true},
+  {group:"系统", items:[{r:"#",label:"系统设置"},{r:"#",label:"字典管理"},{r:"#",label:"OCR识别"},{r:"#",label:"预警日志"},{r:"#",label:"操作日志"}],collapsed:true}
+];
+const ICONS = {
+  home:'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 9.5V21h14V9.5"/></svg>',
+  inbox:'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M3 13l4-8h10l4 8v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6z"/><path d="M3 13h6l1.5 2h3L15 13h6"/></svg>',
+  chip:'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>',
+  truck:'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M1 6h13v10H1zM14 10h4l3 3v3h-7"/><circle cx="6" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/></svg>',
+  route:'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H15a3 3 0 000-6H9a3 3 0 010-6h4.8"/></svg>',
+  alert:'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M12 3L2 20h20L12 3z"/><path d="M12 10v4M12 17.5v.5"/></svg>'
+};
+function renderNav(){
+  const nav=document.getElementById('nav');
+  nav.innerHTML=NAV.map(g=>{
+    const items=g.items.map(it=>{
+      const active=state.route===it.r?'active':'';
+      const href=it.r==='#'?'javascript:void(0)':it.r;
+      return `<li class="nav-item ${active}" data-r="${it.r}">${ICONS[it.icon]||'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="12" cy="12" r="2"/></svg>'}<span>${esc(it.label)}</span>${g.monitor?'<span class="nav-badge">新</span>':''}</li>`;
+    }).join('');
+    return `<div class="nav-group ${g.collapsed?'collapsed':''}" data-group>
+      <div class="nav-group-title">${g.monitor?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6l6 6-6 6"/></svg>':''}${esc(g.group)}<span class="caret">▾</span></div>
+      <ul class="nav-items">${items}</ul></div>`;
+  }).join('');
+  nav.querySelectorAll('.nav-group-title').forEach(t=>t.addEventListener('click',()=>t.parentElement.classList.toggle('collapsed')));
+  nav.querySelectorAll('.nav-item[data-r]:not([data-r="#"])').forEach(li=>li.addEventListener('click',()=>location.hash=li.dataset.r));
+}
+
+/* ============================================================
+ * 分页器
+ * ============================================================ */
+function pager(total, routeKey, cur){
+  const pages=Math.max(1,Math.ceil(total/state.perPage));
+  let btns='';
+  for(let i=1;i<=pages;i++) btns+=`<button class="${i===cur?'cur':''}" data-p="${i}">${i}</button>`;
+  return `<div class="pager">共 ${total} 条 <button data-pg="prev" ${cur<=1?'disabled':''}>‹</button>${btns}<button data-pg="next" ${cur>=pages?'disabled':''}>›</button></div>`;
+}
+function bindPager(routeKey){
+  const box=document.querySelector(`#view [data-pager]`);
+  if(!box) return;
+  box.addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    let p=b.dataset.p||(b.dataset.pg==='prev'?state.page[routeKey]-1:state.page[routeKey]+1);
+    state.page[routeKey]=Math.max(1,p); render();
+  });
+}
+
+/* ============================================================
+ * 视图：入库管理（绑定入口）
+ * ============================================================ */
+function viewInbound(){
+  const f=state.filters.inbound;
+  let rows=DB.inbound.filter(r=>{
+    if(f.status && r.status!==f.status) return false;
+    if(f.mode && r.mode!==f.mode) return false;
+    if(f.kw && !(r.bg.includes(f.kw)||r.vessel.includes(f.kw)||r.bl.includes(f.kw))) return false;
+    return true;
+  });
+  const cur=state.page.inbound, start=(cur-1)*state.perPage, slice=rows.slice(start,start+state.perPage);
+  const trs=slice.map(r=>`
+    <tr>
+      <td><span class="link">${esc(r.bg)}</span></td>
+      <td>${esc(r.consignor)}</td>
+      <td>${esc(r.mine)}</td>
+      <td>${esc(r.vessel)}</td>
+      <td>${esc(r.bl)}</td>
+      <td>${esc(r.hz)}</td>
+      <td>${esc(r.amount)}</td>
+      <td>${esc(r.weight)}</td>
+      <td>${esc(r.wet)}</td>
+      <td><span class="tag mode">${esc(r.mode)}</span></td>
+      <td>${esc(r.box||'—')}</td>
+      <td>${esc(r.location||'—')}</td>
+      <td>${r.status==='已入库'?'<span class="tag online">已入库</span>':'<span class="tag idle">待收货</span>'}</td>
+      <td class="cell-sub">${esc(r.time)}</td>
+      <td style="white-space:nowrap;">
+        <span class="link" data-plan="${esc(r.bg)}">运输方案</span>
+        &nbsp;·&nbsp;<span class="link">${r.status==='已入库'?'详情':'收货'}</span>
+      </td>
+    </tr>`).join('')||'<tr><td colspan="15" class="empty">无匹配单据</td></tr>';
+  return `
+  <div class="page-head"><h1>入库管理</h1><span class="sub">在单据行操作「运输方案」中绑定车牌与铅封锁（一单可多车）</span></div>
+  <div class="card">
+    <div class="filter-bar">
+      <div class="field"><label>委托方</label><select><option>请选择</option></select></div>
+      <div class="field"><label>状态</label><select data-f="status"><option value="">请选择</option><option>待收货</option><option>已入库</option></select></div>
+      <div class="field"><label>货运方式</label><select data-f="mode"><option value="">请选择</option><option>散货</option><option>集装箱</option></select></div>
+      <div class="field"><label>开始</label><input type="date"></div>
+      <div class="field"><label>结束</label><input type="date"></div>
+      <div class="field"><label>关键字（单号 / 船名 / 提单）</label><input data-f="kw" value="${esc(f.kw)}" placeholder="报关单号 / 船名 / 提单号"></div>
+      <button class="btn btn-primary" data-q>查询</button>
+      <button class="btn" data-refresh>手动刷新</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>报关单号</th><th>委托方</th><th>矿区</th><th>船名</th><th>提单号</th><th>核注清单号</th><th>金额</th><th>提货重量</th><th>湿/干</th><th>货运方式</th><th>柜数</th><th>堆位</th><th>状态</th><th>操作时间</th><th>操作</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>
+    <div data-pager>${pager(rows.length,'inbound',cur)}</div>
+  </div>`;
+}
+
+/* ============================================================
+ * 视图：设备列表
+ * ============================================================ */
+function viewDevices(){
+  const f=state.filters.devices;
+  let rows=DB.seals.filter(s=>{
+    if(f.use && s.use!==f.use) return false;
+    if(f.online && String(s.online)!==f.online) return false;
+    if(f.kw && !s.id.includes(f.kw)) return false;
+    return true;
+  });
+  const cur=state.page.devices, start=(cur-1)*state.perPage, slice=rows.slice(start,start+state.perPage);
+  const trs=slice.map(s=>`
+    <tr>
+      <td><b>${esc(s.id)}</b></td>
+      <td>${esc(s.loc)}</td>
+      <td class="cell-sub">${esc(s.last)}</td>
+      <td>${s.online?'<span class="tag online"><span class="dot on"></span>在线</span>':'<span class="tag offline"><span class="dot off"></span>离线</span>'}</td>
+      <td>${s.use==='active'?'<span class="tag active">在途</span>':'<span class="tag idle">空闲</span>'}</td>
+      <td>${esc(s.plate||'—')}</td>
+      <td>${esc(s.bg||'—')}</td>
+      <td><span class="link" data-live="${esc(s.id)}">实时位置</span> · <span class="link" data-track="${esc(s.id)}">历史轨迹</span></td>
+    </tr>`).join('')||'<tr><td colspan="8" class="empty">无匹配设备</td></tr>';
+  return `
+  <div class="page-head"><h1>设备列表</h1><span class="sub">铅封锁即定位设备；在线状态由接口返回，使用状态由本地方案维护</span></div>
+  <div class="card">
+    <div class="filter-bar">
+      <div class="field"><label>铅封锁编号</label><input data-f="kw" value="${esc(f.kw)}" placeholder="SEAL-XXXX"></div>
+      <div class="field"><label>使用状态</label><select data-f="use"><option value="">全部</option><option value="idle">空闲</option><option value="active">在途</option></select></div>
+      <div class="field"><label>在线状态</label><select data-f="online"><option value="">全部</option><option value="true">在线</option><option value="false">离线</option></select></div>
+      <button class="btn btn-primary" data-q>查询</button>
+      <button class="btn" data-refresh>手动刷新</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>铅封锁编号</th><th>当前位置</th><th>最后定位时间</th><th>在线状态</th><th>使用状态</th><th>绑定车牌</th><th>关联报关单号</th><th>操作</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>
+    <div data-pager>${pager(rows.length,'devices',cur)}</div>
+  </div>`;
+}
+
+/* ============================================================
+ * 视图：车辆列表
+ * ============================================================ */
+function viewVehicles(){
+  const f=state.filters.vehicles;
+  let rows=DB.vehicles.filter(v=>{
+    if(f.online && String(v.online)!==f.online) return false;
+    if(f.kw && !v.plate.includes(f.kw)) return false;
+    return true;
+  });
+  const cur=state.page.vehicles, start=(cur-1)*state.perPage, slice=rows.slice(start,start+state.perPage);
+  const trs=slice.map(v=>`
+    <tr>
+      <td><b>${esc(v.plate)}</b></td>
+      <td>${v.online?'<span class="tag online"><span class="dot on"></span>在线</span>':'<span class="tag offline"><span class="dot off"></span>离线</span>'}</td>
+      <td>${v.seals.length?v.seals.map(esc).join('、'):'—'}</td>
+      <td>${esc(v.loc)}</td>
+      <td class="cell-sub">${esc(v.last)}</td>
+      <td>${esc(v.bg||'—')}</td>
+      <td>${v.mode?`<span class="tag mode">${esc(v.mode)}</span>`:'—'}</td>
+      <td><span class="link" data-live="${esc(v.plate)}">实时定位</span> · <span class="link" data-replay="${esc(v.plate)}">轨迹回放</span></td>
+    </tr>`).join('')||'<tr><td colspan="8" class="empty">无匹配车辆</td></tr>';
+  return `
+  <div class="page-head"><h1>车辆列表</h1><span class="sub">车辆无独立定位终端，位置由绑定的铅封锁关联得出（集装箱取第一个锁）</span></div>
+  <div class="card">
+    <div class="filter-bar">
+      <div class="field"><label>车牌号</label><input data-f="kw" value="${esc(f.kw)}" placeholder="车牌号"></div>
+      <div class="field"><label>在线状态</label><select data-f="online"><option value="">全部</option><option value="true">在线</option><option value="false">离线</option></select></div>
+      <button class="btn btn-primary" data-q>查询</button>
+      <button class="btn" data-refresh>手动刷新</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>车牌号</th><th>在线状态</th><th>绑定铅封锁</th><th>当前位置</th><th>最后定位时间</th><th>关联报关单号</th><th>运输方式</th><th>操作</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>
+    <div data-pager>${pager(rows.length,'vehicles',cur)}</div>
+  </div>`;
+}
+
+/* ============================================================
+ * 视图：运输记录
+ * ============================================================ */
+function viewRecords(){
+  const f=state.filters.records;
+  let rows=DB.plans.filter(p=>{
+    if(f.mode && p.mode!==f.mode) return false;
+    if(f.kw && !(p.bg.includes(f.kw)||p.bl.includes(f.kw)||p.cars.some(c=>c.plate.includes(f.kw)))) return false;
+    return true;
+  });
+  const cur=state.page.records, start=(cur-1)*state.perPage, slice=rows.slice(start,start+state.perPage);
+  const trs=slice.map(p=>`
+    <tr>
+      <td><b>${esc(p.bg)}</b><div class="cell-sub">${esc(p.bl)} · ${esc(p.vessel)}</div></td>
+      <td>${esc(p.consignor)}</td>
+      <td>${p.cars.map(c=>`<div>${esc(c.plate)}</div>`).join('')}</td>
+      <td>${p.cars.map(c=>`<div class="cell-sub">${c.seals.map(esc).join('、')}</div>`).join('')}</td>
+      <td><span class="tag mode">${esc(p.mode)}</span></td>
+      <td>${p.box||'—'}</td>
+      <td class="cell-sub">${esc(p.appoint)}</td>
+      <td class="cell-sub">${esc(p.sign||'—')}</td>
+      <td>${dur(p.appoint,p.sign)}</td>
+      <td><span class="link" data-replay="${esc(p.bg)}">轨迹回放</span> · <span class="link" data-plan="${esc(p.bg)}">编辑方案</span></td>
+    </tr>`).join('')||'<tr><td colspan="10" class="empty">暂无运输记录，可在「入库管理」绑定方案后生成</td></tr>';
+  return `
+  <div class="page-head"><h1>运输记录</h1><span class="sub">单据与时段取自 WMS，绑定关系取本地方案，轨迹取当前绑定锁（换锁后跟随新锁）</span></div>
+  <div class="card">
+    <div class="filter-bar">
+      <div class="field"><label>关键字（报关单 / 提单 / 车牌）</label><input data-f="kw" value="${esc(f.kw)}" placeholder="单号或车牌"></div>
+      <div class="field"><label>运输方式</label><select data-f="mode"><option value="">全部</option><option>散货</option><option>集装箱</option></select></div>
+      <button class="btn btn-primary" data-q>查询</button>
+      <button class="btn" data-refresh>手动刷新</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>报关单号 / 提单 / 船名</th><th>委托方</th><th>车牌（多车）</th><th>铅封锁</th><th>运输方式</th><th>柜数</th><th>预约时间</th><th>签收时间</th><th>运输时长</th><th>操作</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>
+    <div data-pager>${pager(rows.length,'records',cur)}</div>
+  </div>`;
+}
+
+/* ============================================================
+ * 视图：围栏预警日志（只读）
+ * ============================================================ */
+function viewAlerts(){
+  const f=state.filters.alerts;
+  let rows=DB.alerts.filter(a=>{
+    if(f.type && a.type!==f.type) return false;
+    if(f.kw && !(a.plate.includes(f.kw)||a.seal.includes(f.kw)||a.fence.includes(f.kw))) return false;
+    return true;
+  });
+  const cur=state.page.alerts, start=(cur-1)*state.perPage, slice=rows.slice(start,start+state.perPage);
+  const typeTag=t=>t==='驶入围栏'?'online':(t==='越界'||t==='超时停留'?'active':'idle');
+  const trs=slice.map(a=>`
+    <tr>
+      <td class="cell-sub">${esc(a.time)}</td>
+      <td><span class="tag ${typeTag(a.type)}">${esc(a.type)}</span></td>
+      <td>${esc(a.fence)}</td>
+      <td>${esc(a.plate)}</td>
+      <td>${esc(a.seal)}</td>
+      <td>${esc(a.loc)}</td>
+      <td>${esc(a.dir)}</td>
+    </tr>`).join('')||'<tr><td colspan="7" class="empty">无预警记录</td></tr>';
+  return `
+  <div class="page-head"><h1>电子围栏预警日志</h1><span class="sub">只读查询，不做处理 / 已读状态</span></div>
+  <div class="card">
+    <div class="filter-bar">
+      <div class="field"><label>时间范围</label><input type="date" style="min-width:130px;"> 至 <input type="date" style="min-width:130px;"></div>
+      <div class="field"><label>车牌 / 设备</label><input data-f="kw" value="${esc(f.kw)}" placeholder="车牌或锁编号"></div>
+      <div class="field"><label>预警类型</label><select data-f="type"><option value="">全部</option><option>驶入围栏</option><option>驶出围栏</option><option>越界</option><option>超时停留</option></select></div>
+      <button class="btn btn-primary" data-q>查询</button>
+      <button class="btn" data-refresh>手动刷新</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>预警时间</th><th>预警类型</th><th>围栏名称</th><th>车牌号</th><th>铅封锁</th><th>位置</th><th>进出方向</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>
+    <div data-pager>${pager(rows.length,'alerts',cur)}</div>
+  </div>`;
+}
+
+/* ============================================================
+ * 弹窗：运输方案绑定 / 编辑（一单多车）
+ * ============================================================ */
+function openPlanModal(bgNo){
+  const inv=DB.inbound.find(r=>r.bg===bgNo)||{};
+  const plan=DB.plans.find(p=>p.bg===bgNo);
+  const mode=plan?plan.mode:inv.mode;
+  const box=plan?plan.box:Number(inv.box)||0;
+  const cars=plan
+    ? plan.cars.map(c=>({...c,seals:c.seals&&c.seals.length?[...c.seals]:[""]}))
+    : [{plate:"",seals:[""]}];
+
+  function bodyHTML(){
+    const carInputs=cars.map((c,i)=>`
+      <div class="car-card" style="background:#faf8f3;">
+        <div class="car-head">车辆 ${i+1} <span class="tag ${mode==='集装箱'?'mode':'idle'}">${esc(mode||'运输车辆')}</span>
+          <span style="margin-left:auto;"><span class="link danger" data-delcar="${i}">移除车辆</span></span></div>
+        <div class="seal-row">
+          <span style="min-width:70px;color:var(--text-3);font-size:12.5px;">车牌号</span>
+          <input value="${esc(c.plate)}" data-cplate="${i}" placeholder="如 津C·82136">
+        </div>
+        <div style="font-size:12px;color:var(--text-3);margin:8px 0 6px;">铅封锁（每台车至少录入一个，可添加多个）</div>
+        ${c.seals.map((s,j)=>`
+          <div class="seal-row">
+            <span style="min-width:70px;color:var(--text-3);font-size:12.5px;">锁 ${j+1}</span>
+            <input value="${esc(s)}" data-seal-car="${i}" data-seal-index="${j}" placeholder="SEAL-XXXX">
+            ${c.seals.length>1?`<span class="link danger" data-rmseal="${i}-${j}">删除</span>`:''}
+          </div>`).join('')}
+        <button class="btn btn-sm" data-addseal="${i}" style="margin-top:4px;">添加一个锁</button>
+      </div>`).join('');
+    return `
+      <div class="readonly-grid">
+        <div class="ro"><div class="k">报关单号</div><div class="v readonly">${esc(bgNo)}</div></div>
+        <div class="ro"><div class="k">货运方式（WMS带出）</div><div class="v readonly">${esc(mode||'—')}</div></div>
+        <div class="ro"><div class="k">集装箱柜数（WMS带出）</div><div class="v readonly">${box||'—'}</div></div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0 8px;">
+        <div style="font-size:13px;font-weight:600;">运输车辆（${cars.length}）</div>
+        <button class="btn btn-sm" data-addcar>+ 添加车辆</button>
+      </div>
+      ${carInputs||'<div class="empty" style="padding:16px;">暂无车辆，请添加运输车辆。</div>'}`;
+  }
+
+  function renderModal(){
+    document.getElementById('modal-root').innerHTML=`
+      <div class="mask" style="display:flex;">
+        <div class="modal">
+          <div class="modal-head"><h3>运输方案 · ${esc(bgNo)}</h3><span class="x" data-close>×</span></div>
+          <div class="modal-body" id="plan-body">${bodyHTML()}</div>
+          <div class="modal-foot">
+            <button class="btn" data-close>取消</button>
+            <button class="btn btn-primary" data-save>保存方案</button>
+          </div>
+        </div>
+      </div>`;
+    bindPlanEvents();
+  }
+
+  function bindPlanEvents(){
+    const root=document.getElementById('modal-root');
+    root.querySelector('[data-close]').addEventListener('click',closeModal);
+    root.onclick=e=>{
+      const t=e.target;
+      if(!(t instanceof Element))return;
+      if(t.matches('[data-addcar]')){cars.push({plate:"",seals:[""]});renderModal();}
+      if(t.matches('[data-addseal]')){cars[+t.dataset.addseal].seals.push("");renderModal();}
+      if(t.matches('[data-rmseal]')){
+        const [carIndex,sealIndex]=t.dataset.rmseal.split('-').map(Number);
+        cars[carIndex].seals.splice(sealIndex,1);renderModal();
+      }
+      if(t.matches('[data-delcar]')){cars.splice(+t.dataset.delcar,1);renderModal();}
+      if(t.matches('[data-save]'))save();
+    };
+    root.oninput=e=>{
+      const t=e.target;
+      if(!(t instanceof HTMLInputElement))return;
+      if(t.dataset.cplate!==undefined)cars[+t.dataset.cplate].plate=t.value;
+      if(t.dataset.sealCar!==undefined){
+        cars[+t.dataset.sealCar].seals[+t.dataset.sealIndex]=t.value;
+      }
+    };
+  }
+
+  function save(){
+    if(!cars.length){toast('请至少绑定一辆车');return;}
+    for(let i=0;i<cars.length;i++){
+      if(!cars[i].plate.trim()){toast(`请填写第 ${i+1} 辆车的车牌号`);return;}
+      if(!cars[i].seals.length){toast(`请为第 ${i+1} 辆车添加铅封锁`);return;}
+      for(let j=0;j<cars[i].seals.length;j++){
+        if(!cars[i].seals[j].trim()){toast(`请填写第 ${i+1} 辆车的第 ${j+1} 个铅封锁编号`);return;}
+      }
+    }
+    const savedCars=cars.map(c=>({plate:c.plate.trim(),seals:c.seals.map(s=>s.trim())}));
+    let p=DB.plans.find(x=>x.bg===bgNo);
+    if(p){p.cars=savedCars;}
+    else{
+      DB.plans.push({bg:bgNo,bl:inv.bl,vessel:inv.vessel,consignor:inv.consignor,mode:inv.mode,box:Number(inv.box)||0,
+        appoint:"待预约",sign:"",cars:savedCars});
+    }
+    closeModal();toast('方案已保存（原型本地状态）');render();
+  }
+  renderModal();
+}
+
+/* ============================================================
+ * 弹窗：实时位置 / 轨迹回放（天地图占位）
+ * ============================================================ */
+function openMapModal(kind, target){
+  const isReplay=kind==='replay';
+  const meta = isReplay
+    ? `<div class="timeline-meta"><span>预约 2026-10-25 08:00</span><span>时长约 28.5 小时（最长支持 3–4 天）</span><span>签收 2026-10-26 12:30</span></div>`
+    : `<div class="timeline-meta"><span>目标：${esc(target)}</span><span>最后定位 2026-10-26 14:58:10</span><span class="tag online">在线</span></div>`;
+  document.getElementById('modal-root').innerHTML=`
+    <div class="mask" style="display:flex;">
+      <div class="modal wide">
+        <div class="modal-head"><h3>${isReplay?'轨迹回放':'实时位置'} · ${esc(target)}</h3><span class="x" data-close>×</span></div>
+        <div class="modal-body">
+          <div class="map-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+            <div><b>天地图容器</b>（申请开发 Key 后在此渲染底图与轨迹线）</div>
+            <div style="font-size:12px;">原型阶段以占位框表示，不接入真实地图瓦片</div>
+          </div>
+          ${isReplay?`
+          <div class="replay-bar">
+            <button class="btn btn-sm" id="playBtn">▶ 播放</button>
+            <div class="speed-group"><button class="cur">1x</button><button>2x</button><button>4x</button></div>
+            <input type="range" min="0" max="100" value="32">
+            <span class="cell-sub" id="rpTime">09:12 / 28:30:00</span>
+          </div>${meta}`:`<div style="margin-top:12px;">${meta}</div>`}
+        </div>
+        <div class="modal-foot"><button class="btn" data-close>关闭</button></div>
+      </div>
+    </div>`;
+  const root=document.getElementById('modal-root');
+  root.querySelector('[data-close]').addEventListener('click',closeModal);
+  const pb=root.querySelector('#playBtn');
+  if(pb){pb.addEventListener('click',()=>{
+    const playing=pb.dataset.on==='1';
+    pb.dataset.on=playing?'0':'1';
+    pb.textContent=playing?'▶ 播放':'⏸ 暂停';
+    toast(playing?'已暂停':'开始回放（原型仅演示控件）');
+  });}
+  root.querySelectorAll('.speed-group button').forEach(b=>b.addEventListener('click',()=>{
+    root.querySelectorAll('.speed-group button').forEach(x=>x.classList.remove('cur'));b.classList.add('cur');
+  }));
+}
+
+function closeModal(){document.getElementById('modal-root').innerHTML='';document.getElementById('mask').style.display='none';}
+document.getElementById('mask').addEventListener('click',closeModal);
+
+/* ============================================================
+ * 渲染主流程
+ * ============================================================ */
+function render(){
+  const r=state.route;
+  const meta=ROUTES[r]||ROUTES['/inbound'];
+  document.getElementById('crumb').innerHTML=`首页 / <b>${esc(meta.title)}</b>`;
+  const view=document.getElementById('view');
+  let html='';
+  if(r==='/devices')html=viewDevices();
+  else if(r==='/vehicles')html=viewVehicles();
+  else if(r==='/records')html=viewRecords();
+  else if(r==='/alerts')html=viewAlerts();
+  else html=viewInbound();
+  view.innerHTML=html;
+  renderNav();
+  bindCommon();
+  const key=r==='/devices'?'devices':r==='/vehicles'?'vehicles':r==='/records'?'records':r==='/alerts'?'alerts':'inbound';
+  bindPager(key);
+}
+
+function bindCommon(){
+  const view=document.getElementById('view');
+  // 回填筛选值（input / select 统一取本地状态）
+  const fk=currentFilterKey();
+  view.querySelectorAll('[data-f]').forEach(el=>{el.value=state.filters[fk][el.dataset.f]||'';});
+  // 筛选
+  view.querySelectorAll('[data-q]').forEach(b=>b.addEventListener('click',()=>{
+    const key=currentFilterKey();
+    view.querySelectorAll('[data-f]').forEach(el=>{state.filters[key][el.dataset.f]=el.value;});
+    state.page[key]=1;render();toast('查询完成');
+  }));
+  view.querySelectorAll('[data-refresh]').forEach(b=>b.addEventListener('click',()=>toast('已手动刷新（原型不重新请求）')));
+  // 行操作
+  view.querySelectorAll('[data-plan]').forEach(el=>el.addEventListener('click',()=>openPlanModal(el.dataset.plan)));
+  view.querySelectorAll('[data-live]').forEach(el=>el.addEventListener('click',()=>openMapModal('live',el.dataset.live)));
+  view.querySelectorAll('[data-track]').forEach(el=>el.addEventListener('click',()=>openMapModal('replay',el.dataset.track)));
+  view.querySelectorAll('[data-replay]').forEach(el=>el.addEventListener('click',()=>openMapModal('replay',el.dataset.replay)));
+}
+function currentFilterKey(){
+  const r=state.route;
+  return r==='/devices'?'devices':r==='/vehicles'?'vehicles':r==='/records'?'records':r==='/alerts'?'alerts':'inbound';
+}
+
+function route(){
+  let r=location.hash.replace('#','')||'/inbound';
+  if(!ROUTES[r])r='/inbound';
+  state.route=r;state.page[currentFilterKey()]=1;render();
+}
+window.addEventListener('hashchange',route);
+route();
+</script>
+</body>
+</html>

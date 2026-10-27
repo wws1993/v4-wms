@@ -9,11 +9,16 @@ defineProps<{
   multi?: boolean
   /** 只读展示已选堆位。 */
   readonly?: boolean
+  /** 当前绘制目标格或原堆位格 */
+  selectionLayer?: 'target' | 'source'
 }>()
 
 const stackCode = defineModel<string>('stackCode', { default: '' })
 const areaId = defineModel<string>('areaId', { default: '' })
 const cells = defineModel<string>('cells', { default: '' })
+const sourceStackCode = defineModel<string>('sourceStackCode', { default: '' })
+const sourceAreaId = defineModel<string>('sourceAreaId', { default: '' })
+const sourceCells = defineModel<string>('sourceCells', { default: '' })
 const picks = defineModel<StackPick[]>('picks', { default: () => [] })
 </script>
 
@@ -24,9 +29,13 @@ const picks = defineModel<StackPick[]>('picks', { default: () => [] })
     :area-label="areaLabel"
     :multi="multi"
     :readonly="readonly"
+    :selection-layer="selectionLayer"
     v-model:stack-code="stackCode"
     v-model:area-id="areaId"
     v-model:cells="cells"
+    v-model:source-stack-code="sourceStackCode"
+    v-model:source-area-id="sourceAreaId"
+    v-model:source-cells="sourceCells"
     v-model:picks="picks"
   />
 </template>

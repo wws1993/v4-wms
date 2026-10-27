@@ -25,6 +25,7 @@ export type StackPick = {
   areaId: string
   cells: string
   warehouseId?: string
+  dryWeight?: string | number
   wet?: string | number
   dry?: string | number
 }
@@ -47,17 +48,23 @@ const props = withDefaults(defineProps<{
   showBar?: boolean
   /** 仓库档案，browse 模式下用于库容提示 */
   houses?: Record<string, unknown>[]
+  /** 当前绘制目标格或原堆位格 */
+  selectionLayer?: 'target' | 'source'
 }>(), {
   mode: 'select',
   multi: false,
   readonly: false,
   showBar: undefined,
   houses: () => [],
+  selectionLayer: 'target',
 })
 
 const stackCodeModel = defineModel<string>('stackCode', { default: '' })
 const areaIdModel = defineModel<string>('areaId', { default: '' })
 const cellsModel = defineModel<string>('cells', { default: '' })
+const sourceStackCodeModel = defineModel<string>('sourceStackCode', { default: '' })
+const sourceAreaIdModel = defineModel<string>('sourceAreaId', { default: '' })
+const sourceCellsModel = defineModel<string>('sourceCells', { default: '' })
 const picksModel = defineModel<StackPick[]>('picks', { default: () => [] })
 const focusId = defineModel<string>('focusId', { default: '' })
 
@@ -79,7 +86,7 @@ const stageRef = ref<HTMLElement>()
 const mapRef = ref<InstanceType<typeof PlanSvg>>()
 const view = reactive({ x: 0, y: 0, w: defaultPlan().gridCols, h: defaultPlan().gridRows })
 const rubber = ref<{ x: number; y: number; w: number; h: number } | null>(null)
-const preview = ref<{ code: string; keys: string[] } | null>(null)
+const preview = ref<{ code: string; keys: string[]; layer: 'target' | 'source' } | null>(null)
 type TipRow = { text: string; kind?: 'meta' | 'owner' | 'cargo' | 'tons' }
 
 const tip = ref<{ title: string; rate: string; rows: TipRow[]; hint: string; x: number; y: number } | null>(null)
@@ -89,7 +96,11 @@ let hideTip = 0
 let syncingFocus = false
 
 const selectedKeys = computed(() => cellsModel.value.split(',').filter(Boolean))
+const sourceSelectedKeys = computed(() => sourceCellsModel.value.split(',').filter(Boolean))
 const pickCellCount = computed(() => picksModel.value.reduce((sum, row) => sum + row.cells.split(',').filter(Boolean).length, 0))
+const targetSelection = computed(() => props.multi
+  ? picksModel.value.find((pick) => pick.stackCode === stackCodeModel.value)?.cells.split(',').filter(Boolean) || []
+  : selectedKeys.value)
 
 function keysOfStack(code: string) {
   if (props.multi) {
@@ -153,6 +164,14 @@ watch(focusId, async (id, prev) => {
   }
   const host = plan.value.items.find((item) => item.id === id)
   if (host) flyTo(frameOf(host))
+})
+
+watch(() => props.selectionLayer === 'source' ? sourceStackCodeModel.value : stackCodeModel.value, async (code, previous) => {
+  if (!code || code === previous) return
+  await nextTick()
+  const current = plan.value.items.find((item) => item.type === 'stack' && codeOf(item) === code)
+  const host = current && hostOf(current, plan.value.items)
+  if (host) focusId.value = host.id
 })
 
 function slotName(name: string) {
@@ -233,11 +252,19 @@ function stockRows(rows: CargoLot[], tons: number, extras: string[] = []): TipRo
 
 const guides = computed(() => {
   if (!focusId.value) return []
-  const marks: { key: string; x: number; y: number; w: number; h: number; on: boolean; busy: boolean }[] = []
+  const marks: { key: string; x: number; y: number; w: number; h: number; layer: 'target' | 'source' | 'both' | 'none'; busy: boolean }[] = []
   for (const item of stacksInView()) {
     const size = gridSize(item)
-    const chosen = markSelection.value
-      ? (preview.value?.code === codeOf(item) ? preview.value.keys : keysOfStack(codeOf(item)))
+    const code = codeOf(item)
+    const targetKeys = markSelection.value
+      ? (preview.value?.layer === 'target' && preview.value.code === code ? preview.value.keys
+        : props.multi
+          ? picksModel.value.find((pick) => pick.stackCode === code)?.cells.split(',').filter(Boolean) || []
+          : code === stackCodeModel.value ? targetSelection.value : [])
+      : []
+    const sourceKeys = markSelection.value
+      ? (preview.value?.layer === 'source' && preview.value.code === code ? preview.value.keys
+        : code === sourceStackCodeModel.value ? sourceSelectedKeys.value : [])
       : []
     for (let row = 1; row <= size.rows; row += 1) {
       for (let col = 1; col <= size.cols; col += 1) {
@@ -245,10 +272,12 @@ const guides = computed(() => {
         const rect = cellRect(item, key)
         if (!rect) continue
         const busy = lotsHere(item).some((lot) => lot.cells?.includes(key))
+        const target = targetKeys.includes(key)
+        const source = sourceKeys.includes(key)
         marks.push({
           key: `${item.id}-${key}`,
           ...rect,
-          on: chosen.includes(key),
+          layer: target && source ? 'both' : target ? 'target' : source ? 'source' : 'none',
           busy,
         })
       }
@@ -403,7 +432,7 @@ function houseOf(item: PlanItem) {
   ))
 }
 
-function warehouseCard(item: PlanItem) {
+function warehouseCard(item: PlanItem): { title: string; rate: string; rows: TipRow[]; hint: string } {
   const code = warehouseCodeOf(item.name)
   const house = houseOf(item)
   const fromLots = stockTons((lot) => warehouseCodeOf(lot.warehouse) === code)
@@ -445,7 +474,7 @@ function stackTipBody(item: PlanItem, event?: PointerEvent) {
     ? (allowed(item) ? '拖拽框选格子，单击加减一格' : (props.areaLabel ? `只可选${props.areaLabel}` : ''))
     : '点击查询本堆位库存'
   const rateText = total > 0 ? `${rate}%` : ''
-  const base = {
+  const base: { title: string; rate: string; rows: TipRow[]; hint: string } = {
     title,
     rate: rateText,
     rows: stockRows(here, tons, [area, state]),
@@ -532,13 +561,29 @@ function choose(item: PlanItem, keys: string[]) {
   const row = archiveOf(item)
   const code = row?.code ? String(row.code) : codeOf(item)
   const areaId = row?.id ? String(row.id) : (item.stackId || '')
-  stackCodeModel.value = code
-  areaIdModel.value = areaId
-  cellsModel.value = keys.join(',')
-  if (!props.multi) return
-  const next = picksModel.value.filter((pick) => (areaId ? pick.areaId !== areaId : pick.stackCode !== code))
-  if (keys.length) next.push({ stackCode: code, areaId, cells: keys.join(',') })
-  picksModel.value = next
+  if (props.selectionLayer === 'source') {
+    sourceStackCodeModel.value = code
+    sourceAreaIdModel.value = areaId
+    sourceCellsModel.value = keys.join(',')
+  } else {
+    stackCodeModel.value = code
+    areaIdModel.value = areaId
+    cellsModel.value = keys.join(',')
+  }
+  if (props.multi && props.selectionLayer === 'target') {
+    const previous = picksModel.value.find((pick) => (areaId ? pick.areaId === areaId : pick.stackCode === code))
+    const next = picksModel.value.filter((pick) => (areaId ? pick.areaId !== areaId : pick.stackCode !== code))
+    if (keys.length) {
+      next.push({
+        stackCode: code,
+        areaId,
+        cells: keys.join(','),
+        warehouseId: String(row?.warehouseId || item.warehouseId || ''),
+        ...(previous?.dryWeight == null ? {} : { dryWeight: previous.dryWeight }),
+      })
+    }
+    picksModel.value = next
+  }
 }
 
 function listenDrag(on: boolean) {
@@ -596,7 +641,7 @@ function onDrag(event: PointerEvent) {
   if (!drag) return
   const spot = pointOf(event)
   placeRubber(event)
-  preview.value = { code: codeOf(drag.item), keys: cellsInside(drag.item, drag, spot) }
+  preview.value = { code: codeOf(drag.item), keys: cellsInside(drag.item, drag, spot), layer: props.selectionLayer }
   showTip(event, drag.item)
 }
 
@@ -617,9 +662,12 @@ function endDrag(event: PointerEvent) {
     const key = cellsInside(current.item, current, { x: current.x + 0.01, y: current.y + 0.01 })[0]
     if (!key) return
     const code = codeOf(current.item)
-    const base = props.multi
+    const source = props.selectionLayer === 'source'
+    const base = props.multi && !source
       ? keysOfStack(code)
-      : (stackCodeModel.value === code ? selectedKeys.value : [])
+      : (source
+        ? (sourceStackCodeModel.value === code ? sourceSelectedKeys.value : [])
+        : (stackCodeModel.value === code ? selectedKeys.value : []))
     const next = new Set(base)
     if (next.has(key)) next.delete(key)
     else next.add(key)
@@ -669,10 +717,14 @@ defineExpose({ zoomOut, layout })
             :y="mark.y"
             :width="mark.w"
             :height="mark.h"
-            :fill="mark.on
-              ? (mark.busy ? 'rgba(209,192,64,.38)' : 'rgba(209,192,64,.62)')
-              : (mark.busy ? 'rgba(209,192,64,.22)' : 'transparent')"
-            :stroke="mark.on ? '#e7c98a' : (mark.busy ? 'rgba(231,201,138,.45)' : 'rgba(255,255,255,.28)')"
+            :fill="mark.layer === 'target'
+              ? 'rgba(209,192,64,.68)'
+              : mark.layer === 'source'
+                ? 'rgba(56,169,210,.68)'
+                : mark.layer === 'both'
+                  ? 'rgba(174,112,205,.76)'
+                  : (mark.busy ? 'rgba(209,192,64,.22)' : 'transparent')"
+            :stroke="mark.layer === 'target' ? '#e7c98a' : mark.layer === 'source' ? '#63c9ec' : mark.layer === 'both' ? '#d6a4ed' : (mark.busy ? 'rgba(231,201,138,.45)' : 'rgba(255,255,255,.28)')"
             stroke-width="0.03"
           />
         </g>

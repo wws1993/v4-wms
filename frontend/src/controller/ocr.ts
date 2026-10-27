@@ -12,6 +12,7 @@ const OCR_TYPE: Record<string, number> = { 入库报关单: 0, 出库报关单: 
 const OCR_TYPE_LABEL = ['入库报关单', '出库报关单', '重量单', '品质单']
 /** OCR 状态编码 → 标签 */
 const OCR_STATUS: Record<number, string> = { 0: '待修正', 2: '已回填', 3: '已归档' }
+const OCR_MOCK = import.meta.env.VITE_OCR_MOCK !== 'false'
 
 /** 从识别结果中提取金额明细行。 */
 function ocrAmountLines(result: Row) {
@@ -24,9 +25,10 @@ function ocrAmountLines(result: Row) {
 function ocrRow(row: OcrLogVo | Row) {
   const bag = row as Row
   const result = resultObject(bag)
-    const type = Number(bag.ocrLogType)
+  const type = Number(bag.ocrLogType)
   const status = Number(bag.ocrLogStatus)
-  const consumer = text(result.consumer || result.消费使用单位 || result.consignee || result.merchantName)
+  const consumer = text(result.consumer || result.consumerName || result.消费使用单位 || result.consignee || result.consigneeName || result.merchantName)
+  const elements = elementFields(result)
   return {
     id: text(bag.id),
     time: text(bag.createTime).replace('T', ' ').slice(0, 16),
@@ -34,6 +36,9 @@ function ocrRow(row: OcrLogVo | Row) {
     fileName: text(bag.sourceUrl || bag.orderNo),
     /** 海关编号（原报关单号） */
     customsNo: text(result.customsNo || result.recordNo || result.customsCode || bag.orderNo),
+    recordNo: text(result.recordNo || result.customsNo || result.customsCode || bag.orderNo),
+    consignorName: text(result.consignorName || result.consignor),
+    receivingCompany: text(result.receivingCompany || result.receivingCompanyName),
     checklistNo: text(result.verificationCode || result.checklistNo),
     /** 消费使用单位：出库委托方 / 流向企业均回填此值 */
     consumer,
@@ -55,8 +60,16 @@ function ocrRow(row: OcrLogVo | Row) {
     orderId: bag.orderId,
     orderNo: bag.orderNo,
     qualityNo: text(result.qualityNo || result.certificateNo),
-    timeText: text(result.time || result.arrivalDate || result.recordTime),
-    ...elementFields(result),
+    timeText: text(result.time || result.arrivalDate || result.recordTime || result.declarationDate),
+    ...elements,
+    cu: result.cu ?? result.Cu ?? elements.cu,
+    ag: result.ag ?? result.Ag ?? elements.ag,
+    au: result.au ?? result.Au ?? elements.au,
+    as: result.as ?? result.As ?? elements.as,
+    pb: result.pb ?? result.Pb ?? elements.pb,
+    cd: result.cd ?? result.Cd ?? elements.cd,
+    f: result.f ?? result.F ?? elements.f,
+    hg: result.hg ?? result.Hg ?? elements.hg,
   }
 }
 /** 生成写死识别用的时间戳片段。 */
@@ -109,6 +122,7 @@ function ocrFixed(docType: string): Row | undefined {
     出库报关单: {
       id: `8${stamp}`,
       docType: '出库报关单',
+      consignorName: '华东冶炼冶炼一分厂',
       customsNo: `BGCK${stamp}`,
       checklistNo: `HZCK${stamp}`,
       consumer: '华东冶炼冶炼一分厂',
@@ -146,13 +160,32 @@ function ocrFixed(docType: string): Row | undefined {
 /** 本地写死识别（不调远端 OCR 引擎）。 */
 async function recognize(body: Row) {
   const docType = text(body.docType)
-  const sample = ocrFixed(docType)
-  if (!sample) return fail('当前写死识别仅支持入库报关单、出库报关单、提单、重量单、品质单')
+  if (OCR_MOCK) {
+    const sample = ocrFixed(docType)
+    if (!sample) return fail('当前模拟识别仅支持入库报关单、出库报关单、提单、重量单、品质单')
+    return ok({
+      ...sample,
+      fileName: text(body.fileName) || `${docType}.pdf`,
+      status: '待修正',
+    }, '识别完成，可手工修正')
+  }
+
+  const ocrLogType = OCR_TYPE[docType]
+  if (ocrLogType == null) return fail(`后端暂不支持${docType || '当前类型'}识别`)
+  const file = body.__file
+  if (!(file instanceof File)) return fail('请选择要识别的文件')
+  const form = new FormData()
+  form.append('file', file)
+  const result = await ruoyiSend<OcrLogVo, OcrLogVo>('POST', '/wms/ocr', form, {
+    ocrLogType,
+    orderNo: text(body.customsNo) || undefined,
+  })
+  if (!result.ok) return fail(result.message)
+  if (!result.data) return fail('OCR识别接口未返回识别结果')
   return ok({
-    ...sample,
-    fileName: text(body.fileName) || `${docType}.pdf`,
-    status: '待修正',
-  }, '识别完成，可手工修正')
+    ...ocrRow(result.data),
+    fileName: text(body.fileName) || text(result.data.sourceUrl) || `${docType}.pdf`,
+  }, result.message || '识别完成，可手工修正')
 }
 
 /** 修正 OCR 结果并回填/归档。 */
