@@ -13,6 +13,7 @@ import InboundView from '@/views/InboundView.vue'
 import InventoryView from '@/views/InventoryView.vue'
 import StocktakeView from '@/views/StocktakeView.vue'
 import ProductionView from '@/views/ProductionView.vue'
+import InspectionView from '@/views/InspectionView.vue'
 import OutboundView from '@/views/OutboundView.vue'
 import OcrView from '@/views/OcrView.vue'
 import CustomsView from '@/views/CustomsView.vue'
@@ -33,6 +34,7 @@ const pages: Record<string, RouteRecordRaw['component']> = {
   stocktake: StocktakeView,
   outbound: OutboundView,
   production: ProductionView,
+  inspection: InspectionView,
   customs: CustomsView,
   ocr: OcrView,
   warningLogs: WarningLogView,

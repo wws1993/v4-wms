@@ -3,11 +3,8 @@ import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { dictApi, inventoryApi, partnerApi, productionApi, warehouseApi } from '@/api'
-import ImageUpload from '@/components/ImageUpload.vue'
-import ImageViewer from '@/components/ImageViewer.vue'
 import StackGridPicker from '@/components/StackGridPicker.vue'
 import type { StackPick } from '@/components/YardPlanMap.vue'
-import { usePageTab } from '@/hooks/pageTab'
 import { dash } from './ops/samples'
 
 type Line = {
@@ -31,7 +28,6 @@ type Line = {
 type Doc = Record<string, unknown>
 
 const route = useRoute()
-const tab = usePageTab('feed', ['feed', 'inspect'])
 const filters = reactive({ consignor: '', from: '', to: '', keyword: '' })
 const consignors = ref<string[]>([])
 const docs = ref<Doc[]>([])
@@ -70,31 +66,6 @@ const finish = reactive({
   areaId: '',
   cells: '',
   picks: [] as StackPick[],
-})
-const inspectRows = ref<Doc[]>([])
-const inspectTotal = ref(0)
-const inspectPage = ref(1)
-const inspectPageSize = ref(10)
-const inspectLoading = ref(false)
-const inspectOpen = ref(false)
-const inspectSaving = ref(false)
-const inspectLots = ref<Doc[]>([])
-const inspectLotsLoading = ref(false)
-const inspectLotKeyword = ref('')
-const inspectFiles = ref<File[]>([])
-const inspectForm = reactive({
-  id: '',
-  productionOrderId: '',
-  prodBatch: '',
-  orderNo: '',
-  consignor: '',
-  stackCode: '',
-  customsNos: '',
-  outputDry: '',
-  remark: '',
-  fileUrl: '',
-  attachmentUrls: [] as string[],
-  attachmentNames: [] as string[],
 })
 
 function linesOf(row: Doc): Line[] {
@@ -332,16 +303,6 @@ watch(() => route.query.keyword, () => {
   applyKeyword()
 })
 
-watch(tab, (name, previous) => {
-  if (!previous || name === previous) return
-  if (name === 'inspect') {
-    loadInspections()
-    return
-  }
-  opsPage.value = 1
-  load()
-})
-
 watch(() => feed.prodBatch, (batch) => {
   if (!feedOpen.value || !batch) return
   const locked = batchParty(batch)
@@ -379,172 +340,20 @@ onMounted(async () => {
   if (categoryRes.success && Array.isArray(categoryRes.data)) {
     feedCargoTypes.value = categoryRes.data.filter((item) => item !== '混成品' && item !== '成品')
   }
-  if (tab.value === 'inspect') await loadInspections()
-  else await load()
+  await load()
   if (!consignors.value.length) {
     consignors.value = [...new Set(docs.value.map((row) => String(row.consignor || '')).filter(Boolean))]
   }
 })
-
-async function loadInspections() {
-  inspectLoading.value = true
-  const res = await productionApi.inspections({
-    page: inspectPage.value,
-    pageSize: inspectPageSize.value,
-    keyword: filters.keyword || undefined,
-    consignor: filters.consignor || undefined,
-  })
-  inspectLoading.value = false
-  if (!res.success || !res.data) {
-    inspectRows.value = []
-    inspectTotal.value = 0
-    if (!res.success) ElMessage.error(res.message || '加载送检记录失败')
-    return false
-  }
-  inspectRows.value = res.data.list
-  inspectTotal.value = res.data.total
-  return true
-}
-
-function inspectImages(row: Doc) {
-  const urls = Array.isArray(row.attachmentUrls) ? row.attachmentUrls.map(String).filter(Boolean) : []
-  const names = Array.isArray(row.attachmentNames) ? row.attachmentNames.map(String) : []
-  return urls.map((url, index) => ({ url, name: names[index] || '' }))
-}
-
-function resetInspectForm() {
-  inspectForm.id = ''
-  inspectForm.productionOrderId = ''
-  inspectForm.prodBatch = ''
-  inspectForm.orderNo = ''
-  inspectForm.consignor = ''
-  inspectForm.stackCode = ''
-  inspectForm.customsNos = ''
-  inspectForm.outputDry = ''
-  inspectForm.remark = ''
-  inspectForm.fileUrl = ''
-  inspectForm.attachmentUrls = []
-  inspectForm.attachmentNames = []
-  inspectFiles.value = []
-  inspectLotKeyword.value = ''
-  inspectLots.value = []
-}
-
-async function loadInspectLots() {
-  inspectLotsLoading.value = true
-  const res = await productionApi.inspectLots({
-    keyword: inspectLotKeyword.value.trim() || undefined,
-    page: 1,
-  })
-  inspectLotsLoading.value = false
-  if (!res.success || !res.data) {
-    inspectLots.value = []
-    if (!res.success) ElMessage.error(res.message || '加载待检票货失败')
-    return
-  }
-  inspectLots.value = res.data.list
-}
-
-function pickInspectLot(row: Doc) {
-  if (inspectForm.id) return
-  inspectForm.productionOrderId = String(row.productionOrderId || row.id || '')
-  inspectForm.prodBatch = String(row.prodBatch || '')
-  inspectForm.orderNo = String(row.orderNo || '')
-  inspectForm.consignor = String(row.consignor || '')
-  inspectForm.stackCode = String(row.stackCode || '')
-  inspectForm.customsNos = String(row.customsNos || '')
-  inspectForm.outputDry = String(row.outputDry ?? '')
-}
-
-async function openInspectCreate() {
-  resetInspectForm()
-  inspectOpen.value = true
-  await loadInspectLots()
-}
-
-async function openInspectEdit(row: Doc) {
-  resetInspectForm()
-  inspectForm.id = String(row.id || '')
-  inspectForm.productionOrderId = String(row.productionOrderId || '')
-  inspectForm.prodBatch = String(row.prodBatch || '')
-  inspectForm.orderNo = String(row.orderNo || '')
-  inspectForm.consignor = String(row.consignor || '')
-  inspectForm.stackCode = String(row.stackCode || '')
-  inspectForm.customsNos = String(row.customsNos || '')
-  inspectForm.outputDry = String(row.outputDry ?? '')
-  inspectForm.remark = String(row.remark || '')
-  inspectForm.fileUrl = String(row.fileUrl || '')
-  inspectForm.attachmentUrls = Array.isArray(row.attachmentUrls) ? row.attachmentUrls.map(String) : []
-  inspectForm.attachmentNames = Array.isArray(row.attachmentNames) ? row.attachmentNames.map(String) : []
-  inspectOpen.value = true
-  if (!inspectForm.prodBatch && inspectForm.id) {
-    const res = await productionApi.getInspection(inspectForm.id)
-    if (res.success && res.data) {
-      const detail = res.data
-      inspectForm.productionOrderId = String(detail.productionOrderId || inspectForm.productionOrderId)
-      inspectForm.prodBatch = String(detail.prodBatch || '')
-      inspectForm.orderNo = String(detail.orderNo || '')
-      inspectForm.consignor = String(detail.consignor || '')
-      inspectForm.stackCode = String(detail.stackCode || '')
-      inspectForm.customsNos = String(detail.customsNos || '')
-      inspectForm.outputDry = String(detail.outputDry ?? '')
-      inspectForm.remark = String(detail.remark || '')
-      inspectForm.fileUrl = String(detail.fileUrl || '')
-      inspectForm.attachmentUrls = Array.isArray(detail.attachmentUrls) ? detail.attachmentUrls.map(String) : []
-      inspectForm.attachmentNames = Array.isArray(detail.attachmentNames) ? detail.attachmentNames.map(String) : []
-    }
-  }
-}
-
-async function saveInspect() {
-  if (!inspectForm.productionOrderId) {
-    ElMessage.warning('请选择待检区票货')
-    return
-  }
-  if (!inspectForm.id && !inspectFiles.value.length && !inspectForm.fileUrl) {
-    ElMessage.warning('请上传附件')
-    return
-  }
-  inspectSaving.value = true
-  const body = {
-    productionOrderId: inspectForm.productionOrderId,
-    prodBatch: inspectForm.prodBatch,
-    remark: inspectForm.remark,
-    fileUrl: inspectForm.fileUrl,
-    __files: inspectFiles.value,
-  }
-  const res = inspectForm.id
-    ? await productionApi.updateInspection(inspectForm.id, body)
-    : await productionApi.createInspection(body)
-  inspectSaving.value = false
-  if (!res.success) {
-    ElMessage.error(res.message)
-    return
-  }
-  ElMessage.success(res.message || (inspectForm.id ? '已保存' : '送检已完成'))
-  inspectOpen.value = false
-  loadInspections()
-}
 
 async function search() {
   if (filters.from && filters.to && filters.from > filters.to) {
     ElMessage.warning('开始日期不能晚于结束日期')
     return
   }
-  if (tab.value === 'inspect') {
-    inspectPage.value = 1
-    const done = await loadInspections()
-    if (!done) return
-    ElMessage.success(inspectTotal.value ? `已查询，共 ${inspectTotal.value} 条` : '该条件下暂无送检记录')
-    return
-  }
   opsPage.value = 1
   const done = await load()
   if (!done) return
-  if (tab.value === 'finish') {
-    ElMessage.success(productionTotal.value ? `已查询，共 ${productionTotal.value} 条` : '该条件下暂无完工记录')
-    return
-  }
   ElMessage.success(productionTotal.value ? `已查询，共 ${productionTotal.value} 条` : '该条件下暂无投料或加工记录')
 }
 
@@ -961,12 +770,10 @@ function openLedger(date: string) {
 
 <template>
   <div>
-    <el-tabs v-model="tab">
-      <el-tab-pane label="投料/加工" name="feed">
-        <div class="toolbar">
+    <div class="toolbar">
           <el-button type="primary" @click="openFeed">新建生产批次</el-button>
-        </div>
-        <el-form :inline="true">
+    </div>
+    <el-form :inline="true">
           <el-form-item label="单号">
             <el-input v-model="filters.keyword" clearable placeholder="生产批次 / 报关单" style="width: 180px" />
           </el-form-item>
@@ -981,8 +788,8 @@ function openLedger(date: string) {
             <el-date-picker v-model="filters.to" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" />
           </el-form-item>
           <el-form-item><el-button type="primary" @click="search">查询</el-button></el-form-item>
-        </el-form>
-        <el-table v-loading="loading" :data="opsRows" border stripe>
+    </el-form>
+    <el-table v-loading="loading" :data="opsRows" border stripe>
           <el-table-column label="类型" width="100">
             <template #default="{ row }"><el-tag :type="row.type === '加工过程' ? 'primary' : 'success'" effect="plain">{{ row.type }}</el-tag></template>
           </el-table-column>
@@ -1008,8 +815,8 @@ function openLedger(date: string) {
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
             </template>
           </el-table-column>
-        </el-table>
-        <div class="pager">
+    </el-table>
+    <div class="pager">
           <el-pagination
             v-model:current-page="opsPage"
             v-model:page-size="opsPageSize"
@@ -1020,71 +827,7 @@ function openLedger(date: string) {
             @current-change="changeProductionPage"
             @size-change="changeProductionPageSize"
           />
-        </div>
-      </el-tab-pane>
-
-      <el-tab-pane label="抽样送检" name="inspect">
-        <div class="toolbar">
-          <el-button type="primary" @click="openInspectCreate">新增送检</el-button>
-        </div>
-        <el-form :inline="true" @submit.prevent="search">
-          <el-form-item label="单号">
-            <el-input v-model="filters.keyword" clearable placeholder="生产批次 / 报关单" style="width: 180px" @keyup.enter="search" />
-          </el-form-item>
-          <el-form-item label="委托方">
-            <el-select v-model="filters.consignor" clearable placeholder="全部" style="width: 140px">
-              <el-option v-for="name in consignors" :key="name" :label="name" :value="name" />
-            </el-select>
-          </el-form-item>
-          <el-form-item><el-button type="primary" @click="search">查询</el-button></el-form-item>
-        </el-form>
-        <el-table v-loading="inspectLoading" :data="inspectRows" border stripe empty-text="暂无送检记录">
-          <el-table-column label="生产批次" min-width="130"><template #default="{ row }">{{ dash(row.prodBatch) }}</template></el-table-column>
-          <el-table-column prop="orderNo" label="完工单号" min-width="140" />
-          <el-table-column prop="consignor" label="委托方" width="120" />
-          <el-table-column label="关联报关单号" min-width="160"><template #default="{ row }">{{ dash(row.customsNos) }}</template></el-table-column>
-          <el-table-column prop="stackCode" label="堆位" width="100" />
-          <el-table-column label="产量(干吨)" width="110">
-            <template #default="{ row }">{{ num(row.outputDry) }}</template>
-          </el-table-column>
-          <el-table-column prop="time" label="送检时间" min-width="150" />
-          <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-          <el-table-column label="附件" min-width="160">
-            <template #default="{ row }">
-              <div class="attach-links">
-                <ImageViewer
-                  v-for="(item, index) in inspectImages(row)"
-                  :key="item.url"
-                  variant="link"
-                  :label="inspectImages(row).length > 1 ? `查看附件${index + 1}` : '查看附件'"
-                  :src="item.url"
-                  :name="item.name"
-                  title="送检附件"
-                />
-                <span v-if="!inspectImages(row).length">{{ row.attachment || '—' }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" fixed="right" width="80">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openInspectEdit(row)">编辑</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <div class="pager">
-          <el-pagination
-            v-model:current-page="inspectPage"
-            v-model:page-size="inspectPageSize"
-            :total="inspectTotal"
-            :page-sizes="[10, 20, 50]"
-            layout="total, sizes, prev, pager, next"
-            background
-            @current-change="loadInspections"
-            @size-change="() => { inspectPage = 1; loadInspections() }"
-          />
-        </div>
-      </el-tab-pane>
-    </el-tabs>
+    </div>
 
     <el-dialog v-model="feedOpen" title="原料投料出库" width="1280px" align-center>
       <p class="hint">同一生产批次可勾选多个报关单，须为同一委托方。本次干吨不能超过剩余干吨。委托方随勾选票带出。</p>
@@ -1287,69 +1030,6 @@ function openLedger(date: string) {
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="inspectOpen" :title="inspectForm.id ? '编辑抽样送检' : '新增抽样送检'" width="980px" align-center>
-      <p class="hint">选择一条待检区票货，上传附件并填写备注后完成。编辑时不可更换票货。</p>
-      <template v-if="inspectForm.id">
-        <el-row :gutter="16">
-          <el-col :span="12"><el-form-item label="生产批次"><el-input :model-value="inspectForm.prodBatch" disabled /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="完工单号"><el-input :model-value="inspectForm.orderNo" disabled /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="委托方"><el-input :model-value="inspectForm.consignor" disabled /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="堆位"><el-input :model-value="inspectForm.stackCode" disabled /></el-form-item></el-col>
-          <el-col :span="24"><el-form-item label="关联报关单号"><el-input :model-value="inspectForm.customsNos" disabled /></el-form-item></el-col>
-        </el-row>
-      </template>
-      <template v-else>
-        <div class="panel-title">选择待检区票货</div>
-        <el-form :inline="true" @submit.prevent="loadInspectLots">
-          <el-form-item label="关键词">
-            <el-input v-model="inspectLotKeyword" clearable placeholder="生产批次 / 报关单 / 堆位" style="width: 220px" @keyup.enter="loadInspectLots" />
-          </el-form-item>
-          <el-form-item><el-button type="primary" @click="loadInspectLots">查询</el-button></el-form-item>
-        </el-form>
-        <el-table
-          v-loading="inspectLotsLoading"
-          :data="inspectLots"
-          border
-          max-height="280"
-          highlight-current-row
-          empty-text="暂无待检区票货"
-          @row-click="pickInspectLot"
-        >
-          <el-table-column label="选择" width="70">
-            <template #default="{ row }">
-              <el-radio :model-value="inspectForm.productionOrderId" :value="String(row.productionOrderId || row.id)" @click.stop="pickInspectLot(row)" />
-            </template>
-          </el-table-column>
-          <el-table-column label="生产批次" min-width="130"><template #default="{ row }">{{ dash(row.prodBatch) }}</template></el-table-column>
-          <el-table-column prop="orderNo" label="完工单号" min-width="140" />
-          <el-table-column prop="consignor" label="委托方" width="110" />
-          <el-table-column label="关联报关单号" min-width="160"><template #default="{ row }">{{ dash(row.customsNos) }}</template></el-table-column>
-          <el-table-column prop="stackCode" label="堆位" width="100" />
-          <el-table-column label="产量(干吨)" width="110">
-            <template #default="{ row }">{{ num(row.outputDry) }}</template>
-          </el-table-column>
-        </el-table>
-      </template>
-      <el-form-item label="附件" required class="remark">
-        <ImageUpload v-model="inspectFiles" multiple :src="inspectForm.attachmentUrls[0]" />
-        <div v-if="inspectForm.id && inspectForm.attachmentUrls.length && !inspectFiles.length" class="attach-links">
-          <ImageViewer
-            v-for="(url, index) in inspectForm.attachmentUrls"
-            :key="url"
-            variant="link"
-            :label="inspectForm.attachmentUrls.length > 1 ? `已有附件${index + 1}` : '已有附件'"
-            :src="url"
-            :name="inspectForm.attachmentNames[index] || ''"
-            title="送检附件"
-          />
-        </div>
-      </el-form-item>
-      <el-form-item label="备注" class="remark"><el-input v-model="inspectForm.remark" type="textarea" :rows="3" placeholder="选填" /></el-form-item>
-      <template #footer>
-        <el-button @click="inspectOpen = false">取消</el-button>
-        <el-button type="primary" :loading="inspectSaving" @click="saveInspect">{{ inspectForm.id ? '保存' : '完成' }}</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -1366,7 +1046,6 @@ function openLedger(date: string) {
 .panel-title { margin: 16px 0 8px; font-weight: 600; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .remark { margin-top: 12px; }
-.attach-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .over :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px var(--el-color-danger) inset; }
 :deep(.el-form-item) { margin-bottom: 12px; }
 :deep(.el-dialog .el-select), :deep(.el-dialog .el-input), :deep(.el-dialog .el-date-editor.el-input) { width: 100%; }

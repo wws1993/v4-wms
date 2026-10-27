@@ -26,6 +26,7 @@ export const NAV: NavItem[] = [
   { id: 'inventory',  title: '库存查询', path: '/inventory', group: '仓储作业', icon: 'Search', roles: ops },
   { id: 'stocktake',  title: '盘点管理', path: '/stocktake', group: '仓储作业', icon: 'Finished', roles: ops },
   { id: 'production', title: '生产加工', path: '/production', group: '仓储作业', icon: 'SetUp', roles: ops },
+  { id: 'inspection', title: '抽样送检', path: '/inspection', group: '仓储作业', icon: 'Document', roles: ops },
   { id: 'outbound',   title: '出库管理', path: '/outbound', group: '仓储作业', icon: 'Upload', roles: ops },
   // 账务
   { id: 'bonded',     title: '保税账册', path: '/ledger/bonded', group: '账务', icon: 'Notebook', roles: master },
@@ -53,7 +54,8 @@ const MENU_WORDS: { id: string; words: string[] }[] = [
   { id: 'stocktake', words: ['盘点', '盘库'] },
   { id: 'warningLogs', words: ['预警日志'] },
   { id: 'outbound', words: ['出库'] },
-  { id: 'production', words: ['生产加工', '完工', '送检', '抽样'] },
+  { id: 'production', words: ['生产加工', '完工'] },
+  { id: 'inspection', words: ['抽样送检', '送检'] },
   { id: 'customs', words: ['关务'] },
   { id: 'ocr', words: ['ocr', '识别'] },
   { id: 'audit', words: ['操作日志', '审计'] },
