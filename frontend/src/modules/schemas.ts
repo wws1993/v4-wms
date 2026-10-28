@@ -168,23 +168,33 @@ export const schemas: Record<string, ModuleSchema> = {
     showDetail: true,
     detailColumn: 'code',
     async detail(row) {
-      const res = await materialApi.lots(String(row.code))
+      const itemBookId = String(row.id)
+      const page = 1
+      const pageSize = 10
+      const res = await materialApi.lots(itemBookId, { page, pageSize })
+      if (!res.success || !res.data) throw new Error(res.message || '票货列表读取失败')
       const blocks: DetailBlock[] = [{
         title: `备案票货 · ${row.code || ''}`,
         table: {
           columns: [
             { prop: 'customsNo', label: '报关单号', minWidth: 180, lot: true },
-            { prop: 'prodBatch', label: '生产批次号', minWidth: 120 },
-            { prop: 'consignor', label: '委托方', minWidth: 100 },
-            { prop: 'material', label: '物料', minWidth: 110 },
-            { prop: 'cargoType', label: '货物类型', width: 100, tag: true },
+            // { prop: 'prodBatch', label: '生产批次号', minWidth: 120 },
+            { prop: 'consignor', label: '委托方', minWidth: 180 },
+            // { prop: 'material', label: '物料', minWidth: 110 },
+            // { prop: 'cargoType', label: '货物类型', width: 100, tag: true },
             { prop: 'stack', label: '堆位', width: 90 },
             { prop: 'wet', label: '湿重', width: 80 },
             { prop: 'dry', label: '干重(DMT)', width: 110 },
             { prop: 'inAt', label: '入库时间', minWidth: 140 },
             { prop: 'status', label: '状态', width: 90, tag: true },
           ],
-          rows: res.success ? res.data : [],
+          rows: res.data.list,
+          pager: {
+            page,
+            pageSize,
+            total: res.data.total,
+            load: (nextPage, nextPageSize) => materialApi.lots(itemBookId, { page: nextPage, pageSize: nextPageSize }),
+          },
         },
       }]
       return blocks
@@ -198,7 +208,7 @@ export const schemas: Record<string, ModuleSchema> = {
       {
         label: '导出 Excel',
         inDetail: true,
-        request: async (row) => materialApi.exportLots(String(row.code)),
+        request: async (row) => materialApi.exportLots(String(row.id)),
       },
     ],
   },

@@ -58,7 +58,20 @@ export interface ColumnSchema {
 export interface DetailBlock {
   title: string
   fields?: { label: string; value: string }[]
-  table?: { columns: ColumnSchema[]; rows: Record<string, unknown>[] }
+  table?: {
+    columns: ColumnSchema[]
+    rows: Record<string, unknown>[]
+    pager?: {
+      page: number
+      pageSize: number
+      total: number
+      load: (page: number, pageSize: number) => Promise<{
+        success: boolean
+        message: string
+        data: { list: Record<string, unknown>[]; total: number } | null
+      }>
+    }
+  }
 }
 
 export interface ActionDialog {

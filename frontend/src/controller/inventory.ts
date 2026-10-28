@@ -73,6 +73,7 @@ function inventoryLot(
     areaLabel: text(area?.areaIdentification || row.areaIdentification),
     wet: receipt?.wetWeight ?? row.wetWeight ?? '',
     dry: receipt?.dryWeight ?? row.dryWeight ?? remain ?? '',
+    moisture: receipt?.moistureContent ?? row.moistureContent ?? row.moisture ?? '',
     remain: remain ?? '',
     originCountry: finished ? '—' : text(row.country || row.originCountry || receipt?.originCountry || receipt?.country),
     book: text(nested(row, 'accountBook')?.accountCode || row.accountCode || receipt?.accountCode),
@@ -135,6 +136,7 @@ function homeLot(
 ): CargoLot | null {
   const area = nested(row, 'area')
   const consignor = nested(row, 'consignor')
+  const item = nested(row, 'item')
   const areaId = text(row.areaId || area?.id)
   const known = areas.find((item) => text(item.id) === areaId)
   const code = text(known?.areaCode || known?.areaName || area?.areaCode || area?.areaName || row.areaCode)
@@ -143,7 +145,8 @@ function homeLot(
   const house = houses.find((item) => text(item.id) === warehouseId)
   const cells = cellsText(row).split(',').filter(Boolean)
   const dry = num(row.dryWeight ?? row.quantity ?? row.remainQuantity) ?? 0
-  const cargoType = labelOf(categories, row.itemCategory) || text(row.cargoType) || text(row.itemCategory)
+  const category = row.itemCategory ?? item?.itemCategory ?? row.itemCategoryName ?? item?.itemCategoryName ?? row.cargoType
+  const cargoType = labelOf(categories, category) || text(category) || (Number(row.type) === 2 ? '成品' : '')
   return {
     stackText: code,
     warehouse: text(house?.warehouseCode || house?.warehouseName || warehouseId),
@@ -169,6 +172,7 @@ async function inventoryHome() {
 }
 async function listInventory(query: Query) {
   const materialKey = text(query.materialId || query.mineArea).trim()
+  const categoryFilter = text(query.cargoType || query.itemCategory).trim()
   const [categories, houses, translates, areaNames, consignor, area, item, itemCategory, shippingMethodId] = await Promise.all([
     dictOf('wms_item_category'),
     loadHouses(),
@@ -177,7 +181,11 @@ async function listInventory(query: Query) {
     query.consignor ? findMerchant(query.consignor) : Promise.resolve(undefined),
     query.stack ? findArea(query.stack) : Promise.resolve(undefined),
     materialKey ? findItem(materialKey) : Promise.resolve(undefined),
-    query.cargoType ? dictValue('wms_item_category', query.cargoType) : Promise.resolve(undefined),
+    categoryFilter
+      ? (/^\d+$/.test(categoryFilter)
+        ? Promise.resolve(categoryFilter)
+        : dictValue('wms_item_category', categoryFilter))
+      : Promise.resolve(undefined),
     query.shipMode ? codeFromDict('wms_translate_type', query.shipMode) : Promise.resolve(undefined),
   ])
   if (query.consignor && !consignor) return inventoryPage(query, [], 0)
@@ -196,7 +204,7 @@ async function listInventory(query: Query) {
     warehouseId: house ? idOf(house.id) : undefined,
     recordNo: query.keyword || undefined,
     itemId: item ? idOf(item.id) ?? text(item.id) : undefined,
-    itemCategory: itemCategory || undefined,
+    itemCategory: itemCategory || (categoryFilter === '混成品' ? 2 : undefined),
     shippingMethodId: shippingMethodId == null ? undefined : shippingMethodId,
     recordNumber: query.filingNo || undefined,
     ...(span.from || span.to ? { params: { beginTime: span.from || undefined, endTime: span.to || undefined } } : {}),
@@ -236,19 +244,37 @@ async function listInventory(query: Query) {
   return inventoryPage(query, rows, result.total, note || result.message)
 }
 
-/** 读取完整库存目录供选择器和关联记录使用。 */
+/** 读取库存目录供选择器和关联记录使用（只查询在库库存）。 */
 async function inventoryCatalog(query: Query = {}) {
-  const [listed, categories, houses, translates, areas, areaNames] = await Promise.all([
-    readDirectory<InventoryVo>('inventories'),
+  const [categories, houses, translates, areas, areaNames] = await Promise.all([
     dictOf('wms_item_category'),
     loadHouses(),
     dictOf('wms_translate_type'),
     areaRows(),
     dictOf('wms_area_identification'),
   ])
-  if (!listed.ok) return fail('库存目录读取失败')
   const areaList = objectRows(areas)
-  const rows = listed.rows.map((row) => {
+  const stack = text(query.stack).trim()
+  const keyword = text(query.keyword).trim()
+  const matchedArea = stack
+    ? areaList.find((area) => text(area.id) === stack || text(area.areaCode) === stack || text(area.areaName) === stack)
+    : undefined
+  const filters: Query = {
+    inventoryStatus: 0,
+    ...(matchedArea ? { areaId: idOf(matchedArea.id) } : stack ? { areaCode: stack } : {}),
+    ...(keyword ? { recordNo: keyword } : {}),
+  }
+  let result = await ruoyiGet<InventoryVo>('/wms/inventory/list', pageParams({ ...query, pageNum: 1, pageSize: 1000 }, filters))
+  if (result.ok && keyword && result.total === 0) {
+    const retry = await ruoyiGet<InventoryVo>('/wms/inventory/list', pageParams({ ...query, pageNum: 1, pageSize: 1000 }, {
+      ...filters,
+      recordNo: undefined,
+      batchNo: keyword,
+    }))
+    if (retry.ok) result = retry
+  }
+  if (!result.ok) return fail(brief(result.message))
+  const rows = result.rows.map((row) => {
     const lot = inventoryLot(row as InventoryRow, categories, houses, translates)
     if (!lot.areaLabel && lot.areaId) {
       const area = areaList.find((item) => text(item.id) === text(lot.areaId))
@@ -257,15 +283,7 @@ async function inventoryCatalog(query: Query = {}) {
     lot.areaLabel = areaLabelText(lot.areaLabel, areaNames)
     return lot
   })
-  const status = text(query.status).trim()
-  const stack = text(query.stack).trim()
-  const keyword = text(query.keyword).trim()
-  return ok(rows.filter((row) => {
-    if (status && text(row.status) !== status) return false
-    if (stack && text(row.areaId) !== stack && text(row.stackText) !== stack) return false
-    if (keyword && ![row.customsNo, row.batchNo, row.id, row.orderId].some((value) => text(value).includes(keyword))) return false
-    return true
-  }))
+  return ok(rows)
 }
 
 /** 按批次号/报关单号定位库存行。 */

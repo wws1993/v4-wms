@@ -6,6 +6,7 @@ import type { Row } from './types'
 type DirectoryDefinition = {
   path: string
   cache: SessionListName
+  cacheEnabled?: boolean
 }
 
 export const DIRECTORY_ENDPOINTS = {
@@ -17,7 +18,7 @@ export const DIRECTORY_ENDPOINTS = {
   accountBooks: { path: '/wms/accountBook/listNoPage', cache: SESSION_LIST.accountBook },
   shippingMethods: { path: '/wms/shippingMethod/listNoPage', cache: SESSION_LIST.shippingMethod },
   floorPlans: { path: '/wms/floorPlan/listNoPage', cache: SESSION_LIST.floorPlan },
-  inventories: { path: '/wms/inventory/listNoPage', cache: SESSION_LIST.inventory },
+  inventories: { path: '/wms/inventory/listNoPage', cache: SESSION_LIST.inventory, cacheEnabled: false },
   inventoryDetails: { path: '/wms/inventoryDetail/listNoPage', cache: SESSION_LIST.inventoryDetail },
   receiptOrders: { path: '/wms/receiptOrder/listNoPage', cache: SESSION_LIST.receiptOrder },
   productionOrders: { path: '/wms/productionOrder/listNoPage', cache: SESSION_LIST.productionOrder },
@@ -58,22 +59,32 @@ function resultRows<TRow>(result: { data?: unknown; rows: TRow[] }) {
   return result.rows
 }
 
-/** Read a cached listNoPage endpoint, optionally caching a distinct filtered result. */
+/** Read a listNoPage endpoint, caching results unless the directory disables it. */
 export async function readDirectory<TRow = Row>(
   name: DirectoryName,
   params: Record<string, unknown> = {},
 ) {
-  const definition = DIRECTORY_ENDPOINTS[name]
+  const definition: DirectoryDefinition = DIRECTORY_ENDPOINTS[name]
   const key = cacheKey(definition.cache, params)
   let message = ''
-  const listed = await loadSessionList(definition.cache, key, async () => {
+  const load = async () => {
     const result = await ruoyiGet<TRow>(definition.path, normalizedParams(params))
     if (!result.ok) message = result.message
     return {
       ok: result.ok,
       rows: result.ok ? resultRows(result) as CacheRow[] : [],
     }
-  })
+  }
+  if (definition.cacheEnabled === false) {
+    clearSessionList(definition.cache)
+    const listed = await load()
+    return {
+      ok: listed.ok,
+      rows: listed.rows as TRow[],
+      message: listed.ok ? '' : message || '目录读取失败',
+    }
+  }
+  const listed = await loadSessionList(definition.cache, key, load)
   return {
     ok: listed.ok,
     rows: listed.rows as TRow[],

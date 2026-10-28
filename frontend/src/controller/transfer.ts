@@ -160,7 +160,10 @@ async function createMovements(body: Row) {
   const list: Row[] = []
   for (let index = 0; index < rawItems.length; index += 1) {
     const item = rawItems[index]
-    if (!text(item.toStack) && !text(item.areaId)) return fail(`${text(item.batchNo) || '所选批次'}：请选择目标堆位`)
+    const movementOrderAreas = Array.isArray(item.movementOrderAreas) ? item.movementOrderAreas : []
+    if (!text(item.toStack) && !text(item.areaId) && !movementOrderAreas.length) {
+      return fail(`${text(item.batchNo) || '所选批次'}：请选择目标堆位`)
+    }
     const built = await buildMovementBo({
       ...item,
       timeFrom: text(item.timeFrom) || sharedTimeFrom || undefined,
@@ -190,6 +193,9 @@ async function listMovements(query: Query) {
   ])
   const result = await ruoyiGet<MovementOrderVo>('/wms/movementOrder/list', pageParams(query, {
     consignorId: consignor ? idOf(consignor.id) : undefined,
+    recordNo: text(query.customsNo || query.recordNo).trim() || undefined,
+    batchNo: text(query.batchNo).trim() || undefined,
+    inventoryId: text(query.inventoryId).trim() || undefined,
     movementOrderNo: text(query.keyword).trim() || undefined,
     remark: text(query.scene).trim() || undefined,
     ...range(query),

@@ -164,11 +164,13 @@ export const warehouseRoutes: Route[] = [
       query.warehouse ? findWarehouseId(query.warehouse) : Promise.resolve(undefined),
       areaLabel ? dictValue('wms_area_identification', areaLabel) : Promise.resolve(undefined),
     ])
-    const result = await ruoyiGet<AreaVo>('/wms/area/list', pageParams(query, {
+    const result = await ruoyiGet<AreaVo>('/wms/area/list', {
+      pageNum: Number(query.page || 1),
+      pageSize: Number(query.pageSize || 10),
       warehouseId: warehouseIdValue ?? undefined,
       areaCode: keyword || undefined,
       areaIdentification: areaIdentification || undefined,
-    }))
+    })
     if (!result.ok) return fail(result.message)
     const [houses, grids, areaNames] = await Promise.all([
       warehouseRows(),

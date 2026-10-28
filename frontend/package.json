@@ -1,7 +1,7 @@
 {
   "name": "wms-frontend",
   "private": true,
-  "version": "0.1.6816",
+  "version": "0.1.10612",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,5 +26,5 @@
     "vite": "^6.3.5",
     "vue-tsc": "^2.2.8"
   },
-  "lastModify": "2026-10-24 20:39:05"
+  "lastModify": "2026-10-28 15:59:04"
 }

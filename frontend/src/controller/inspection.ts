@@ -86,7 +86,9 @@ async function listInspections(query: Query) {
   const consignor = query.consignor ? await findMerchant(query.consignor) : undefined
   const filters: Query = {}
   if (consignor) filters.consignorId = idOf(consignor.id)
-  const batch = text(query.keyword || query.batchNo).trim()
+  const recordNo = text(query.recordNo || query.customsNo).trim()
+  if (recordNo) filters.recordNo = recordNo
+  const batch = text(query.batchNo || (!recordNo ? query.keyword : '')).trim()
   if (batch) filters.batchNo = batch
   if (query.productionOrderId) filters.productionOrderId = idOf(query.productionOrderId) ?? text(query.productionOrderId)
   const result = await ruoyiGet<ProductionOrderInspectionVo>('/wms/productionOrderInspection/list', pageParams(query, filters))

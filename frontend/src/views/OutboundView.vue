@@ -58,6 +58,21 @@ function lotRowClass({ row }: { row: Record<string, unknown> }) {
   return lotKey(row) === form.lotId ? 'is-picked' : ''
 }
 
+function areaTag(area: unknown) {
+  const label = String(area || '').trim()
+  if (/待检|检验|质检/.test(label)) return 'warning'
+  if (/成品/.test(label)) return 'success'
+  if (/原料|报备矿|矿区/.test(label)) return 'primary'
+  if (/冻结|不合格|隔离|危险/.test(label)) return 'danger'
+  if (/混矿|混成品|混合/.test(label)) return 'info'
+  return 'info'
+}
+
+function areaText(row: Record<string, unknown>) {
+  const stack = stacks.value.find((item) => String(item.id) === String(row.stackId) || String(item.code) === String(row.stackText))
+  return String(row.areaLabel || stack?.areaLabel || '未分类')
+}
+
 async function load() {
   loading.value = true
   const res = await outboundApi.list({ ...filters, page: page.value, pageSize: 10 })
@@ -177,8 +192,8 @@ async function loadSourceLots(keepPick = false) {
   const res = await inventoryApi.list({
     stack: form.stackId || undefined,
     keyword: String(form.customsKeyword || '').trim() || undefined,
-    status: '在库',
-    page: lotPage.value,
+    itemCategory: 3,
+    pageNum: lotPage.value,
     pageSize: lotPageSize.value,
   })
   if (token !== lotToken) return
@@ -419,7 +434,7 @@ function canShip(row: Record<string, unknown>) {
     <el-dialog v-model="open" title="新建出库订单" width="1100px" align-center destroy-on-close>
       <div class="ocr">
         <el-tag>出库报关单</el-tag>
-        {{form}}
+        <!-- {{form}} -->
         <el-tag type="info">可选识别</el-tag>
         <el-button size="small" type="primary" plain :disabled="ocrBusy" @click="outboundFile?.click()">
           {{ ocrPreviewName ? '重新上传' : '上传报关单' }}
@@ -440,7 +455,12 @@ function canShip(row: Record<string, unknown>) {
                 style="width: 160px"
                 @change="onStackChange"
               >
-                <el-option v-for="item in stacks" :key="String(item.id)" :label="String(item.code)" :value="String(item.id)" />
+                <el-option v-for="item in stacks" :key="String(item.id)" :label="String(item.code)" :value="String(item.id)">
+                  <span class="stack-option">
+                    <span>{{ String(item.code) }}</span>
+                    <el-tag size="small" effect="plain" :type="areaTag(item.areaLabel)">{{ String(item.areaLabel || '未分类') }}</el-tag>
+                  </span>
+                </el-option>
               </el-select>
               <el-input
                 v-model="form.customsKeyword"
@@ -449,14 +469,14 @@ function canShip(row: Record<string, unknown>) {
                 style="flex: 1; min-width: 160px"
               />
             </div>
-            <p class="hint">打开即查在库票货。切换堆位或关键字会自动刷新。</p>
+            <p class="hint">仅查询在库混成品。切换堆位或关键字会自动刷新。</p>
             <el-table
               v-loading="lotsLoading"
               :data="sourceLots"
               border
               size="small"
               max-height="240"
-              empty-text="暂无在库票货"
+              empty-text="暂无在库混成品"
               :row-class-name="lotRowClass"
               @row-click="pickLot"
             >
@@ -469,9 +489,16 @@ function canShip(row: Record<string, unknown>) {
               <el-table-column label="报关单号" min-width="130"><template #default="{ row }">{{ lotText(row, 'customs') }}</template></el-table-column>
               <el-table-column prop="consignor" label="委托方" width="100" />
               <el-table-column prop="material" label="物料" width="90" />
-              <el-table-column prop="stackText" label="堆位" width="90" />
-              <el-table-column prop="areaLabel" label="片区" width="80" />
-              <el-table-column label="在库" width="80"><template #default="{ row }">{{ dash(row.remain ?? row.dry) }}</template></el-table-column>
+              <el-table-column label="堆位标识" width="120">
+                <template #default="{ row }">
+                  <el-tag size="small" effect="plain" :type="areaTag(areaText(row))">{{ dash(row.stackText) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="分类" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" effect="light" :type="areaTag(areaText(row))">{{ areaText(row) }}</el-tag>
+                </template>
+              </el-table-column>
             </el-table>
             <div class="lot-pager">
               <el-pagination
@@ -486,9 +513,12 @@ function canShip(row: Record<string, unknown>) {
                 @size-change="onLotSize"
               />
             </div>
-            <p v-if="selected" class="lot-line">
-              已选 {{ dash(selected.batchNo) }} · {{ dash(selected.material) }} · {{ dash(selected.stackText) }} · 在库 {{ dash(selected.remain ?? selected.dry) }} 吨
-            </p>
+            <div v-if="selected" class="lot-line">
+              已选 {{ dash(selected.batchNo) }} · {{ dash(selected.material) }} ·
+              <el-tag size="small" effect="plain" :type="areaTag(areaText(selected))">{{ dash(selected.stackText) }}</el-tag>
+              <el-tag class="selected-area-tag" size="small" :type="areaTag(areaText(selected))">{{ areaText(selected) }}</el-tag>
+              · 在库 {{ dash(selected.remain ?? selected.dry) }} 吨
+            </div>
           </div>
         </el-form-item>
 
@@ -632,8 +662,10 @@ function canShip(row: Record<string, unknown>) {
 .money-field :deep(.el-input__wrapper), .money-field :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-border-color) inset; }
 .money-field :deep(.el-input__wrapper:hover), .money-field :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px var(--el-color-primary-light-5) inset; }
 .stack-query { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.stack-option { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
 .hint { margin: 0 0 8px; color: #6b7280; font-size: 12px; }
 .lot-line { margin: 8px 0 0; color: #374151; font-size: 13px; }
+.selected-area-tag { margin-left: 4px; }
 .lot-pager { display: flex; justify-content: flex-end; margin-top: 8px; }
 :deep(.is-picked) > td { background: #f7f1e6 !important; }
 @media (max-width: 900px) {

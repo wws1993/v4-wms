@@ -175,6 +175,26 @@ const pickedInbound = computed(() => inboundRows.value.find((row) => String(row.
 /** 当前选中的出库行 */
 const pickedOutbound = computed(() => outboundRows.value.find((row) => String(row.customsNo || row.id) === outboundPick.value) || outboundRows.value[0])
 
+/** 收货记录字段 */
+function inboundRecordFields(row: Row) {
+  return [
+    { label: '收货单号', value: dash(row.orderNo || row.id) },
+    { label: '状态', value: dash(row.status) },
+    { label: '委托方', value: dash(row.consignor) },
+    { label: '船名', value: dash(row.shipName) },
+    { label: '提运单号', value: dash(row.blNo) },
+    { label: '报关单号', value: dash(row.customsNo) },
+    { label: '核注清单', value: dash(row.checklistNo) },
+    { label: '物料', value: dash(row.material) },
+    { label: '堆位', value: dash(row.stackCode) },
+    { label: '湿重', value: ton(row.wet) },
+    { label: '干重', value: ton(row.dry) },
+    { label: '水分', value: moistureText(row.moisture ?? row.moistureContent) },
+    ...QUALITY.map(([key, label]) => ({ label, value: dash(row[key]) })),
+    { label: '收货时间', value: dash(row.time) },
+  ]
+}
+
 watch(() => props.modelValue, (open) => {
   if (!open) {
     resetTrace()
@@ -227,22 +247,6 @@ function ton(value: unknown) {
 function moistureText(value: unknown) {
   const raw = dash(value)
   return raw === '—' || String(raw).includes('%') ? raw : `${raw}%`
-}
-
-/** 文本是否命中任一关键字 */
-function mentions(text: string, keys: string[]) {
-  return keys.some((key) => key && text.includes(key))
-}
-
-/** 按键去重 */
-function unique(rows: Row[], keyOf: (row: Row) => string) {
-  const seen = new Set<string>()
-  return rows.filter((row) => {
-    const key = keyOf(row)
-    if (!key || seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 /** 解包分页列表 */
@@ -316,12 +320,14 @@ function needsDocs(id: PageId) {
   return id === 'inCustoms' || id === 'outCustoms' || id === 'weight' || id === 'quality'
 }
 
-/** 匹配关键字集合 */
-function seedKeys() {
-  const lot = current.value
-  if (!lot) return [] as string[]
-  const fromProd = productionRows.value.flatMap((row) => [row.prodBatch, row.customsNo].map(clean))
-  return [...new Set([lot.batchNo, lot.customsNo, lot.outCustomsNo, lot.blNo, ...fromProd].map(clean).filter(Boolean))]
+/** 追溯查询按货物类型使用唯一标识，避免未筛选地读取整页记录。 */
+function traceIdentity(lot: Row) {
+  if (finished.value) {
+    const batchNo = clean(lot.batchNo)
+    return batchNo ? { value: batchNo, params: { batchNo } } : null
+  }
+  const recordNo = clean(lot.customsNo || lot.recordNo)
+  return recordNo ? { value: recordNo, params: { recordNo } } : null
 }
 
 /** 拉取单据附件与补丁字段 */
@@ -359,6 +365,8 @@ function inboundSeed(lot: Row): Row | null {
     stackCode: lot.stackCode || lot.stackText,
     wet: lot.wet,
     dry: lot.dry,
+    moisture: lot.moisture ?? lot.moistureContent,
+    ...Object.fromEntries(QUALITY.map(([key]) => [key, lot[key] ?? ''])),
     status: lot.status,
     time: lot.time || lot.inDate,
     loadWeight: lot.blWeight ?? lot.loadWeight,
@@ -378,55 +386,54 @@ async function loadPage(id: PageId) {
   const mine = ++listTicket
   beginTrace()
   try {
-    const keys = seedKeys()
+    const identity = traceIdentity(lot)
+    if (!identity) {
+      if (source === 'inbound') inboundRows.value = []
+      else if (source === 'production') productionRows.value = []
+      else if (source === 'outbound') outboundRows.value = []
+      else if (source === 'transfer') transferRows.value = []
+      else if (source === 'inspect') inspectRows.value = []
+      if (mine === listTicket) loaded.value = { ...loaded.value, [source]: stamp }
+      return
+    }
+    const { value: key, params } = identity
     if (source === 'inbound') {
       let inbound: Row[] = []
       const seeded = inboundSeed(lot)
-      if (seeded && keys.every((key) => mentions(`${seeded.customsNo}${seeded.blNo}${seeded.orderNo}${seeded.id}${lot.batchNo}`, [key]))) {
+      if (seeded && clean(seeded.customsNo) === key) {
         inbound = [seeded]
       } else {
-        const listed = await rowsOf(inboundApi.list({ page: 1, pageSize: 50, keyword: keys[0] || undefined }))
+        const listed = await rowsOf(inboundApi.list({ ...params, page: 1, pageSize: 50 }))
         if (mine !== listTicket) return
-        inbound = listed.filter((row) => mentions(`${row.customsNo || ''}${row.blNo || ''}${row.orderNo || ''}`, keys))
-        const missing = keys.filter((key) => /^\d{10,}$/.test(key) && !inbound.some((row) => clean(row.customsNo) === key)).slice(0, 6)
-        if (missing.length) {
-          const extra = await Promise.all(missing.map((key) => rowsOf(inboundApi.list({ keyword: key, page: 1, pageSize: 20 }))))
-          if (mine !== listTicket) return
-          inbound = unique([...inbound, ...extra.flat()], (row) => clean(row.id || row.customsNo))
-        }
+        inbound = listed.filter((row) => clean(row.customsNo || row.recordNo || row.batchNo) === key)
       }
       inboundRows.value = inbound
       if (!inbound.some((row) => clean(row.customsNo || row.id) === inboundPick.value)) inboundPick.value = clean(inbound[0]?.customsNo || inbound[0]?.id)
     } else if (source === 'production') {
-      const response = await productionApi.catalog()
+      const response = await productionApi.catalog(params)
       const listed = response.success && Array.isArray(response.data) ? response.data : []
       if (mine !== listTicket) return
       productionRows.value = listed.filter((row) => {
         const lines = Array.isArray(row.feedLines) ? row.feedLines as Row[] : []
-        const text = [row.id, row.prodBatch, row.customsNos, row.outCustomsNo, ...lines.map((line) => line.customsNo)].map((item) => clean(item)).join(' ')
-        return mentions(text, keys)
+        const values = [row.prodBatch, row.batchNo, row.customsNos, row.customsNo, row.outCustomsNo, ...lines.map((line) => line.customsNo)].map(clean)
+        return values.some((item) => item === key || item.split(/[,、\s]+/).includes(key))
       }).map(presentProduction)
     } else if (source === 'outbound') {
-      const listed = await rowsOf(outboundApi.list({ page: 1, pageSize: 200 }))
+      const listed = await rowsOf(outboundApi.list({ ...params, page: 1, pageSize: 200 }))
       if (mine !== listTicket) return
-      const outbound = listed.filter((row) => mentions(`${row.customsNo || ''}${row.batchNo || ''}${row.orderNo || ''}${row.checklistNo || ''}`, keys))
+      const outbound = listed.filter((row) => clean(row.customsNo || row.batchNo || row.recordNo) === key)
       outboundRows.value = outbound
       if (!outbound.some((row) => clean(row.customsNo || row.id) === outboundPick.value)) outboundPick.value = clean(outbound[0]?.customsNo || outbound[0]?.id)
     } else if (source === 'transfer') {
-      const listed = await rowsOf(transferApi.list({ page: 1, pageSize: 200 }))
+      const listed = await rowsOf(transferApi.list({ ...params, page: 1, pageSize: 200 }))
       if (mine !== listTicket) return
-      transferRows.value = listed.filter((row) => {
-        const id = clean(row.inventoryId)
-        if (id && (id === clean(lot.inventoryId) || id === clean(lot.id))) return true
-        return mentions(`${row.customsNo || ''}${row.prodBatch || ''}${row.orderNo || ''}`, keys)
-      })
+      transferRows.value = listed.filter((row) => clean(finished.value ? row.prodBatch || row.batchNo : row.customsNo || row.recordNo) === key)
     } else if (source === 'inspect') {
-      const batchNo = clean(lot.batchNo)
-      const listed = await rowsOf(productionApi.inspections({ page: 1, pageSize: 50, batchNo: batchNo || undefined, keyword: batchNo || undefined }))
+      const listed = await rowsOf(productionApi.inspections({ ...params, page: 1, pageSize: 50 }))
       if (mine !== listTicket) return
       inspectRows.value = listed.filter((row) => {
-        if (!batchNo) return true
-        return clean(row.prodBatch) === batchNo || mentions(`${row.prodBatch || ''}${row.orderNo || ''}${row.customsNos || ''}`, [batchNo])
+        const value = finished.value ? row.prodBatch || row.batchNo : row.customsNos || row.customsNo || row.recordNo
+        return clean(value).split(/[,、\s]+/).includes(key)
       })
     }
     if (mine === listTicket) loaded.value = { ...loaded.value, [source]: stamp }
@@ -724,15 +731,18 @@ function inspectImages(row: Row) {
           </template>
 
           <template v-else-if="page === 'inbound'">
-            <el-table :data="inboundRows" border empty-text="暂无收货记录">
-              <el-table-column prop="status" label="状态" width="100" />
-              <el-table-column prop="shipName" label="船名" width="110" />
-              <el-table-column prop="blNo" label="提运单号" width="200" />
-              <el-table-column prop="loadWeight" label="提货重量" width="200" />
-              <el-table-column label="堆位" width="100"><template #default="{ row }">{{ dash(row.stackCode) }}</template></el-table-column>
-              <el-table-column label="湿重/干重" width="200"><template #default="{ row }">{{ dash(row.wet) }} / {{ dash(row.dry) }}</template></el-table-column>
-              <el-table-column prop="time" label="收货时间" min-width="240" />
-            </el-table>
+            <div v-if="inboundRows.length" class="inbound-records">
+              <article v-for="(row, index) in inboundRows" :key="String(row.id || row.customsNo || index)" class="inbound-record">
+                <h4>收货记录 {{ index + 1 }}</h4>
+                <dl class="fields cols">
+                  <div v-for="item in inboundRecordFields(row)" :key="item.label">
+                    <dt>{{ item.label }}</dt>
+                    <dd>{{ item.value }}</dd>
+                  </div>
+                </dl>
+              </article>
+            </div>
+            <el-empty v-else description="暂无收货记录" />
           </template>
 
           <template v-else-if="page === 'transfer'">
@@ -1058,6 +1068,9 @@ function inspectImages(row: Row) {
 .fields { margin: 0; }
 .fields div { display: grid; grid-template-columns: 96px 1fr; gap: 8px; margin-bottom: 8px; }
 .fields.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+.inbound-records { display: grid; gap: 16px; }
+.inbound-record { padding: 12px 14px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
+.inbound-record h4 { margin: 0 0 12px; color: var(--el-text-color-primary); }
 .fields dt { color: var(--el-text-color-secondary); }
 .fields dd { margin: 0; font-weight: 600; word-break: break-all; }
 .elements { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-top: 8px; }

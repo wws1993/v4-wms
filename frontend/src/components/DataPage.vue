@@ -35,6 +35,7 @@ const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailRow = ref<Record<string, unknown> | null>(null)
 const detailBlocks = ref<DetailBlock[]>([])
+let detailRequestSequence = 0
 const lotOpen = ref(false)
 const lotLoading = ref(false)
 const lotLedger = ref(false)
@@ -263,12 +264,56 @@ async function submit() {
 }
 
 async function openDetail(row: Record<string, unknown>) {
+  const sequence = ++detailRequestSequence
   detailRow.value = row
   detailOpen.value = true
   detailLoading.value = true
   detailBlocks.value = []
-  detailBlocks.value = schema.value?.detail ? await schema.value.detail(row) : []
-  detailLoading.value = false
+  try {
+    const blocks = schema.value?.detail ? await schema.value.detail(row) : []
+    if (sequence === detailRequestSequence && detailOpen.value) detailBlocks.value = blocks
+  } catch (error) {
+    if (sequence === detailRequestSequence) {
+      ElMessage.error(error instanceof Error ? error.message : '详情读取失败')
+    }
+  } finally {
+    if (sequence === detailRequestSequence) detailLoading.value = false
+  }
+}
+
+async function changeDetailPage(block: DetailBlock, page: number, pageSize = block.table?.pager?.pageSize || 10) {
+  const pager = block.table?.pager
+  if (!pager) return
+  const sequence = ++detailRequestSequence
+  detailLoading.value = true
+  try {
+    const result = await pager.load(page, pageSize)
+    if (sequence !== detailRequestSequence || !detailOpen.value) return
+    if (!result.success || !result.data) {
+      ElMessage.error(result.message || '票货列表读取失败')
+      return
+    }
+    detailBlocks.value = detailBlocks.value.map((current) => current === block
+      ? {
+          ...current,
+          table: {
+            ...current.table!,
+            rows: result.data!.list,
+            pager: { ...pager, page, pageSize, total: result.data!.total },
+          },
+        }
+      : current)
+  } catch (error) {
+    if (sequence === detailRequestSequence) {
+      ElMessage.error(error instanceof Error ? error.message : '票货列表读取失败')
+    }
+  } finally {
+    if (sequence === detailRequestSequence) detailLoading.value = false
+  }
+}
+
+function invalidateDetailRequest() {
+  detailRequestSequence += 1
 }
 
 function canShowDetail(row: Record<string, unknown>) {
@@ -632,7 +677,7 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
       </template>
     </el-dialog>
 
-    <el-dialog v-model="detailOpen" :title="detailTitle" :width="detailWidth" align-center destroy-on-close>
+    <el-dialog v-model="detailOpen" :title="detailTitle" :width="detailWidth" align-center destroy-on-close @closed="invalidateDetailRequest">
       <div v-loading="detailLoading">
         <section v-for="block in detailBlocks" :key="block.title" class="detail-block">
           <h3 v-if="detailBlocks.length > 1">{{ block.title }}</h3>
@@ -647,6 +692,18 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="block.table?.pager" class="detail-pager">
+            <el-pagination
+              :current-page="block.table.pager.page"
+              :page-size="block.table.pager.pageSize"
+              :total="block.table.pager.total"
+              :page-sizes="[10, 20, 50]"
+              layout="total, sizes, prev, pager, next"
+              background
+              @current-change="(nextPage: number) => changeDetailPage(block, nextPage)"
+              @size-change="(nextSize: number) => changeDetailPage(block, 1, nextSize)"
+            />
+          </div>
         </section>
       </div>
       <template #footer>
@@ -712,5 +769,6 @@ const detailWidth = computed(() => (detailBlocks.value.some((block) => block.tab
 .detail-block + .detail-block { margin-top: 20px; }
 .detail-block h3 { margin: 0 0 10px; font-size: 15px; }
 .detail-table { margin-top: 12px; }
+.detail-pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .action-note { margin: 0 0 16px; color: #5a6a7e; line-height: 1.6; }
 </style>

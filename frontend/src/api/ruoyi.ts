@@ -180,7 +180,10 @@ export function ruoyiGet<TRow = Record<string, unknown>, TData = unknown>(
   url: string,
   params?: Record<string, unknown>,
 ) {
-  return call<TRow, TData>({ url, method: 'GET', params })
+  const normalized = params && Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
+  return call<TRow, TData>({ url, method: 'GET', params: normalized })
 }
 
 /**

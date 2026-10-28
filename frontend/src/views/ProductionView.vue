@@ -82,8 +82,8 @@ function num(value: unknown) {
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
-function clock(value: unknown) {
-  return String(value || '').slice(11, 16)
+function dayKey(value: unknown) {
+  return String(value || '').replace('T', ' ').slice(0, 10).replace(/\//g, '-')
 }
 
 function customsText(lines: Line[]) {
@@ -163,13 +163,14 @@ const flatOps = computed<Doc[]>(() => {
     }
 
     if (row.docType === '加工过程') {
+      console.log(123, row)
       return {
         ...base,
         type: '加工过程',
         canProcess: false,
         canFinish: !row.finished,
         kind: row.process,
-        qty: `加工时间：${clock(row.time)}–${clock(row.timeTo)}`,
+        qty: `加工时间：${row.time}–${row.timeTo.slice(5)}`,
         stack: stackText(lines),
       }
     }
@@ -199,7 +200,7 @@ const flatOps = computed<Doc[]>(() => {
 const opsRows = computed(() => flatOps.value.filter((row) => {
   if (filters.consignor && row.consignor !== filters.consignor) return false
   if (!matchesKeyword(row)) return false
-  const day = String(row.time || '').slice(0, 10)
+  const day = dayKey(row.time)
   if (filters.from && day < filters.from) return false
   if (filters.to && day > filters.to) return false
   return true
@@ -224,7 +225,7 @@ let productionLoadSequence = 0
 const ledgerRows = computed(() => {
   const map = new Map<string, { date: string; consume: number; output: number; orders: Set<string> }>()
   for (const row of docs.value) {
-    const date = String(row.time || '').slice(0, 10) || '—'
+    const date = dayKey(row.time) || '—'
     const item = map.get(date) || { date, consume: 0, output: 0, orders: new Set<string>() }
     if (row.docType === '投料出库' || (row.docType === '加工过程' && !docs.value.some((other) => other.docType === '投料出库' && other.prodBatch === row.prodBatch))) {
       item.consume += linesOf(row).reduce((sum, line) => sum + amountOf(line), 0)
@@ -237,7 +238,7 @@ const ledgerRows = computed(() => {
   return [...map.values()].map((item) => ({ date: item.date, consume: item.consume, output: item.output, orders: item.orders.size }))
 })
 
-const ledgerDetails = computed(() => flatOps.value.filter((row) => String(row.time || '').slice(0, 10) === ledgerDate.value))
+const ledgerDetails = computed(() => flatOps.value.filter((row) => dayKey(row.time) === ledgerDate.value))
 
 function outCustoms(line: Line) {
   if (line.outCustomsNo) return line.outCustomsNo

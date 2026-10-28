@@ -195,21 +195,32 @@ async function listReceipts(query: Query) {
     consignorId: consignor ? idOf(consignor.id) : undefined,
   }
   const hasRange = Boolean(query.from || query.to)
+  const recordNo = text(query.recordNo || query.customsNo).trim()
+  const batchNo = text(query.batchNo).trim()
   const word = text(query.keyword).trim()
+  const searchWord = recordNo || batchNo || word
+  const searchFilters = recordNo
+    ? { recordNo }
+    : batchNo
+      ? { batchNo }
+      : searchWord
+        ? { recordNo: searchWord }
+        : {}
   const ask = (extra: Query, withRange: boolean) => ruoyiGet<ReceiptOrderVo>('/wms/receiptOrder/list', pageParams(query, {
     ...filters,
+    ...searchFilters,
     ...extra,
     ...(withRange ? range(query) : {}),
   }))
   let useRange = hasRange
-  let result = await ask(word ? { recordNo: word } : {}, useRange)
+  let result = await ask({}, useRange)
   let note = ''
   if (!result.ok && useRange) {
     useRange = false
-    result = await ask(word ? { recordNo: word } : {}, false)
+    result = await ask({}, false)
     if (result.ok) note = '入库列表暂不支持起止日期，已按其它条件查询'
   }
-  if (result.ok && word && result.total === 0) result = await ask({ waybillNo: word }, useRange)
+  if (result.ok && !recordNo && !batchNo && word && result.total === 0) result = await ask({ recordNo: undefined, waybillNo: word }, useRange)
   if (!result.ok) return fail(result.message)
   return ok({
     list: result.rows.map((row) => receiptRow(row as ReceiptRow, minerals, statuses, currencies, categories, translates, items.rows)),

@@ -19,6 +19,7 @@ const stacks = ref<Record<string, unknown>[]>([])
 const lots = ref<Record<string, unknown>[]>([])
 const sourceLots = ref<Record<string, unknown>[]>([])
 const lotsLoading = ref(false)
+const batchLotsLoading = ref(false)
 const saving = ref(false)
 const single = ref(false)
 const batch = ref(false)
@@ -36,7 +37,7 @@ const targetPicks = ref<StackPick[]>([])
 const gridMode = ref<'areas' | 'sourceAreas'>('areas')
 const batchQuery = reactive({ warehouse: '', stack: '', consignor: '', keyword: '' })
 const batchTime = reactive({ fromDate: '', fromHour: '08', toDate: '', toHour: '12' })
-type BatchPick = { toStack: string; toAreaId: string; cells: string; scene: string; weight: string }
+type BatchPick = { movementOrderAreas: StackPick[]; scene: string; weight: string }
 const picked = ref<Record<string, BatchPick>>({})
 /** 当前在平面图上框选目标的票 */
 const batchFocus = ref('')
@@ -98,7 +99,7 @@ async function load() {
   loading.value = true
   const res = await transferApi.list({
     ...filters,
-    page: filters.keyword ? 1 : page.value,
+    pageNum: filters.keyword ? 1 : page.value,
     pageSize: filters.keyword ? 200 : 10,
   })
   loading.value = false
@@ -108,8 +109,18 @@ async function load() {
 }
 
 async function reloadLots() {
-  const lotRes = await inventoryApi.catalog({ status: '在库' })
-  if (lotRes.success && Array.isArray(lotRes.data)) lots.value = lotRes.data
+  batchLotsLoading.value = true
+  lots.value = []
+  try {
+    const lotRes = await inventoryApi.catalog({ status: '在库', inventoryStatus: 0 })
+    if (!lotRes.success || !Array.isArray(lotRes.data)) {
+      ElMessage.error(lotRes.message || '在库票货读取失败')
+      return
+    }
+    lots.value = lotRes.data
+  } finally {
+    batchLotsLoading.value = false
+  }
 }
 
 function applyKeyword() {
@@ -140,7 +151,6 @@ onMounted(async () => {
   ])
   if (who.success && who.data) consignors.value = who.data
   if (stackRes.success && Array.isArray(stackRes.data)) stacks.value = stackRes.data
-  await reloadLots()
   applyKeyword()
   load()
 })
@@ -173,6 +183,7 @@ function openSingle() {
   gridMode.value = 'areas'
   sourceLots.value = []
   single.value = true
+  loadSourceLots()
 }
 
 let lotToken = 0
@@ -187,13 +198,13 @@ async function loadSourceLots(stackId = form.stackId) {
   clearTargetPicks()
   sourceLots.value = []
   const keyword = form.customsKeyword.trim()
-  if (!stackId && !keyword) return
   const token = ++lotToken
   lotsLoading.value = true
   const res = await inventoryApi.catalog({
     stack: stackId || undefined,
     keyword: keyword || undefined,
-    status: '在库',
+    // status: '在库',
+    inventoryStatus: 0,
   })
   if (token !== lotToken) return
   lotsLoading.value = false
@@ -210,10 +221,6 @@ async function loadSourceLots(stackId = form.stackId) {
 }
 
 function querySourceLots() {
-  if (!form.stackId && !form.customsKeyword.trim()) {
-    ElMessage.warning('请选择原堆位或输入报关单号')
-    return
-  }
   loadSourceLots(form.stackId)
 }
 
@@ -319,7 +326,6 @@ async function submitSingle() {
     }
     ElMessage.success(res.message)
     single.value = false
-    await reloadLots()
     load()
   } finally {
     saving.value = false
@@ -331,13 +337,22 @@ function lotRowClass({ row }: { row: Record<string, unknown> }) {
 }
 
 function emptyPick(): BatchPick {
-  return { toStack: '', toAreaId: '', cells: '', scene: '整票移位', weight: '' }
+  return { movementOrderAreas: [], scene: '整票移位', weight: '' }
 }
 
 function targetLabel(value?: BatchPick) {
-  if (!value?.toStack || !value.cells) return '右侧框选'
-  const count = value.cells.split(',').filter(Boolean).length
-  return `${value.toStack} · ${count} 格`
+  if (!value?.movementOrderAreas.length) return '右侧框选'
+  const count = value.movementOrderAreas.reduce((sum, target) => sum + target.cells.split(',').filter(Boolean).length, 0)
+  return `${value.movementOrderAreas.length} 个堆位 · ${count} 格`
+}
+
+function batchTargetWeightTotal(value?: BatchPick) {
+  return value?.movementOrderAreas.reduce((sum, target) => sum + (Number(target.dryWeight) || 0), 0) || 0
+}
+
+function batchMovementWeight(key: string, value?: BatchPick) {
+  const source = findBatchLot(key)
+  return value?.scene === '拆票移位' ? Number(value.weight) : Number(source?.dry)
 }
 
 function findBatchLot(key: string) {
@@ -386,11 +401,12 @@ function batchRowClass({ row }: { row: Record<string, unknown> }) {
   return lotKey(row) === batchFocus.value ? 'is-picked' : ''
 }
 
-function openBatch() {
+async function openBatch() {
   picked.value = {}
   batchFocus.value = ''
   Object.assign(batchTime, { fromDate: '', fromHour: '08', toDate: '', toHour: '12' })
   batch.value = true
+  await reloadLots()
 }
 
 async function submitBatch() {
@@ -412,7 +428,8 @@ async function submitBatch() {
   for (const [key, value] of items) {
     const source = findBatchLot(key)
     const label = lotLabel(source, key)
-    if (!value.toStack || !value.cells) {
+    const targets = value.movementOrderAreas
+    if (!targets.length) {
       ElMessage.warning(`请为 ${label} 在平面图上框选目标堆位格子`)
       batchFocus.value = key
       return
@@ -422,19 +439,41 @@ async function submitBatch() {
       batchFocus.value = key
       return
     }
+    for (const target of targets) {
+      if (!target.areaId || !target.warehouseId || !target.cells) {
+        ElMessage.warning(`请完整选择 ${label} 的目标堆位格子`)
+        batchFocus.value = key
+        return
+      }
+      if (!(Number(target.dryWeight) > 0)) {
+        ElMessage.warning(`请填写 ${label} 在 ${target.stackCode} 的移入干重`)
+        batchFocus.value = key
+        return
+      }
+    }
+    const movementWeight = batchMovementWeight(key, value)
     if (value.scene === '拆票移位') {
-      const weight = Number(value.weight)
       const dry = Number(source.dry)
-      if (!(weight > 0)) {
+      if (!(movementWeight > 0)) {
         ElMessage.warning(`请为 ${label} 填写移库重量`)
         batchFocus.value = key
         return
       }
-      if (dry > 0 && weight > dry) {
+      if (dry > 0 && movementWeight > dry) {
         ElMessage.warning(`${label}：移库重量不能超过可移重量`)
         batchFocus.value = key
         return
       }
+    }
+    if (!(movementWeight > 0)) {
+      ElMessage.warning(`${label}：没有可移重量`)
+      batchFocus.value = key
+      return
+    }
+    if (Math.abs(batchTargetWeightTotal(value) - movementWeight) > 0.000001) {
+      ElMessage.warning(`${label}：各目标堆位干重合计须等于本次移库重量（${movementWeight} 吨）`)
+      batchFocus.value = key
+      return
     }
   }
   saving.value = true
@@ -450,9 +489,12 @@ async function submitBatch() {
         return {
           batchNo: String(source.batchNo || ''),
           inventoryId: String(source.id || source.inventoryId || ''),
-          toStack: value.toStack,
-          areaId: value.toAreaId,
-          cells: value.cells,
+          movementOrderAreas: value.movementOrderAreas.map((target) => ({
+            areaId: target.areaId,
+            warehouseId: target.warehouseId,
+            dryWeight: Number(target.dryWeight),
+            areas: gridAreas(target.cells),
+          })),
           scene: value.scene || '批量移库',
           weight: split ? Number(value.weight) : undefined,
           shipName: source.shipName || '—',
@@ -470,7 +512,6 @@ async function submitBatch() {
     batch.value = false
     picked.value = {}
     batchFocus.value = ''
-    await reloadLots()
     load()
   } finally {
     saving.value = false
@@ -515,7 +556,9 @@ async function submitBatch() {
       <el-table-column prop="prodBatch" label="生产批次" min-width="130">
         <template #default="{ row }">{{ dash(row.prodBatch) }}</template>
       </el-table-column>
-      <el-table-column prop="material" label="矿区" width="150" />
+      <el-table-column prop="material" label="矿区" width="150" >
+        <template #default="{ row }">{{ dash(row.material) }}</template>
+      </el-table-column>
       <el-table-column prop="cargoType" label="货物类型" width="100">
         <template #default="{ row }">{{ dash(row.cargoType) }}</template>
       </el-table-column>
@@ -562,7 +605,7 @@ async function submitBatch() {
               border
               size="small"
               max-height="220"
-              :empty-text="form.stackId || form.customsKeyword.trim() ? '没有匹配的在库票货' : '请先选择原堆位或查询报关单号'"
+              :empty-text="form.stackId || form.customsKeyword.trim() ? '没有匹配的在库票货' : '暂无在库票货'"
               :row-class-name="lotRowClass"
               @row-click="pickLot"
             >
@@ -682,6 +725,7 @@ async function submitBatch() {
             </el-form-item>
           </el-form>
           <el-table
+            v-loading="batchLotsLoading"
             :data="batchLots"
             border
             size="small"
@@ -751,14 +795,37 @@ async function submitBatch() {
             <em v-if="batchFocus">当前 {{ lotLabel(findBatchLot(batchFocus), batchFocus) }}</em>
           </div>
           <p v-if="!batchFocus || !picked[batchFocus]" class="map-empty">请先勾选并点选一票，再在平面图框选目标格子</p>
-          <StackGridPicker
-            v-else
-            :key="batchFocus"
-            v-model:stack-code="picked[batchFocus].toStack"
-            v-model:area-id="picked[batchFocus].toAreaId"
-            v-model:cells="picked[batchFocus].cells"
-            :stacks="stacks"
-          />
+          <template v-else>
+            <div class="batch-targets">
+              <el-table :data="picked[batchFocus].movementOrderAreas" border size="small" max-height="150" empty-text="请在平面图上绘制一个或多个目标堆位">
+                <el-table-column prop="stackCode" label="目标堆位" min-width="90" />
+                <el-table-column label="网格" width="70">
+                  <template #default="{ row }">{{ row.cells.split(',').filter(Boolean).length }} 格</template>
+                </el-table-column>
+                <el-table-column label="干重" width="140">
+                  <template #default="{ row }">
+                    <el-input v-model="row.dryWeight" type="number" min="0" :max="batchMovementWeight(batchFocus, picked[batchFocus])" placeholder="吨">
+                      <template #append>吨</template>
+                    </el-input>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="58">
+                  <template #default="{ $index }">
+                    <el-button link type="danger" @click="picked[batchFocus].movementOrderAreas.splice($index, 1)">移除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="allocation-total">
+                已分配 {{ batchTargetWeightTotal(picked[batchFocus]) }} 吨 / 本次移库 {{ batchMovementWeight(batchFocus, picked[batchFocus]) || 0 }} 吨
+              </div>
+            </div>
+            <StackGridPicker
+              :key="batchFocus"
+              v-model:picks="picked[batchFocus].movementOrderAreas"
+              :multi="true"
+              :stacks="stacks"
+            />
+          </template>
         </div>
       </div>
       <template #footer>

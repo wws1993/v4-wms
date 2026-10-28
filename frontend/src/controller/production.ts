@@ -161,6 +161,7 @@ function productionDoc(
   const customs = [...new Set(lines.map((line) => line.customsNo).filter(Boolean))]
   const stacks = [...new Set(lines.map((line) => line.stack).filter(Boolean))]
   const outNos = [...new Set(lines.map((line) => line.outCustomsNo).filter(Boolean))]
+  const hourStamp = (value: unknown) => stamp(value, 16).replace(/-/g, '/').slice(0, 13) + '时';
   const targetAreas = Array.isArray(row.productionOrderAreas) ? row.productionOrderAreas as Row[] : []
   const targetStackCodes = targetAreas.map((entry) => {
     const target = nested(entry, 'area')
@@ -177,8 +178,8 @@ function productionDoc(
     prodBatch: text(row.batchNo),
     workOrder: text(row.workOrderNo),
     process: text(row.processName),
-    time: stamp(row.startTime || row.createTime, 16),
-    timeTo: stamp(row.endTime, 16),
+    time: hourStamp(row.startTime || row.createTime),
+    timeTo: hourStamp(row.endTime),
     remark: text(row.remark),
     feedLines: lines,
     customsNos: customs.join('、'),

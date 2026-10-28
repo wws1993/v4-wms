@@ -1020,23 +1020,25 @@ onBeforeUnmount(() => {
 .receive-remark { margin-top: 4px; }
 .ocr-dual > div { flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .slot { height: auto; min-height: 72px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; text-align: left; }
+.ocr-dual .slot { height: 120px; min-height: 120px; box-sizing: border-box; }
 .slot span { color: #8a8a8a; font-size: 12px; }
 .slot.shot {
   position: relative;
   padding: 0;
-  min-height: 120px;
   overflow: hidden;
   align-items: stretch;
 }
 .slot.shot img {
   width: 100%;
-  height: 120px;
+  height: 100%;
   object-fit: cover;
   display: block;
   background: #f3f3f3;
 }
 .slot.shot .file-card {
-  min-height: 120px;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
   padding: 12px;
   display: flex;
   flex-direction: column;

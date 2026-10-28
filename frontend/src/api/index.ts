@@ -236,7 +236,7 @@ export const materialApi = {
   createFiling: (body: B) => request('POST', '/material-sources/filings', { body }),
   updateFiling: (id: string, body: B) => request('PUT', `/material-sources/filings/${id}`, { body }),
   exportFilings: (params: Q = {}) => request<FilePayload>('GET', '/material-sources/filings/export', { params }),
-  lots: (code: string) => request<Record<string, unknown>[]>('GET', `/material-sources/filings/${encodeURIComponent(code)}/lots`),
+  lots: (code: string, params: Q = {}) => request<Page>('GET', `/material-sources/filings/${encodeURIComponent(code)}/lots`, { params }),
   exportLots: (code: string) => request<FilePayload>('GET', `/material-sources/filings/${encodeURIComponent(code)}/lots/export`),
 }
 

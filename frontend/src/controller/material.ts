@@ -6,10 +6,9 @@ import type { Query, Row } from '@/controller/shared/types'
 import { brief, byOrderNum, idOf, num, orderNumOf, text } from '@/controller/shared/coerce'
 import { pageOf, pageParams } from '@/controller/shared/page'
 import { dictOf, dictValue, labelOf } from '@/controller/shared/dict'
-import { clearItemCache, itemCatalogRows, loadHouses } from '@/controller/shared/catalog'
+import { clearItemCache, itemCatalogRows } from '@/controller/shared/catalog'
 import { clearDirectory, readDirectory } from '@/controller/shared/directory'
-import { inventoryLot } from '@/controller/inventory'
-import type { InventoryVo, ItemBo, ItemVo, MineralSourceFilingBo, MineralSourceFilingVo } from '@/typings/openapi'
+import type { ItemBo, ItemVo, MineralSourceFilingBo, MineralSourceFilingVo, ReceiptOrderVo } from '@/typings/openapi'
 
 /** 矿源备案 Vo 上偶发的扩展字段（运行时有、契约未列全）。 */
 type FilingVo = MineralSourceFilingVo & {
@@ -361,43 +360,54 @@ async function exportFilings(query: Query) {
   }
 }
 
-/** 将库存票货行压成矿源备案关联列表行。 */
-function filingLotRow(row: Row) {
+/** 将入库单行映射为矿源备案关联票货行。 */
+function filingLotRow(row: ReceiptOrderVo & Row, categories: { label: string; value: string }[], statuses: { label: string; value: string }[]) {
+  const item = row.item as Row | undefined
+  const consignor = row.consignor as Row | undefined
+  const areas = Array.isArray(row.receiptOrderAreas) ? row.receiptOrderAreas as Row[] : []
+  const area = areas[0]
+  const nestedArea = area?.area as Row | undefined
   return {
-    customsNo: text(row.customsNo || row.recordNo),
-    prodBatch: text(row.batchNo) || '—',
-    consignor: text(row.consignor),
-    material: text(row.material),
-    cargoType: text(row.cargoType),
-    stack: text(row.stackText),
-    wet: row.wet ?? '',
-    dry: row.dry ?? '',
-    inAt: text(row.inDate),
-    status: text(row.status),
+    customsNo: text(row.recordNo),
+    prodBatch: text(row.batchNo || row.batchNumber) || '—',
+    consignor: text(consignor?.merchantName || row.consignorId),
+    material: text(item?.itemName || row.itemName),
+    cargoType: labelOf(categories, item?.itemCategory ?? row.itemCategory) || text(item?.itemCategory ?? row.itemCategory),
+    stack: text(area?.areaName || nestedArea?.areaCode || nestedArea?.areaName || row.areaCode),
+    wet: row.wetWeight ?? '',
+    dry: row.dryWeight ?? '',
+    inAt: text(row.arrivalDate || row.createTime),
+    status: labelOf(statuses, row.receiptOrderStatus) || text(row.receiptOrderStatus),
   }
 }
 
-/** 按矿源备案号查询关联票货。 */
-async function filingLots(code: string) {
-  const recordNumber = text(code).trim()
-  if (!recordNumber) return fail('缺少矿源备案号')
-  const [result, categories, houses, translates] = await Promise.all([
-    readDirectory<InventoryVo>('inventories', { recordNumber }),
+/** 按矿源备案 id 查询关联入库单。 */
+async function filingLots(itemBookId: string, query: Query = {}) {
+  const id = text(itemBookId).trim()
+  if (!id) return fail('缺少矿源备案 id')
+  const [result, categories, statuses] = await Promise.all([
+    ruoyiGet<ReceiptOrderVo>('/wms/receiptOrder/list', pageParams(query, { itemBookId: idOf(id) ?? id })),
     dictOf('wms_item_category'),
-    loadHouses(),
-    dictOf('wms_translate_type'),
+    dictOf('wms_receipt_status'),
   ])
-  if (!result.ok) return fail('票货查询失败')
-  const rows = result.rows.map((row) => inventoryLot(row as Row, categories, houses, translates))
-  return ok(rows.map(filingLotRow))
+  if (!result.ok) return fail(brief(result.message) || '票货查询失败')
+  return pageOf(result, result.rows.map((row) => filingLotRow(row as ReceiptOrderVo & Row, categories, statuses)), query)
 }
 
-/** 导出矿源备案关联票货 CSV。 */
-async function exportFilingLots(code: string) {
-  const listed = await filingLots(code)
-  if (!listed.success || !Array.isArray(listed.data)) return fail(listed.message || '票货查询失败')
+/** 导出矿源备案关联入库单 CSV。 */
+async function exportFilingLots(itemBookId: string) {
+  const id = text(itemBookId).trim()
+  if (!id) return fail('缺少矿源备案 id')
+  const pageSize = 200
+  const rows: Row[] = []
+  for (let page = 1; ; page += 1) {
+    const listed = await filingLots(id, { page, pageSize })
+    if (!listed.success || !listed.data) return fail(listed.message || '票货查询失败')
+    rows.push(...listed.data.list)
+    if (rows.length >= listed.data.total || listed.data.list.length < pageSize) break
+  }
   return ok({
-    filename: `矿源备案票货_${code}.csv`,
+    filename: `矿源备案票货_${id}.csv`,
     content: toCsv([
       { key: 'customsNo', label: '报关单号' },
       { key: 'prodBatch', label: '生产批次号' },
@@ -409,7 +419,7 @@ async function exportFilingLots(code: string) {
       { key: 'dry', label: '干重(DMT)' },
       { key: 'inAt', label: '入库时间' },
       { key: 'status', label: '状态' },
-    ], listed.data),
+    ], rows),
   })
 }
 
@@ -435,6 +445,6 @@ export const materialRoutes: Route[] = [
   { method: 'GET', match: '/material-sources/filings', handle: ({ query }) => listFilings(query) },
   { method: 'POST', match: '/material-sources/filings', handle: ({ body }) => saveFiling(undefined, body) },
   { method: 'GET', match: /^\/material-sources\/filings\/([^/]+)\/lots\/export$/, handle: ({ params }) => exportFilingLots(params[0]) },
-  { method: 'GET', match: /^\/material-sources\/filings\/([^/]+)\/lots$/, handle: ({ params }) => filingLots(params[0]) },
+  { method: 'GET', match: /^\/material-sources\/filings\/([^/]+)\/lots$/, handle: ({ params, query }) => filingLots(params[0], query) },
   { method: 'PUT', match: /^\/material-sources\/filings\/([^/]+)$/, handle: ({ params, body }) => saveFiling(params[0], body) },
 ]

@@ -93,12 +93,15 @@ async function listShipments(query: Query) {
   const statusCode = query.status ? await codeFromDict('wms_shipment_status', query.status) : undefined
   const typeCode = query.shipmentType ? await codeFromDict('wms_shipment_type', query.shipmentType) : undefined
   const hasRange = Boolean(query.from || query.to)
+  const recordNo = text(query.recordNo || query.customsNo).trim()
+  const batchNo = text(query.batchNo).trim()
   const word = text(query.keyword).trim()
   const ask = (withRange: boolean) => ruoyiGet<ShipmentOrderVo>('/wms/shipmentOrder/list', pageParams(query, {
     shipmentOrderStatus: statusCode,
     shipmentOrderType: typeCode,
     consignorId: merchant ? idOf(merchant.id) : undefined,
-    recordNo: word || undefined,
+    recordNo: recordNo || (!batchNo ? word || undefined : undefined),
+    batchNo: batchNo || undefined,
     ...(withRange ? range(query) : {}),
   }))
   let useRange = hasRange
