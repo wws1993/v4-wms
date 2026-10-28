@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { dictApi, menuApi, roleApi } from '@/api'
 import NavPane from '@/components/NavPane.vue'
-import { pageIdsFromTitles } from '@/nav'
+import { pageIdFromTitle, pageIdsFromTitles } from '@/nav'
 import { useAuthStore } from '@/stores/auth'
 
 interface MenuNode {
@@ -64,9 +64,10 @@ function leavesOf(node: MenuNode) {
   const items: { id: string; name: string }[] = []
   const walk = (currentNode: MenuNode) => {
     for (const child of currentNode.children || []) {
-      if (child.menuType !== 'C') continue
-      items.push({ id: child.id, name: child.name })
-      walk(child)
+      if (child.menuType === 'C' && pageIdFromTitle(child.name) && pageIdFromTitle(child.name) !== 'dashboard') {
+        items.push({ id: child.id, name: child.name })
+      }
+      if (child.children?.length) walk(child)
     }
   }
   walk(node)
@@ -85,7 +86,10 @@ const groups = computed<MenuGroup[]>(() => {
         const nested = leavesOf(child)
         if (nested.length) list.push({ name: child.name, items: nested })
       }
-    } else if (node.menuType === 'C') loose.push({ id: node.id, name: node.name })
+    } else if (node.menuType === 'C') {
+      const pageId = pageIdFromTitle(node.name)
+      if (pageId && pageId !== 'dashboard') loose.push({ id: node.id, name: node.name })
+    }
   }
   if (loose.length) list.push({ name: '其他', items: loose })
   return list

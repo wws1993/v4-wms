@@ -55,18 +55,22 @@ const MENU_WORDS: { id: string; words: string[] }[] = [
   { id: 'warningLogs', words: ['预警日志'] },
   { id: 'outbound', words: ['出库'] },
   { id: 'production', words: ['生产加工', '完工'] },
-  { id: 'inspection', words: ['抽样送检', '送检'] },
+  { id: 'inspection', words: ['抽样送检', '送检', '查验记录'] },
   { id: 'customs', words: ['关务'] },
   { id: 'ocr', words: ['ocr', '识别'] },
   { id: 'audit', words: ['操作日志', '审计'] },
   { id: 'dicts', words: ['字典'] },
 ]
 
-/** 用菜单名称对应内置页面。一个都对不上时，登录回退为全部页面，避免尚未初始化菜单时侧栏被清空。 */
-export function pageIdsFromTitles(titles: string[], unmatched: 'all' | 'dashboard' = 'all') {
-  const joined = titles.join(' ').toLowerCase()
-  const pages = MENU_WORDS.filter((item) => item.words.some((word) => joined.includes(word.toLowerCase()))).map((item) => item.id)
-  if (!pages.length) return unmatched === 'dashboard' ? ['dashboard'] : NAV.map((item) => item.id)
+/** 用菜单名称对应左侧菜单页面；未识别的菜单不会生成额外权限。 */
+export function pageIdFromTitle(title: string) {
+  const lower = title.toLowerCase()
+  return MENU_WORDS.find((item) => item.words.some((word) => lower.includes(word.toLowerCase())))?.id || ''
+}
+
+export function pageIdsFromTitles(titles: string[], unmatched: 'all' | 'dashboard' = 'dashboard') {
+  const pages = [...new Set(titles.map(pageIdFromTitle).filter(Boolean))]
+  if (!pages.length) return unmatched === 'all' ? NAV.map((item) => item.id) : ['dashboard']
   if (!pages.includes('dashboard')) pages.unshift('dashboard')
 
   return pages
@@ -76,7 +80,6 @@ export function pageIdsFor(user: { pages: string[] } | null | undefined) {
   if (!user) return new Set<string>()
   const known = new Set(NAV.map((item) => item.id))
   const allowed = (user.pages || []).filter((id) => known.has(id))
-  if (allowed.filter((id) => id !== 'dashboard').length === 0) return known
   return new Set(allowed)
 }
 
