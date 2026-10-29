@@ -21,6 +21,8 @@ const QUALITY = [
   ['hg', '汞 Hg'],
 ] as const
 
+const QUALITY_UNITS: Record<string, string> = { ag: 'g/t', au: 'g/t' }
+
 /** 侧栏页 id */
 type PageId =
   | 'basic'
@@ -190,7 +192,7 @@ function inboundRecordFields(row: Row) {
     { label: '湿重', value: ton(row.wet) },
     { label: '干重', value: ton(row.dry) },
     { label: '水分', value: moistureText(row.moisture ?? row.moistureContent) },
-    ...QUALITY.map(([key, label]) => ({ label, value: dash(row[key]) })),
+    ...QUALITY.map(([key, label]) => ({ label, value: qualityText(row[key], key) })),
     { label: '收货时间', value: dash(row.time) },
   ]
 }
@@ -247,6 +249,15 @@ function ton(value: unknown) {
 function moistureText(value: unknown) {
   const raw = dash(value)
   return raw === '—' || String(raw).includes('%') ? raw : `${raw}%`
+}
+
+/** 品质参数统一补充单位，兼容接口已携带单位的值。 */
+function qualityText(value: unknown, key: string) {
+  const raw = dash(value)
+  const unit = QUALITY_UNITS[key] || '%'
+  return raw === '—' || raw.trim().toLowerCase().endsWith(unit.toLowerCase())
+    ? raw
+    : `${raw} ${unit}`
 }
 
 /** 解包分页列表 */
@@ -733,7 +744,7 @@ function inspectImages(row: Row) {
           <template v-else-if="page === 'inbound'">
             <div v-if="inboundRows.length" class="inbound-records">
               <article v-for="(row, index) in inboundRows" :key="String(row.id || row.customsNo || index)" class="inbound-record">
-                <h4>收货记录 {{ index + 1 }}</h4>
+                <h4>收货记录</h4>
                 <dl class="fields cols">
                   <div v-for="item in inboundRecordFields(row)" :key="item.label">
                     <dt>{{ item.label }}</dt>
@@ -919,11 +930,14 @@ function inspectImages(row: Row) {
                     <dd>{{ item.value }}</dd>
                   </div>
                 </dl>
-                <div class="elements">
-                  <label v-for="[key, label] in QUALITY" :key="key">
-                    <span>{{ label }}</span>
-                    <input :value="dash(current[key])" readonly />
-                  </label>
+                <div class="quality-grid">
+                  <div v-for="[key, label] in QUALITY" :key="key" class="quality-card">
+                    <div class="quality-heading">
+                      <span>{{ label }}</span>
+                      <small>{{ QUALITY_UNITS[key] || '%' }}</small>
+                    </div>
+                    <strong>{{ dash(current[key]) }}</strong>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1073,21 +1087,32 @@ function inspectImages(row: Row) {
 .inbound-record h4 { margin: 0 0 12px; color: var(--el-text-color-primary); }
 .fields dt { color: var(--el-text-color-secondary); }
 .fields dd { margin: 0; font-weight: 600; word-break: break-all; }
-.elements { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-top: 8px; }
-.elements label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--el-text-color-secondary); }
-.elements input {
-  height: 32px;
-  padding: 0 10px;
+.quality-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.quality-card {
+  min-width: 0;
+  padding: 12px 14px;
   border: 1px solid var(--el-border-color);
-  border-radius: 4px;
-  background: var(--el-fill-color-blank);
-  color: var(--el-text-color-primary);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
 }
+.quality-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--el-text-color-secondary); font-size: 13px; }
+.quality-heading small {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 11px;
+}
+.quality-card strong { display: block; margin-top: 8px; color: var(--el-text-color-primary); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
 .attach-links { display: flex; flex-wrap: wrap; gap: 6px 10px; }
 h4 { margin: 16px 0 8px; font-size: 14px; }
 @media (max-width: 800px) {
-  .stats, .layout, .doc, .fields.cols, .elements, .flow { grid-template-columns: 1fr; }
+  .stats, .layout, .doc, .fields.cols, .flow { grid-template-columns: 1fr; }
   .stats.is-finished { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .quality-grid { grid-template-columns: 1fr; }
 }
 </style>
 
